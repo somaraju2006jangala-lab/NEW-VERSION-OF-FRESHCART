@@ -30,10 +30,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   if (!product) return null;
 
   const isOutOfStock = product.stock <= 0;
+  const isLowStock = product.stock >= 1 && product.stock <= 10;
+  const effectiveQty = isOutOfStock ? 0 : Math.min(qty, product.stock);
 
   const handleAdd = () => {
-    if (isOutOfStock) return;
-    onAddToCart(product, qty);
+    if (isOutOfStock || effectiveQty <= 0) return;
+    onAddToCart(product, effectiveQty);
     setAdded(true);
     setTimeout(() => {
       setAdded(false);
@@ -49,22 +51,36 @@ export const ProductModal: React.FC<ProductModalProps> = ({
           <img
             src={product.image}
             alt={product.title}
-            className="w-full h-full object-cover"
+            className={`w-full h-full object-cover ${isOutOfStock ? 'grayscale' : ''}`}
           />
           <button
             type="button"
             onClick={onClose}
-            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-[#0b1c30] hover:bg-white shadow-md transition-all"
+            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-xs flex items-center justify-center text-[#0b1c30] hover:bg-white shadow-md transition-all cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
-          <div className="absolute bottom-3 left-3 flex gap-2">
+          <div className="absolute bottom-3 left-3 flex flex-wrap gap-2">
             <span className="px-2.5 py-1 rounded-full bg-[#006b2c] text-white text-[11px] font-bold shadow-xs">
               {product.badge}
             </span>
             <span className="px-2.5 py-1 rounded-full bg-white/90 text-[#0b1c30] text-[11px] font-semibold backdrop-blur-xs shadow-xs">
               {product.sku}
             </span>
+            {/* Stock status indicator pill */}
+            {isOutOfStock ? (
+              <span className="px-2.5 py-1 rounded-full bg-[#ffdad6] text-[#ba1a1a] text-[11px] font-bold shadow-xs">
+                Out of Stock (0 {product.unit})
+              </span>
+            ) : isLowStock ? (
+              <span className="px-2.5 py-1 rounded-full bg-[#ffddb8] text-[#825100] text-[11px] font-bold shadow-xs">
+                Low Stock ({product.stock} {product.unit} left)
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] text-[11px] font-bold shadow-xs">
+                In Stock ({product.stock} {product.unit} available)
+              </span>
+            )}
           </div>
         </div>
 
@@ -93,7 +109,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             {product.description}
           </p>
 
-          {/* Farm Quality Metadata Grid */}
+          {/* Farm Quality & Stock Metadata Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
             <div className="bg-[#eff4ff]/60 p-3 rounded-xl border border-[#e2e8f0]/60 flex items-start gap-2.5">
               <Award className="w-4 h-4 text-[#006b2c] mt-0.5 shrink-0" />
@@ -135,10 +151,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               <ShieldCheck className="w-4 h-4 text-[#006b2c] mt-0.5 shrink-0" />
               <div>
                 <span className="text-[11px] text-[#565e74] font-medium block">
-                  Live Stock Guarantee
+                  Live Available Stock
                 </span>
                 <span className="text-[12px] font-semibold text-[#0b1c30]">
-                  {product.stock} units locked in Pod #104
+                  {product.stock > 0
+                    ? `${product.stock} ${product.unit} available in Pod #104`
+                    : 'Currently out of inventory'}
                 </span>
               </div>
             </div>
@@ -159,18 +177,28 @@ export const ProductModal: React.FC<ProductModalProps> = ({
           <div className="flex items-center bg-[#eff4ff] rounded-xl p-1 border border-[#e2e8f0]">
             <button
               type="button"
+              disabled={effectiveQty <= 1 || isOutOfStock}
               onClick={() => qty > 1 && setQty(qty - 1)}
-              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[#e5eeff] text-[#0b1c30]"
+              className={`w-9 h-9 flex items-center justify-center rounded-lg text-[#0b1c30] transition-colors ${
+                effectiveQty <= 1 || isOutOfStock
+                  ? 'opacity-40 cursor-not-allowed'
+                  : 'hover:bg-[#e5eeff] cursor-pointer'
+              }`}
             >
               <Minus className="w-4 h-4" />
             </button>
-            <span className="w-8 text-center text-[14px] font-bold text-[#0b1c30]">
-              {qty}
+            <span className="w-8 text-center text-[14px] font-bold text-[#0b1c30] tabular-nums">
+              {effectiveQty}
             </span>
             <button
               type="button"
+              disabled={effectiveQty >= product.stock || isOutOfStock}
               onClick={() => qty < product.stock && setQty(qty + 1)}
-              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[#e5eeff] text-[#0b1c30]"
+              className={`w-9 h-9 flex items-center justify-center rounded-lg text-[#0b1c30] transition-colors ${
+                effectiveQty >= product.stock || isOutOfStock
+                  ? 'opacity-40 cursor-not-allowed'
+                  : 'hover:bg-[#e5eeff] cursor-pointer'
+              }`}
             >
               <Plus className="w-4 h-4" />
             </button>
@@ -178,14 +206,14 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
           <button
             type="button"
-            disabled={isOutOfStock}
+            disabled={isOutOfStock || effectiveQty <= 0}
             onClick={handleAdd}
             className={`flex-1 py-3 px-4 rounded-xl text-[13px] font-semibold flex items-center justify-center gap-2 shadow-md transition-all ${
               isOutOfStock
                 ? 'bg-[#cbd5e1] text-[#64748b] cursor-not-allowed'
                 : added
                 ? 'bg-[#15803d] text-white'
-                : 'bg-[#006b2c] text-white hover:bg-[#00873a]'
+                : 'bg-[#006b2c] text-white hover:bg-[#00873a] cursor-pointer'
             }`}
           >
             {added ? (
@@ -198,7 +226,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             ) : (
               <>
                 <ShoppingCart className="w-4 h-4" />
-                <span>Add {qty} to Cart · {formatINR(product.price * qty)}</span>
+                <span>Add {effectiveQty} to Cart · {formatINR(product.price * effectiveQty)}</span>
               </>
             )}
           </button>

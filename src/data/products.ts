@@ -20,6 +20,29 @@ export const AISLE_CATEGORIES: AisleCategory[] = [
 
 export const INITIAL_PRODUCTS: Product[] = [
   {
+    id: 'prod-tomatoes',
+    title: 'Farm Fresh Red Tomatoes',
+    supplier: 'Sunrise Agri Farms',
+    sku: 'SKU-2050',
+    price: 40,
+    unit: 'kg',
+    stock: 25,
+    minStockLevel: 5,
+    badge: 'Farm Fresh',
+    image: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=600&q=80',
+    category: 'produce',
+    categoryLabel: 'Fruits & Veggies',
+    isOrganic: true,
+    isQuickPrep: true,
+    description: 'Plump, vine-ripened local red tomatoes packed with rich lycopene and tangy sweetness. Ideal for fresh salads, curries, and sauces.',
+    farmOrigin: 'Sunrise Poly-House Organic Farm, Block 4',
+    harvestDate: 'Today, 05:00 AM',
+    tempRequirement: '12°C - 16°C Crisp Ambient',
+    nutrition: '18 kcal per 100g · Vitamin C 14mg · Lycopene rich',
+    batchNumber: 'LOT-2026-TOM-205',
+    expiryDate: 'In 7 days',
+  },
+  {
     id: 'prod-1',
     title: 'Organic Farm Bananas',
     supplier: 'Farm Fresh Produce',
@@ -27,6 +50,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 69,
     unit: 'kg',
     stock: 34,
+    minStockLevel: 8,
     badge: 'Organic',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuDRPtAAfQ0msd8om5b13LdWSnlALQC0KaZsuZ1i82QU87ERyr4gW9xmcjbJTg26K_BoXWtxJwKqajSLNxgHhA1DcOBT6Eyt52YY5CD9gkLyx2dqxt-0l08U1rjvIJB18ygFiAu7E88Sj2MVrfntcsapquOEdSVNlvIlQVGUqVzkTxk1JcOHk7mtwTTHpGA6T55Fe4PHQPZgWE-4cnHcdVhfGQQvScntByzcUfVEwk18nNl3tc6KozSg',
@@ -50,6 +74,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 79,
     unit: 'jug',
     stock: 18,
+    minStockLevel: 6,
     badge: 'Local Dairy',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuD1dWU161rAG646dME8h1qHtBP1YOn_oMaScwkMUD3fELF9BLUxLARDMf5Hm1fCPW9nuqu2Dg_xmcUbjYJc8EqG82T43L-RGy6OKqyH79D7PcECUlH-Mdupmzh-RUCs-CAYrWUug4BfgPlymO-C-etcRmYXBOcK05wBtH-F6FFPNnHSkYJY8oMf5W1xuNN_UqSBEzpjQdC6zQ7kVG7kwaUxCGRDSYCr3xvciz98pCBv1rIRPQbID99j',
@@ -73,6 +98,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 199,
     unit: 'lb',
     stock: 4,
+    minStockLevel: 5,
     badge: 'Orchard Fresh',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuCkhUc0J8xhdkClmUzodiIliTFKq4lADc8fmjMK4Fjpt1Qp8ffouwyTEEDqq9F_3TrySKQiCM_3c27BFeENyHrTsBrnOiiij2ZJZYdj5_Phf5dBjECA02xOIQ4ffA3fe2XjiW2lD43fuCUDYyCLBCBg-4Game01zlvgvdJqn_unPS_v4g__att35guASwN4wZWeRtTXGSjR5ahppXHZaBvzkPdAVABnd48s_cVO9Ramfw4aZ47ozFSj',
@@ -96,6 +122,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 149,
     unit: 'loaf',
     stock: 12,
+    minStockLevel: 4,
     badge: 'Baked Today',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuBkkGG7cf2EwYntcJnfvmcVMchZlgc-1U2laghJWrRKRqUXB_qCiI78uEVko30dARWxkK43LDPU59BshYM7O1Kh7ZBanHTJnyd3q9nFoqw_VXblvZTAvmxdJ2iF61wPIsrl-OKsL0f-ZqFIhHQmaOw5gzGquO2CU0eADw_b7P_UUbVAnrkkb3l_uVy_YQoWOQp3dc4CQgBp_NYqka2GhhsI6QlGu6QpNQzQfOVPEKWZUv2A-ZavN_lk',
@@ -119,6 +146,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 299,
     unit: 'btl',
     stock: 0,
+    minStockLevel: 5,
     badge: 'Craft Brew',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuAQzDF6A7fxK6s8tVU8jqRabar5XLrIFh-IqLRTszpUqe2vPkg7XqhsTKPJ4lLwOrLL4EK8FruA3JGa1ESRmEAfwIUcpDshAzYGRFeCv4TP7k40lJFmhRSsiKOcsUZATifWoRcH2z8m26n69Ao7NAE8p-zB5GKJ-i8y67VD-VihfiXlr3eb9RkPQV84HxTcszbDWXi1oYMUGbgez5y1-hTf5akqhs8BWxXU-gUsiTzNds6M61GuWHpg',
@@ -142,6 +170,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 349,
     unit: 'bag',
     stock: 28,
+    minStockLevel: 6,
     badge: 'Organic 4-Pk',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuCDoYl_wETczWdBVVuRYx4wQfaZJMyI2ZPjO5HrwO9cxw30VdOnW4M3wGL_yJwEfWqLNrbbsqDJsfJNpT67izabAa8XbGnaOfs7nskBcyQveIN8g4oI6sTA-uUwUdkQo4qLRNTKaJVGcKF83vG4II9mJBHIcInm2kUNW7eGrumZ3yMJdqUX81QyqCrCtGtBLS-5KVJvU1a1a7N1TuMl_VfrL8-xxaFbDKEKbXnZcN_ooCkqqPtqjHJQ',
@@ -165,6 +194,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 189,
     unit: 'tub',
     stock: 9,
+    minStockLevel: 4,
     badge: 'Cultured',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuA6oefPUCv7ETXTv4lTqFfF0QgDgy4ygqDmHxD21zh3JleRUv2BfF2pC6pKgi5K68zK7mRFLEnNUDesSE9OqfiblY0CCQFj18xzDG0eO_pwseRAZbXChF5VnfRsGrEeCZWRXHAg8PeFdpZCuoHW5wMsnbHFRxyY7t6CEKsVnCZP1I80uZlpNOeal7HDQZyxOdxPsJsHTSwfcPrsoQ9jZ7UQ3CR6lpZWvL75doK-BhVpOIyhgPToBAEf',
@@ -188,6 +218,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     price: 129,
     unit: 'carton',
     stock: 2,
+    minStockLevel: 3,
     badge: 'Free Range',
     image:
       'https://lh3.googleusercontent.com/aida-public/AB6AXuDMH-SflHztd1Mnu3kzGMcaDS8_FTWevEAVldkIgfz2NU8Hu-Z07D977-WMzbqNVR4mfx99kA_MjYPnfUROSpvCQtRkVpARAxhkV2e_YH8lkl9rCylV4LpeX5aFoDgZlZArs0sPfrrN8ybTNynplUhbfc_uvB9c85v2vZvZIVhtAhy0tF8SqWnzqQJw59VkiTwqj93pZ-7K376nDSPXVsfjh-awUsjhlP3-zypYyWgspoLFLlPwZ770',

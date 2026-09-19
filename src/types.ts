@@ -13,6 +13,7 @@ export interface Product {
   isOrganic?: boolean;
   isQuickPrep?: boolean;
   description?: string;
+  minStockLevel?: number;
   farmOrigin?: string;
   harvestDate?: string;
   tempRequirement?: string;
@@ -20,6 +21,14 @@ export interface Product {
   batchNumber?: string;
   expiryDate?: string;
 }
+
+export type StockStatus = 'In Stock' | 'Low Stock' | 'Out of Stock';
+
+export const getStockStatus = (stock: number): StockStatus => {
+  if (stock > 10) return 'In Stock';
+  if (stock >= 1) return 'Low Stock';
+  return 'Out of Stock';
+};
 
 export interface CartItem {
   product: Product;

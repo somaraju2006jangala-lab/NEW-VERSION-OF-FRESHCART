@@ -40,8 +40,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [activeTab, setActiveTab] = useState<'inventory' | 'logs' | 'coldchain'>('inventory');
   const [pulseToast, setPulseToast] = useState<string | null>(null);
 
-  const totalSkus = products.length;
-  const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= 5).length;
+  const totalProducts = products.length;
+  const totalStockUnits = products.reduce((sum, p) => sum + p.stock, 0);
+  const lowStockCount = products.filter((p) => p.stock >= 1 && p.stock <= 10).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
 
   const handleTriggerPulse = () => {
@@ -59,7 +60,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <button
               type="button"
               onClick={onBackToStorefront}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#334155] hover:bg-[#475569] text-[12px] font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#334155] hover:bg-[#475569] text-[12px] font-semibold transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Back to Storefront</span>
@@ -68,7 +69,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
               <span className="text-[13px] font-bold tracking-tight">
-                Store #104 Central Fulfillment Operations
+                Store #104 Central Fulfillment Operations &amp; Inventory Hub
               </span>
             </div>
           </div>
@@ -106,7 +107,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <CheckCircle className="w-4 h-4 text-[#16a34a]" />
               <span>{pulseToast}</span>
             </div>
-            <button onClick={() => setPulseToast(null)} className="text-[#16a34a]">
+            <button onClick={() => setPulseToast(null)} className="text-[#16a34a] cursor-pointer">
               &times;
             </button>
           </div>
@@ -115,19 +116,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
-        {/* KPI Metric Cards */}
+        {/* Admin Inventory Dashboard KPI Metric Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: Total Products */}
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
             <div>
               <span className="text-[12px] text-[#64748b] font-medium block">
-                Total SKUs Monitored
+                Total Products
               </span>
               <span className="text-[28px] font-extrabold text-[#0f172a] font-display tabular-nums">
-                {totalSkus}
+                {totalProducts}
               </span>
               <div className="text-[11px] text-[#16a34a] flex items-center gap-1 font-semibold mt-1">
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span>100% Active MongoDB sync</span>
+                <span>Live catalog SKUs</span>
               </div>
             </div>
             <div className="w-12 h-12 rounded-xl bg-[#eff4ff] text-[#006b2c] flex items-center justify-center">
@@ -135,55 +137,57 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
 
+          {/* Card 2: Total Stock Units */}
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
             <div>
               <span className="text-[12px] text-[#64748b] font-medium block">
-                Cold-Chain Pod Temp
+                Total Stock Units
               </span>
-              <span className="text-[28px] font-extrabold text-[#0f172a] font-display tabular-nums">
-                3.8°C
+              <span className="text-[28px] font-extrabold text-[#006b2c] font-display tabular-nums">
+                {totalStockUnits.toLocaleString('en-IN')}
               </span>
-              <div className="text-[11px] text-[#16a34a] font-semibold mt-1 flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[#16a34a]" />
-                <span>Optimal (Tolerance 2-5°C)</span>
+              <div className="text-[11px] text-[#565e74] font-medium mt-1">
+                Units physically on shelves &amp; cold vault
               </div>
             </div>
-            <div className="w-12 h-12 rounded-xl bg-[#fef3c7] text-[#825100] flex items-center justify-center">
-              <Thermometer className="w-6 h-6 text-[#825100]" />
+            <div className="w-12 h-12 rounded-xl bg-[#dcfce7] text-[#15803d] flex items-center justify-center">
+              <TrendingUp className="w-6 h-6 text-[#15803d]" />
             </div>
           </div>
 
+          {/* Card 3: Low Stock Products */}
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
             <div>
               <span className="text-[12px] text-[#64748b] font-medium block">
-                Stock Warnings
+                Low Stock Products
               </span>
               <span className="text-[28px] font-extrabold text-[#b45309] font-display tabular-nums">
-                {lowStockCount + outOfStockCount}
+                {lowStockCount}
               </span>
-              <div className="text-[11px] text-[#64748b] font-medium mt-1">
-                {lowStockCount} Low · {outOfStockCount} Out of Stock
+              <div className="text-[11px] text-[#b45309] font-medium mt-1">
+                Quantity 1–10 (restock needed)
+              </div>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-[#fef3c7] text-[#b45309] flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-[#b45309]" />
+            </div>
+          </div>
+
+          {/* Card 4: Out of Stock Products */}
+          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
+            <div>
+              <span className="text-[12px] text-[#64748b] font-medium block">
+                Out of Stock Products
+              </span>
+              <span className="text-[28px] font-extrabold text-[#dc2626] font-display tabular-nums">
+                {outOfStockCount}
+              </span>
+              <div className="text-[11px] text-[#dc2626] font-medium mt-1">
+                Quantity = 0 (unavailable for customers)
               </div>
             </div>
             <div className="w-12 h-12 rounded-xl bg-[#fee2e2] text-[#ef4444] flex items-center justify-center">
               <AlertTriangle className="w-6 h-6 text-[#ef4444]" />
-            </div>
-          </div>
-
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
-            <div>
-              <span className="text-[12px] text-[#64748b] font-medium block">
-                Active Pickers &amp; Runners
-              </span>
-              <span className="text-[28px] font-extrabold text-[#0f172a] font-display tabular-nums">
-                12
-              </span>
-              <div className="text-[11px] text-[#16a34a] font-semibold mt-1">
-                Avg pack time: 5.4 mins
-              </div>
-            </div>
-            <div className="w-12 h-12 rounded-xl bg-[#eff4ff] text-[#006b2c] flex items-center justify-center">
-              <Users className="w-6 h-6 text-[#006b2c]" />
             </div>
           </div>
         </div>

@@ -25,6 +25,7 @@ interface CartDrawerProps {
   appliedCoupon: string | null;
   onApplyCoupon: (code: string) => void;
   onRemoveCoupon: () => void;
+  onAutoAdjust?: () => void;
 }
 
 export const CartDrawer: React.FC<CartDrawerProps> = ({
@@ -37,6 +38,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   appliedCoupon,
   onApplyCoupon,
   onRemoveCoupon,
+  onAutoAdjust,
 }) => {
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState('');
@@ -56,6 +58,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     100,
     Math.round((subtotal / freeDeliveryThreshold) * 100)
   );
+
+  // Live Inventory validation for cart items
+  const itemsWithStockIssues = items.filter(
+    (item) => item.product.stock === 0 || item.quantity > item.product.stock
+  );
+  const hasStockIssues = itemsWithStockIssues.length > 0;
 
   const handleApplyCouponSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -125,7 +133,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <button
               type="button"
               onClick={onToggle}
-              className="w-8 h-8 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] flex items-center justify-center text-[#565e74] hover:text-[#0b1c30] transition-colors"
+              className="w-8 h-8 rounded-lg bg-[#eff4ff] hover:bg-[#e5eeff] flex items-center justify-center text-[#565e74] hover:text-[#0b1c30] transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -161,6 +169,28 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             </p>
           </div>
 
+          {/* Live Inventory Stock Warning Banner if changes occurred */}
+          {hasStockIssues && (
+            <div className="mb-2 p-2.5 rounded-xl bg-[#fffbeb] border border-[#fde68a] text-[11px] space-y-1 text-[#92400e] animate-in slide-in-from-top-1">
+              <div className="font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#dc2626] animate-pulse" />
+                <span>Stock Inventory Alert</span>
+              </div>
+              <p>
+                Available stock for some items has changed. Please adjust quantities before proceeding to checkout.
+              </p>
+              {onAutoAdjust && (
+                <button
+                  type="button"
+                  onClick={onAutoAdjust}
+                  className="mt-1 px-2.5 py-1 bg-[#b45309] hover:bg-[#92400e] text-white font-bold rounded-lg transition-colors cursor-pointer"
+                >
+                  Auto-Adjust Cart to Available Stock
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Items Container */}
           <div
             id="cart-items-container"
@@ -177,64 +207,100 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </p>
               </div>
             ) : (
-              items.map((item) => (
-                <div
-                  key={item.product.id}
-                  id={`cart-item-${item.product.id}`}
-                  className="flex items-center justify-between bg-[#eff4ff]/60 p-2.5 rounded-xl gap-2 border border-[#e2e8f0]/40 hover:bg-[#eff4ff] transition-colors"
-                >
-                  <img
-                    src={item.product.image}
-                    alt={item.product.title}
-                    className="w-11 h-11 rounded-lg object-cover bg-white shrink-0 border border-[#e2e8f0]"
-                  />
-                  <div className="flex-1 min-w-0 flex flex-col">
-                    <span className="text-[13px] font-semibold text-[#0b1c30] truncate">
-                      {item.product.title}
-                    </span>
-                    <span className="text-[11px] text-[#565e74]">
-                      {item.quantity} × {formatINR(item.product.price)} / {item.product.unit}
-                    </span>
-                  </div>
+              items.map((item) => {
+                const isOutOfStock = item.product.stock === 0;
+                const isExceedingStock = item.quantity > item.product.stock;
+                const isAtMaxStock = item.quantity >= item.product.stock;
 
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center bg-white rounded-lg border border-[#e2e8f0] shadow-2xs">
-                      <button
-                        type="button"
-                        title="Decrease or remove item"
-                        onClick={() => onUpdateQty(item.product.id, -1)}
-                        className="w-6 h-6 flex items-center justify-center text-[#0b1c30] hover:bg-[#eff4ff] rounded-l-lg transition-colors"
-                      >
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <span className="w-5 text-center text-[11px] font-semibold tabular-nums">
-                        {item.quantity}
+                return (
+                  <div
+                    key={item.product.id}
+                    id={`cart-item-${item.product.id}`}
+                    className={`flex items-center justify-between p-2.5 rounded-xl gap-2 border transition-colors ${
+                      isOutOfStock || isExceedingStock
+                        ? 'bg-[#fff5f5] border-[#fecaca]'
+                        : 'bg-[#eff4ff]/60 border-[#e2e8f0]/40 hover:bg-[#eff4ff]'
+                    }`}
+                  >
+                    <img
+                      src={item.product.image}
+                      alt={item.product.title}
+                      className={`w-11 h-11 rounded-lg object-cover bg-white shrink-0 border border-[#e2e8f0] ${
+                        isOutOfStock ? 'grayscale opacity-60' : ''
+                      }`}
+                    />
+                    <div className="flex-1 min-w-0 flex flex-col">
+                      <span className="text-[13px] font-semibold text-[#0b1c30] truncate">
+                        {item.product.title}
                       </span>
-                      <button
-                        type="button"
-                        title="Increase quantity"
-                        onClick={() => onUpdateQty(item.product.id, 1)}
-                        className="w-6 h-6 flex items-center justify-center text-[#0b1c30] hover:bg-[#eff4ff] rounded-r-lg transition-colors"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
+                      <span className="text-[11px] text-[#565e74]">
+                        {item.quantity} × {formatINR(item.product.price)} / {item.product.unit}
+                      </span>
+                      {/* Stock alerts */}
+                      {isOutOfStock ? (
+                        <span className="text-[10px] text-[#dc2626] font-bold">
+                          Out of stock! Please remove
+                        </span>
+                      ) : isExceedingStock ? (
+                        <span className="text-[10px] text-[#b45309] font-bold">
+                          Only {item.product.stock} available (exceeds stock)
+                        </span>
+                      ) : isAtMaxStock ? (
+                        <span className="text-[10px] text-[#64748b]">
+                          Max available quantity reached
+                        </span>
+                      ) : null}
                     </div>
 
-                    <span className="text-[13px] font-bold text-[#0b1c30] min-w-[50px] text-right tabular-nums">
-                      {formatINR(item.product.price * item.quantity)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center bg-white rounded-lg border border-[#e2e8f0] shadow-2xs">
+                        <button
+                          type="button"
+                          title="Decrease or remove item"
+                          onClick={() => onUpdateQty(item.product.id, -1)}
+                          className="w-6 h-6 flex items-center justify-center text-[#0b1c30] hover:bg-[#eff4ff] rounded-l-lg transition-colors cursor-pointer"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="w-5 text-center text-[11px] font-semibold tabular-nums">
+                          {item.quantity}
+                        </span>
+                        {/* Prevent increasing beyond available inventory */}
+                        <button
+                          type="button"
+                          title={
+                            isAtMaxStock
+                              ? `Maximum available inventory reached (${item.product.stock} ${item.product.unit})`
+                              : 'Increase quantity'
+                          }
+                          disabled={isAtMaxStock}
+                          onClick={() => onUpdateQty(item.product.id, 1)}
+                          className={`w-6 h-6 flex items-center justify-center rounded-r-lg transition-colors ${
+                            isAtMaxStock
+                              ? 'bg-[#f1f5f9] text-[#cbd5e1] cursor-not-allowed'
+                              : 'text-[#0b1c30] hover:bg-[#eff4ff] cursor-pointer'
+                          }`}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
 
-                    <button
-                      type="button"
-                      title="Remove item"
-                      onClick={() => onRemoveItem(item.product.id)}
-                      className="w-7 h-7 rounded-lg hover:bg-[#ffdad6] text-[#6e7b6c] hover:text-[#ba1a1a] transition-colors flex items-center justify-center"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                      <span className="text-[13px] font-bold text-[#0b1c30] min-w-[50px] text-right tabular-nums">
+                        {formatINR(item.product.price * item.quantity)}
+                      </span>
+
+                      <button
+                        type="button"
+                        title="Remove item"
+                        onClick={() => onRemoveItem(item.product.id)}
+                        className="w-7 h-7 rounded-lg hover:bg-[#ffdad6] text-[#6e7b6c] hover:text-[#ba1a1a] transition-colors flex items-center justify-center cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -329,15 +395,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           <button
             id="proceed-checkout-btn"
             type="button"
-            disabled={items.length === 0}
+            disabled={items.length === 0 || hasStockIssues}
             onClick={onOpenCheckout}
             className={`w-full mt-3 py-2.5 rounded-xl text-[13px] font-semibold shadow-md transition-all flex items-center justify-center gap-2 ${
-              items.length === 0
+              items.length === 0 || hasStockIssues
                 ? 'bg-[#cbd5e1] text-[#64748b] cursor-not-allowed'
                 : 'bg-[#006b2c] text-white hover:bg-[#00873a] active:scale-98 cursor-pointer'
             }`}
           >
-            <span>Proceed to Express Checkout</span>
+            <span>
+              {hasStockIssues
+                ? 'Adjust Quantities to Checkout'
+                : 'Proceed to Express Checkout'}
+            </span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>

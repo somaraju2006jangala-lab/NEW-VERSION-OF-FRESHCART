@@ -38,12 +38,16 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
   // Search & Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [stockFilter, setStockFilter] = useState<'all' | 'healthy' | 'low' | 'out'>('all');
+  const [stockFilter, setStockFilter] = useState<'all' | 'inStock' | 'low' | 'out'>('all');
 
   // Modal states
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+
+  // Inline Direct Stock Editing State (Direct Quantity Edit)
+  const [editingDirectStockId, setEditingDirectStockId] = useState<string | null>(null);
+  const [tempDirectStock, setTempDirectStock] = useState<number>(0);
 
   // Inline Quick Stock Adjustment State
   const [adjustingStockId, setAdjustingStockId] = useState<string | null>(null);
@@ -61,11 +65,16 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // KPI Calculations
-  const totalCount = products.length;
-  const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= 5).length;
+  // KPI Calculations based on required specifications:
+  // - Total Products: unique product count
+  // - Total Stock Units: sum of all available units
+  // - Low Stock Products: quantity 1–10
+  // - Out of Stock Products: quantity = 0
+  const totalProducts = products.length;
+  const totalStockUnits = products.reduce((sum, p) => sum + p.stock, 0);
+  const lowStockCount = products.filter((p) => p.stock >= 1 && p.stock <= 10).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
-  const healthyCount = products.filter((p) => p.stock > 5).length;
+  const inStockCount = products.filter((p) => p.stock > 10).length;
 
   // Filtered Products
   const filteredProducts = products.filter((p) => {
@@ -81,8 +90,8 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
 
     const matchesStock =
       stockFilter === 'all' ||
-      (stockFilter === 'healthy' && p.stock > 5) ||
-      (stockFilter === 'low' && p.stock > 0 && p.stock <= 5) ||
+      (stockFilter === 'inStock' && p.stock > 10) ||
+      (stockFilter === 'low' && p.stock >= 1 && p.stock <= 10) ||
       (stockFilter === 'out' && p.stock === 0);
 
     return matchesSearch && matchesCategory && matchesStock;
@@ -126,6 +135,22 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
     onUpdateProductStock(product.id, newStock, reason);
   };
 
+  const handleStartDirectStock = (product: Product) => {
+    setEditingDirectStockId(product.id);
+    setTempDirectStock(product.stock);
+  };
+
+  const handleSaveDirectStock = (productId: string) => {
+    const safeStock = Math.max(0, tempDirectStock);
+    onUpdateProductStock(
+      productId,
+      safeStock,
+      `Direct Quantity Override (Set to ${safeStock})`
+    );
+    setEditingDirectStockId(null);
+    showToast(`Updated stock quantity to ${safeStock}`);
+  };
+
   const handleApplyCustomStock = (productId: string) => {
     const prod = products.find((p) => p.id === productId);
     if (!prod) return;
@@ -163,8 +188,9 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
         </div>
       )}
 
-      {/* Top Inventory Summary Cards & Filter Pills */}
+      {/* Admin Inventory Dashboard KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        {/* Card 1: Total Products */}
         <button
           type="button"
           onClick={() => setStockFilter('all')}
@@ -175,38 +201,34 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[#64748b]">Total SKUs</span>
+            <span className="text-[12px] font-medium text-[#64748b]">Total Products</span>
             <Package className="w-4 h-4 text-[#006b2c]" />
           </div>
           <span className="text-[26px] font-extrabold text-[#0f172a] font-display block mt-1 tabular-nums">
-            {totalCount}
+            {totalProducts}
           </span>
           <span className="text-[11px] text-[#006b2c] font-semibold flex items-center gap-1 mt-0.5">
             Active in catalog
           </span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => setStockFilter('healthy')}
-          className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
-            stockFilter === 'healthy'
-              ? 'bg-[#dcfce7]/60 border-[#16a34a] ring-2 ring-[#16a34a]/20 shadow-xs'
-              : 'bg-white border-[#e2e8f0] hover:bg-[#f8fafc]'
-          }`}
+        {/* Card 2: Total Stock Units */}
+        <div
+          className="p-4 rounded-xl border bg-white border-[#e2e8f0] text-left shadow-2xs"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[#64748b]">Healthy Stock</span>
-            <span className="w-2.5 h-2.5 rounded-full bg-[#16a34a]" />
+            <span className="text-[12px] font-medium text-[#64748b]">Total Stock Units</span>
+            <Layers className="w-4 h-4 text-[#006b2c]" />
           </div>
-          <span className="text-[26px] font-extrabold text-[#15803d] font-display block mt-1 tabular-nums">
-            {healthyCount}
+          <span className="text-[26px] font-extrabold text-[#006b2c] font-display block mt-1 tabular-nums">
+            {totalStockUnits.toLocaleString('en-IN')}
           </span>
-          <span className="text-[11px] text-[#16a34a] font-semibold mt-0.5 block">
-            &gt; 5 units available
+          <span className="text-[11px] text-[#565e74] font-medium mt-0.5 block">
+            {inStockCount} In Stock (&gt;10 units)
           </span>
-        </button>
+        </div>
 
+        {/* Card 3: Low Stock Products */}
         <button
           type="button"
           onClick={() => setStockFilter('low')}
@@ -217,17 +239,18 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[#64748b]">Low Stock Warning</span>
+            <span className="text-[12px] font-medium text-[#64748b]">Low Stock Products</span>
             <AlertTriangle className="w-4 h-4 text-[#b45309]" />
           </div>
           <span className="text-[26px] font-extrabold text-[#b45309] font-display block mt-1 tabular-nums">
             {lowStockCount}
           </span>
           <span className="text-[11px] text-[#b45309] font-semibold mt-0.5 block">
-            1 to 5 units remaining
+            Quantity 1–10 units
           </span>
         </button>
 
+        {/* Card 4: Out of Stock Products */}
         <button
           type="button"
           onClick={() => setStockFilter('out')}
@@ -238,14 +261,14 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium text-[#64748b]">Out of Stock</span>
+            <span className="text-[12px] font-medium text-[#64748b]">Out of Stock Products</span>
             <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444]" />
           </div>
           <span className="text-[26px] font-extrabold text-[#dc2626] font-display block mt-1 tabular-nums">
             {outOfStockCount}
           </span>
           <span className="text-[11px] text-[#dc2626] font-semibold mt-0.5 block">
-            0 units (Needs restock)
+            Quantity = 0 units
           </span>
         </button>
       </div>
@@ -342,9 +365,9 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
               onChange={(e) => setStockFilter(e.target.value as any)}
               className="px-3 py-2 text-[12px] font-medium border border-[#cbd5e1] rounded-xl bg-white text-[#0f172a] focus:ring-2 focus:ring-[#006b2c]/30 cursor-pointer"
             >
-              <option value="all">All Stock Statuses ({totalCount})</option>
-              <option value="healthy">In Stock (&gt; 5) ({healthyCount})</option>
-              <option value="low">Low Stock (1-5) ({lowStockCount})</option>
+              <option value="all">All Stock Statuses ({totalProducts})</option>
+              <option value="inStock">In Stock (&gt; 10) ({inStockCount})</option>
+              <option value="low">Low Stock (1–10) ({lowStockCount})</option>
               <option value="out">Out of Stock (0) ({outOfStockCount})</option>
             </select>
 
@@ -384,10 +407,10 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                 <th className="py-3 px-4">Item &amp; Supplier</th>
                 <th className="py-3 px-4">SKU / Batch</th>
                 <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4">Price</th>
-                <th className="py-3 px-4">Stock Level</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-center">Adjust Stock</th>
+                <th className="py-3 px-4">Price (₹)</th>
+                <th className="py-3 px-4">Current Quantity</th>
+                <th className="py-3 px-4">Stock Status</th>
+                <th className="py-3 px-4 text-center">Quantity Controls (+ / - / Edit)</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -405,7 +428,7 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
               ) : (
                 filteredProducts.map((p) => {
                   const isOut = p.stock === 0;
-                  const isLow = p.stock > 0 && p.stock <= 5;
+                  const isLow = p.stock >= 1 && p.stock <= 10;
                   const stockBarPct = Math.min(100, Math.round((p.stock / 30) * 100));
 
                   return (
@@ -470,7 +493,7 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                             <button
                               type="button"
                               onClick={() => handleSavePrice(p.id)}
-                              className="p-1 bg-[#006b2c] text-white rounded hover:bg-[#00873a]"
+                              className="p-1 bg-[#006b2c] text-white rounded hover:bg-[#00873a] cursor-pointer"
                             >
                               <Check className="w-3 h-3" />
                             </button>
@@ -489,9 +512,9 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                         )}
                       </td>
 
-                      {/* Stock Level with Progress Bar */}
+                      {/* Current Quantity Display with Unit and Min Stock */}
                       <td className="py-3 px-4">
-                        <div className="w-28 space-y-1">
+                        <div className="w-32 space-y-1">
                           <div className="flex justify-between items-center text-[12px] font-bold tabular-nums">
                             <span
                               className={
@@ -502,8 +525,13 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                                   : 'text-[#16a34a]'
                               }
                             >
-                              {p.stock} {p.unit}s
+                              {p.stock} {p.unit}
                             </span>
+                            {p.minStockLevel !== undefined && (
+                              <span className="text-[10px] text-[#94a3b8] font-normal">
+                                Min: {p.minStockLevel} {p.unit}
+                              </span>
+                            )}
                           </div>
                           {/* Mini visual indicator */}
                           <div className="w-full h-1.5 bg-[#e2e8f0] rounded-full overflow-hidden">
@@ -521,7 +549,7 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                         </div>
                       </td>
 
-                      {/* Status Badge */}
+                      {/* Stock Status Badge (quantity > 10 = In Stock, 1-10 = Low Stock, 0 = Out of Stock) */}
                       <td className="py-3 px-4">
                         {isOut ? (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#fee2e2] text-[#991b1b] text-[11px] font-bold border border-[#fecaca]">
@@ -536,14 +564,49 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#dcfce7] text-[#166534] text-[11px] font-bold border border-[#bbf7d0]">
                             <span className="w-2 h-2 rounded-full bg-[#16a34a]" />
-                            Healthy
+                            In Stock
                           </span>
                         )}
                       </td>
 
-                      {/* Adjust Stock Controls */}
+                      {/* Inventory Controls: Increase (+), Decrease (-), Direct Edit */}
                       <td className="py-3 px-4 text-center">
-                        {adjustingStockId === p.id ? (
+                        {editingDirectStockId === p.id ? (
+                          <div className="inline-flex items-center gap-1 bg-[#f1f5f9] p-1 rounded-lg border border-[#006b2c] shadow-xs">
+                            <input
+                              type="number"
+                              min="0"
+                              value={tempDirectStock}
+                              onChange={(e) =>
+                                setTempDirectStock(
+                                  Math.max(0, parseInt(e.target.value, 10) || 0)
+                                )
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveDirectStock(p.id);
+                                if (e.key === 'Escape') setEditingDirectStockId(null);
+                              }}
+                              className="w-16 px-1.5 py-0.5 text-[12px] font-bold text-center font-mono border border-[#cbd5e1] rounded bg-white"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveDirectStock(p.id)}
+                              title="Save Quantity"
+                              className="p-1 bg-[#006b2c] hover:bg-[#00873a] text-white rounded cursor-pointer transition-colors"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingDirectStockId(null)}
+                              title="Cancel"
+                              className="p-1 text-[#64748b] hover:text-[#0f172a] rounded cursor-pointer transition-colors"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : adjustingStockId === p.id ? (
                           <div className="inline-flex items-center gap-1.5 bg-[#f1f5f9] p-1 rounded-lg border border-[#cbd5e1]">
                             <span className="text-[11px] text-[#64748b]">Add:</span>
                             <input
@@ -568,42 +631,58 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <div className="inline-flex items-center gap-1">
-                            {/* Decrease Stock Button */}
+                          <div className="inline-flex items-center gap-1.5 justify-center">
+                            {/* 1. Decrease Product Quantity using - Button */}
                             <button
                               type="button"
-                              title="Decrease stock by 1"
+                              id={`decrease-stock-${p.id}`}
+                              title="Decrease quantity by 1 (-)"
                               disabled={p.stock <= 0}
                               onClick={() => handleStockIncrement(p, -1)}
-                              className={`w-7 h-7 rounded-lg text-[12px] font-bold flex items-center justify-center transition-colors cursor-pointer ${
+                              className={`w-7 h-7 rounded-lg text-[13px] font-bold flex items-center justify-center transition-all cursor-pointer ${
                                 p.stock <= 0
                                   ? 'bg-[#f1f5f9] text-[#cbd5e1] cursor-not-allowed'
-                                  : 'bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569] active:scale-95'
+                                  : 'bg-[#f1f5f9] hover:bg-[#fee2e2] hover:text-[#dc2626] text-[#475569] active:scale-95'
                               }`}
                             >
-                              -1
+                              -
                             </button>
 
-                            {/* Increase Stock Button */}
+                            {/* 3. Directly Edit Quantity Button */}
                             <button
                               type="button"
-                              title="Increase stock by 1"
-                              onClick={() => handleStockIncrement(p, 1)}
-                              className="w-7 h-7 rounded-lg bg-[#eff4ff] hover:bg-[#dce9ff] text-[#006b2c] text-[12px] font-bold flex items-center justify-center transition-colors active:scale-95 cursor-pointer"
+                              id={`direct-edit-stock-${p.id}`}
+                              onClick={() => handleStartDirectStock(p)}
+                              title="Click to directly edit quantity"
+                              className="px-2 py-1 bg-white hover:bg-[#eff4ff] text-[#0f172a] hover:text-[#006b2c] border border-[#cbd5e1] hover:border-[#006b2c] rounded-lg text-[12px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs group/btn"
                             >
-                              +1
+                              <span className="font-mono tabular-nums">{p.stock}</span>
+                              <Edit2 className="w-3 h-3 text-[#94a3b8] group-hover/btn:text-[#006b2c]" />
                             </button>
 
-                            {/* Quick Restock (+10) or Custom Dialog Toggle */}
+                            {/* 1. Increase Product Quantity using + Button */}
                             <button
                               type="button"
-                              title="Quick Restock +10"
+                              id={`increase-stock-${p.id}`}
+                              title="Increase quantity by 1 (+)"
+                              onClick={() => handleStockIncrement(p, 1)}
+                              className="w-7 h-7 rounded-lg bg-[#eff4ff] hover:bg-[#dcfce7] text-[#006b2c] hover:text-[#15803d] text-[13px] font-bold flex items-center justify-center transition-all active:scale-95 cursor-pointer"
+                            >
+                              +
+                            </button>
+
+                            {/* Quick Restock (+10) */}
+                            <button
+                              type="button"
+                              id={`restock-10-${p.id}`}
+                              title="Quick Restock +10 units"
                               onClick={() => handleStockIncrement(p, 10)}
-                              className="px-2 h-7 rounded-lg bg-[#dcfce7] hover:bg-[#bbf7d0] text-[#15803d] text-[11px] font-bold flex items-center justify-center transition-colors cursor-pointer"
+                              className="px-1.5 h-7 rounded-lg bg-[#dcfce7] hover:bg-[#bbf7d0] text-[#15803d] text-[10px] font-bold flex items-center justify-center transition-colors cursor-pointer"
                             >
                               +10
                             </button>
 
+                            {/* Custom delta popover */}
                             <button
                               type="button"
                               title="Custom amount adjustment"
@@ -611,7 +690,7 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                                 setAdjustingStockId(p.id);
                                 setAdjustStockDelta(15);
                               }}
-                              className="w-7 h-7 rounded-lg bg-[#f8fafc] hover:bg-[#e2e8f0] text-[#64748b] hover:text-[#0f172a] text-[11px] font-semibold flex items-center justify-center border border-[#cbd5e1] cursor-pointer"
+                              className="w-6 h-7 rounded-lg bg-[#f8fafc] hover:bg-[#e2e8f0] text-[#64748b] hover:text-[#0f172a] text-[11px] font-semibold flex items-center justify-center border border-[#cbd5e1] cursor-pointer"
                             >
                               <ArrowUpDown className="w-3 h-3" />
                             </button>

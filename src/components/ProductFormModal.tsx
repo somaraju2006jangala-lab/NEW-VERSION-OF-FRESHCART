@@ -21,6 +21,11 @@ interface ProductFormModalProps {
 // Curated high quality image presets for quick selection
 const IMAGE_PRESETS: { label: string; category: Product['category']; url: string }[] = [
   {
+    label: 'Red Tomatoes',
+    category: 'produce',
+    url: 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=600&q=80',
+  },
+  {
     label: 'Bananas',
     category: 'produce',
     url: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?auto=format&fit=crop&w=600&q=80',
@@ -111,7 +116,24 @@ const CATEGORY_MAP: Record<Product['category'], string> = {
   grains: 'Rice & Grains',
 };
 
-const COMMON_UNITS = ['kg', 'lb', 'loaf', 'jug', 'pack', 'bag', 'btl', 'carton', 'box', 'bunch', 'oz', 'item'];
+const COMMON_UNITS = [
+  'kg',
+  'g',
+  'litre',
+  'ml',
+  'piece',
+  'packet',
+  'bunch',
+  'box',
+  'btl',
+  'carton',
+  'loaf',
+  'bag',
+  'tub',
+  'lb',
+  'oz',
+  'item',
+];
 
 export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   isOpen,
@@ -126,6 +148,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [category, setCategory] = useState<Product['category']>('produce');
   const [price, setPrice] = useState<string>('');
   const [stock, setStock] = useState<string>('');
+  const [minStockLevel, setMinStockLevel] = useState<string>('5');
   const [unit, setUnit] = useState('kg');
   const [customUnit, setCustomUnit] = useState('');
   const [image, setImage] = useState('');
@@ -149,6 +172,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setCategory(productToEdit.category);
       setPrice(productToEdit.price.toString());
       setStock(productToEdit.stock.toString());
+      setMinStockLevel(
+        productToEdit.minStockLevel !== undefined
+          ? productToEdit.minStockLevel.toString()
+          : '5'
+      );
       if (COMMON_UNITS.includes(productToEdit.unit)) {
         setUnit(productToEdit.unit);
         setCustomUnit('');
@@ -170,7 +198,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       setTitle('');
       setCategory('produce');
       setPrice('');
-      setStock('20');
+      setStock('25');
+      setMinStockLevel('5');
       setUnit('kg');
       setCustomUnit('');
       setImage(IMAGE_PRESETS[0].url);
@@ -209,6 +238,11 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       errs.stock = 'Stock must be 0 or a positive number';
     }
 
+    const parsedMinStock = parseInt(minStockLevel, 10);
+    if (minStockLevel === '' || isNaN(parsedMinStock) || parsedMinStock < 0) {
+      errs.minStockLevel = 'Minimum stock must be 0 or a positive number';
+    }
+
     const finalUnit = unit === 'custom' ? customUnit.trim() : unit;
     if (!finalUnit) {
       errs.unit = 'Unit measurement is required';
@@ -232,6 +266,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
     const parsedPrice = parseFloat(parseFloat(price).toFixed(2));
     const parsedStock = parseInt(stock, 10);
+    const parsedMinStock = parseInt(minStockLevel, 10) || 5;
     const finalUnit = unit === 'custom' ? customUnit.trim() : unit;
     const finalSku = sku.trim() || `SKU-${Math.floor(1000 + Math.random() * 9000)}`;
     const finalSupplier = supplier.trim() || 'FreshCart Local Farms';
@@ -243,6 +278,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
       categoryLabel: CATEGORY_MAP[category],
       price: parsedPrice,
       stock: parsedStock,
+      minStockLevel: parsedMinStock,
       unit: finalUnit,
       image: image.trim(),
       description: description.trim(),
@@ -378,8 +414,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </div>
           </div>
 
-          {/* Price & Stock Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Price, Stock & Minimum Stock Level Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-[12px] font-bold text-[#0f172a] uppercase tracking-wider mb-1.5">
                 Price (INR ₹) <span className="text-[#ef4444]">*</span>
@@ -411,7 +447,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
             <div>
               <label className="block text-[12px] font-bold text-[#0f172a] uppercase tracking-wider mb-1.5">
-                Initial / Live Stock <span className="text-[#ef4444]">*</span>
+                Quantity / Stock <span className="text-[#ef4444]">*</span>
               </label>
               <div className="relative">
                 <Layers className="w-4 h-4 text-[#64748b] absolute left-3.5 top-3" />
@@ -439,15 +475,48 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 ) : (
                   <span className="text-[11px] text-[#64748b]">
                     {parseInt(stock, 10) === 0 ? (
-                      <span className="text-[#ef4444] font-semibold">Will be marked Out of Stock</span>
-                    ) : parseInt(stock, 10) <= 5 ? (
-                      <span className="text-[#b45309] font-semibold">Will trigger Low Stock alert</span>
+                      <span className="text-[#ef4444] font-semibold">Out of Stock (qty = 0)</span>
+                    ) : parseInt(stock, 10) <= 10 ? (
+                      <span className="text-[#b45309] font-semibold">Low Stock (qty 1–10)</span>
                     ) : (
-                      <span className="text-[#16a34a] font-semibold">Healthy inventory level</span>
+                      <span className="text-[#16a34a] font-semibold">In Stock (qty &gt; 10)</span>
                     )}
                   </span>
                 )}
               </div>
+            </div>
+
+            <div>
+              <label className="block text-[12px] font-bold text-[#0f172a] uppercase tracking-wider mb-1.5">
+                Min Stock Level <span className="text-[#ef4444]">*</span>
+              </label>
+              <div className="relative">
+                <Layers className="w-4 h-4 text-[#64748b] absolute left-3.5 top-3" />
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  id="product-min-stock-input"
+                  value={minStockLevel}
+                  onChange={(e) => setMinStockLevel(e.target.value)}
+                  placeholder="5"
+                  className={`w-full pl-9 pr-3.5 py-2.5 text-[13px] rounded-xl border tabular-nums transition-all ${
+                    errors.minStockLevel
+                      ? 'border-[#ef4444] bg-[#fef2f2] focus:ring-2 focus:ring-[#ef4444]/20'
+                      : 'border-[#cbd5e1] bg-[#f8fafc] focus:bg-white focus:ring-2 focus:ring-[#006b2c]/30 focus:border-[#006b2c]'
+                  }`}
+                />
+              </div>
+              {errors.minStockLevel ? (
+                <p className="text-[11px] text-[#ef4444] mt-1 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {errors.minStockLevel}
+                </p>
+              ) : (
+                <span className="text-[10px] text-[#64748b] mt-1 block">
+                  Alert threshold for replenishment
+                </span>
+              )}
             </div>
           </div>
 
