@@ -39,7 +39,14 @@ export interface InventoryLog {
   timestamp: string;
   sku: string;
   productTitle: string;
-  changeType: 'RESTOCK' | 'SALE' | 'AUDIT_ADJUSTMENT' | 'SPOILAGE_DISPOSAL';
+  changeType:
+    | 'RESTOCK'
+    | 'SALE'
+    | 'AUDIT_ADJUSTMENT'
+    | 'SPOILAGE_DISPOSAL'
+    | 'PRODUCT_ADDED'
+    | 'PRODUCT_UPDATED'
+    | 'PRODUCT_DELETED';
   quantityChange: number;
   newStock: number;
   operator: string;

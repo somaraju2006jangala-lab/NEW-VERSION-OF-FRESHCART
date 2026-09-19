@@ -17,9 +17,28 @@ import { TrustBanner } from './components/TrustBanner';
 import { Footer } from './components/Footer';
 import { RefreshCw, Sparkles } from 'lucide-react';
 
+const STORAGE_PRODUCTS_KEY = 'freshcart_inventory_products';
+const STORAGE_INVENTORY_LOGS_KEY = 'freshcart_inventory_logs';
+
 function FreshCartStore() {
   const { currentUser, isLoading, logout } = useAuth();
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
+
+  // Load products from localStorage or default to INITIAL_PRODUCTS
+  const [products, setProducts] = useState<Product[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_PRODUCTS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_PRODUCTS;
+  });
+
   // Default to login when unauthenticated; storefront when authenticated
   const [currentView, setCurrentView] = useState<ViewType>('login');
 
@@ -47,7 +66,39 @@ function FreshCartStore() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'organic' | 'quickPrep'>('all');
   const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
-  const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(INITIAL_INVENTORY_LOGS);
+
+  // Load inventory logs from localStorage or default to INITIAL_INVENTORY_LOGS
+  const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_INVENTORY_LOGS_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return INITIAL_INVENTORY_LOGS;
+  });
+
+  // Sync products and inventory logs to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_PRODUCTS_KEY, JSON.stringify(products));
+    } catch (e) {
+      console.error('Failed to persist products to storage', e);
+    }
+  }, [products]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_INVENTORY_LOGS_KEY, JSON.stringify(inventoryLogs));
+    } catch (e) {
+      console.error('Failed to persist inventory logs to storage', e);
+    }
+  }, [inventoryLogs]);
 
   // Synchronize URL Hash routing with currentView and enforce route protection
   useEffect(() => {
@@ -60,7 +111,12 @@ function FreshCartStore() {
         // UNAUTHENTICATED USERS:
         // Only 'login', 'register', and 'admin' are permitted.
         // The main storefront and customer dashboard are strictly protected.
-        if (hash === '#/admin' || hash === '#admin') {
+        if (
+          hash === '#/admin' ||
+          hash === '#admin' ||
+          hash === '#/admin/inventory' ||
+          hash === '#admin-inventory'
+        ) {
           setCurrentView('admin');
         } else if (hash === '#/register' || hash === '#register') {
           setCurrentView('register');
@@ -73,7 +129,12 @@ function FreshCartStore() {
         }
       } else {
         // AUTHENTICATED CUSTOMERS:
-        if (hash === '#/admin' || hash === '#admin') {
+        if (
+          hash === '#/admin' ||
+          hash === '#admin' ||
+          hash === '#/admin/inventory' ||
+          hash === '#admin-inventory'
+        ) {
           setCurrentView('admin');
         } else if (hash === '#/dashboard' || hash === '#dashboard') {
           setCurrentView('dashboard');
@@ -148,34 +209,162 @@ function FreshCartStore() {
     setCart([]);
   };
 
-  // Inventory Updates (from Admin or simulated events)
+  // Inventory & Product Management (from Admin or simulated events)
+  const handleAddProduct = (newProduct: Product) => {
+    setProducts((prev) => [newProduct, ...prev]);
+
+    const logEntry: InventoryLog = {
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      sku: newProduct.sku,
+      productTitle: newProduct.title,
+      changeType: 'PRODUCT_ADDED',
+      quantityChange: newProduct.stock,
+      newStock: newProduct.stock,
+      operator: 'Sarah L. (Ops Manager)',
+      notes: `Catalog item added: ${newProduct.categoryLabel} (${newProduct.unit})`,
+    };
+    setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
+  };
+
+  const handleEditProduct = (updatedProduct: Product) => {
+    setProducts((prev) =>
+      prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p))
+    );
+
+    // Keep active cart items synchronized with updated product info
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.product.id === updatedProduct.id) {
+          const validQty = Math.max(1, Math.min(item.quantity, updatedProduct.stock || item.quantity));
+          return {
+            ...item,
+            product: updatedProduct,
+            quantity: validQty,
+          };
+        }
+        return item;
+      })
+    );
+
+    // If modal is open for this product, update it
+    setActiveModalProduct((current) =>
+      current && current.id === updatedProduct.id ? updatedProduct : current
+    );
+
+    const logEntry: InventoryLog = {
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      sku: updatedProduct.sku,
+      productTitle: updatedProduct.title,
+      changeType: 'PRODUCT_UPDATED',
+      quantityChange: 0,
+      newStock: updatedProduct.stock,
+      operator: 'Sarah L. (Ops Manager)',
+      notes: `SKU updated: $${updatedProduct.price.toFixed(2)} / ${updatedProduct.unit}, stock: ${updatedProduct.stock}`,
+    };
+    setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
+  };
+
+  const handleDeleteProduct = (productId: string) => {
+    const target = products.find((p) => p.id === productId);
+
+    // Remove from products
+    setProducts((prev) => prev.filter((p) => p.id !== productId));
+
+    // Remove from cart if present
+    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+
+    // Close modal if viewing this product
+    setActiveModalProduct((current) => (current?.id === productId ? null : current));
+
+    if (target) {
+      const logEntry: InventoryLog = {
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        sku: target.sku,
+        productTitle: target.title,
+        changeType: 'PRODUCT_DELETED',
+        quantityChange: -target.stock,
+        newStock: 0,
+        operator: 'Sarah L. (Ops Manager)',
+        notes: `Product removed from inventory and customer catalog`,
+      };
+      setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
+    }
+  };
+
   const handleUpdateProductStock = (productId: string, newStock: number, reason: string) => {
     setProducts((prev) =>
       prev.map((p) => {
         if (p.id === productId) {
-          const change = newStock - p.stock;
+          const safeStock = Math.max(0, newStock);
+          const change = safeStock - p.stock;
           const logEntry: InventoryLog = {
             id: `log-${Date.now()}`,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             sku: p.sku,
             productTitle: p.title,
-            changeType: change > 0 ? 'RESTOCK' : 'SALE',
+            changeType: change > 0 ? 'RESTOCK' : change < 0 ? 'SALE' : 'AUDIT_ADJUSTMENT',
             quantityChange: change,
-            newStock,
+            newStock: safeStock,
             operator: 'Manager Override',
             notes: reason,
           };
           setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
-          return { ...p, stock: Math.max(0, newStock) };
+
+          const updatedProd = { ...p, stock: safeStock };
+
+          // Keep active quick-view modal updated
+          setActiveModalProduct((current) =>
+            current && current.id === productId ? updatedProd : current
+          );
+
+          return updatedProd;
         }
         return p;
+      })
+    );
+
+    // Keep cart item product stock info updated
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.product.id === productId) {
+          return {
+            ...item,
+            product: { ...item.product, stock: Math.max(0, newStock) },
+          };
+        }
+        return item;
       })
     );
   };
 
   const handleUpdateProductPrice = (productId: string, newPrice: number) => {
     setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, price: newPrice } : p))
+      prev.map((p) => {
+        if (p.id === productId) {
+          const updatedProd = { ...p, price: newPrice };
+          setActiveModalProduct((current) =>
+            current && current.id === productId ? updatedProd : current
+          );
+          return updatedProd;
+        }
+        return p;
+      })
+    );
+
+    // Keep cart item product price updated
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.product.id === productId) {
+          return {
+            ...item,
+            product: { ...item.product, price: newPrice },
+          };
+        }
+        return item;
+      })
     );
   };
 
@@ -253,6 +442,9 @@ function FreshCartStore() {
             onUpdateProductStock={handleUpdateProductStock}
             onUpdateProductPrice={handleUpdateProductPrice}
             onSimulateCdcPulse={handleSimulateCdcPulse}
+            onAddProduct={handleAddProduct}
+            onEditProduct={handleEditProduct}
+            onDeleteProduct={handleDeleteProduct}
           />
         ) : currentView === 'login' ? (
           <LoginPage
