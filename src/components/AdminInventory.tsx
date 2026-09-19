@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
 import { ProductFormModal } from './ProductFormModal';
+import { formatINR } from '../utils/currency';
 import {
   Package,
   Plus,
@@ -145,7 +146,7 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
   const handleSavePrice = (productId: string) => {
     if (tempPrice > 0) {
       onUpdateProductPrice(productId, tempPrice);
-      showToast(`Updated product price to $${tempPrice.toFixed(2)}`);
+      showToast(`Updated product price to ${formatINR(tempPrice)}`);
     }
     setEditingPriceId(null);
   };
@@ -458,10 +459,10 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                       <td className="py-3 px-4">
                         {editingPriceId === p.id ? (
                           <div className="flex items-center gap-1">
-                            <span className="text-[#64748b] text-[12px]">$</span>
+                            <span className="text-[#64748b] text-[12px]">₹</span>
                             <input
                               type="number"
-                              step="0.05"
+                              step="1"
                               value={tempPrice}
                               onChange={(e) => setTempPrice(parseFloat(e.target.value) || 0)}
                               className="w-16 px-1.5 py-0.5 border border-[#cbd5e1] rounded text-[12px] font-mono"
@@ -481,7 +482,7 @@ export const AdminInventory: React.FC<AdminInventoryProps> = ({
                             title="Click to edit price"
                             className="flex items-center gap-1 font-semibold text-[#0f172a] hover:text-[#006b2c] tabular-nums font-display group/edit cursor-pointer"
                           >
-                            <span className="text-[14px] font-bold">${p.price.toFixed(2)}</span>
+                            <span className="text-[14px] font-bold">{formatINR(p.price)}</span>
                             <span className="text-[11px] text-[#64748b]">/ {p.unit}</span>
                             <Edit2 className="w-3 h-3 opacity-0 group-hover/edit:opacity-100 text-[#94a3b8]" />
                           </button>

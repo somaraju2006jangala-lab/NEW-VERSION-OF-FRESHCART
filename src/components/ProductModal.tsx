@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
+import { formatINR } from '../utils/currency';
 import {
   X,
   ShoppingCart,
@@ -80,7 +81,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             </div>
             <div className="text-right shrink-0">
               <span className="text-[24px] font-extrabold text-[#006b2c] font-display tabular-nums">
-                ${product.price.toFixed(2)}
+                {formatINR(product.price)}
               </span>
               <span className="text-[12px] text-[#565e74] block">
                 / {product.unit}
@@ -197,7 +198,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             ) : (
               <>
                 <ShoppingCart className="w-4 h-4" />
-                <span>Add {qty} to Cart · ${(product.price * qty).toFixed(2)}</span>
+                <span>Add {qty} to Cart · {formatINR(product.price * qty)}</span>
               </>
             )}
           </button>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CartItem } from '../types';
+import { formatINR } from '../utils/currency';
 import {
   ShoppingCart,
   ChevronUp,
@@ -40,7 +41,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState('');
 
-  const freeDeliveryThreshold = 25.0;
+  const freeDeliveryThreshold = 499.0;
   const totalItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = items.reduce(
     (sum, item) => sum + item.product.price * item.quantity,
@@ -96,7 +97,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 id="cart-drawer-toggle-subtotal"
                 className="text-[16px] font-bold text-white leading-tight font-display tabular-nums"
               >
-                ${total.toFixed(2)}
+                {formatINR(total)}
               </div>
             </div>
             <ChevronUp className="w-5 h-5 text-[#bec6e0]" />
@@ -134,7 +135,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           <div className="bg-[#eff4ff] p-3 rounded-xl my-3 space-y-1.5 border border-[#e2e8f0]/60">
             <div className="flex items-center justify-between text-[11px] font-medium">
               <span className="text-[#3e4a3d]">
-                Free Express Delivery Goal ($25.00)
+                Free Express Delivery Goal ({formatINR(freeDeliveryThreshold)})
               </span>
               <span
                 id="progress-text"
@@ -144,7 +145,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               >
                 {deliveryDiff <= 0
                   ? 'FREE Express Delivery Unlocked!'
-                  : `Add $${deliveryDiff.toFixed(2)} more for FREE delivery`}
+                  : `Add ${formatINR(deliveryDiff)} more for FREE delivery`}
               </span>
             </div>
             <div className="w-full h-2 bg-[#e5eeff] rounded-full overflow-hidden">
@@ -192,7 +193,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       {item.product.title}
                     </span>
                     <span className="text-[11px] text-[#565e74]">
-                      {item.quantity} × ${item.product.price.toFixed(2)} / {item.product.unit}
+                      {item.quantity} × {formatINR(item.product.price)} / {item.product.unit}
                     </span>
                   </div>
 
@@ -220,7 +221,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </div>
 
                     <span className="text-[13px] font-bold text-[#0b1c30] min-w-[50px] text-right tabular-nums">
-                      ${(item.product.price * item.quantity).toFixed(2)}
+                      {formatINR(item.product.price * item.quantity)}
                     </span>
 
                     <button
@@ -300,14 +301,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className="flex justify-between text-[#565e74]">
               <span>Aisle Subtotal</span>
               <span id="cart-drawer-subtotal" className="font-semibold text-[#0b1c30] tabular-nums">
-                ${subtotal.toFixed(2)}
+                {formatINR(subtotal)}
               </span>
             </div>
 
             {discount > 0 && (
               <div className="flex justify-between text-[#006b2c]">
                 <span>Farm Welcome Discount (30%)</span>
-                <span className="font-semibold tabular-nums">-${discount.toFixed(2)}</span>
+                <span className="font-semibold tabular-nums">-{formatINR(discount)}</span>
               </div>
             )}
 
@@ -319,7 +320,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             <div className="flex justify-between text-[15px] font-bold text-[#0b1c30] pt-1 border-t border-[#e5eeff]">
               <span>Total Estimated</span>
               <span id="cart-drawer-total" className="text-[#006b2c] tabular-nums font-display">
-                ${total.toFixed(2)}
+                {formatINR(total)}
               </span>
             </div>
           </div>

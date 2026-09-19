@@ -6,7 +6,7 @@ import {
   Check,
   AlertCircle,
   Sparkles,
-  DollarSign,
+  IndianRupee,
   Package,
   Layers,
 } from 'lucide-react';
@@ -201,7 +201,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
     const parsedPrice = parseFloat(price);
     if (!price || isNaN(parsedPrice) || parsedPrice <= 0) {
-      errs.price = 'Enter a valid price greater than $0.00';
+      errs.price = 'Enter a valid price greater than ₹0';
     }
 
     const parsedStock = parseInt(stock, 10);
@@ -382,18 +382,18 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-[12px] font-bold text-[#0f172a] uppercase tracking-wider mb-1.5">
-                Price (USD $) <span className="text-[#ef4444]">*</span>
+                Price (INR ₹) <span className="text-[#ef4444]">*</span>
               </label>
               <div className="relative">
-                <DollarSign className="w-4 h-4 text-[#64748b] absolute left-3.5 top-3" />
+                <IndianRupee className="w-4 h-4 text-[#64748b] absolute left-3.5 top-3" />
                 <input
                   type="number"
-                  step="0.01"
-                  min="0.01"
+                  step="1"
+                  min="1"
                   id="product-price-input"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
-                  placeholder="3.99"
+                  placeholder="199"
                   className={`w-full pl-9 pr-3.5 py-2.5 text-[13px] rounded-xl border tabular-nums transition-all ${
                     errors.price
                       ? 'border-[#ef4444] bg-[#fef2f2] focus:ring-2 focus:ring-[#ef4444]/20'

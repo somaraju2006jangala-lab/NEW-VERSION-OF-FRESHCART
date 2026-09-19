@@ -3,7 +3,7 @@ import { INITIAL_PRODUCTS } from '../data/products';
 
 const STORAGE_CUSTOMERS_KEY = 'freshcart_registered_customers';
 const STORAGE_CURRENT_USER_KEY = 'freshcart_active_customer_session';
-const STORAGE_CUSTOMER_ORDERS_KEY = 'freshcart_customer_orders';
+const STORAGE_CUSTOMER_ORDERS_KEY = 'freshcart_customer_orders_inr_v1';
 
 // Demo customer credentials
 export const DEMO_CUSTOMER_EMAIL = 'customer@freshcart.com';
@@ -28,7 +28,7 @@ export function generateSalt(length = 16): string {
   return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Initial seed orders for the demo customer
+// Initial seed orders for the demo customer (INR pricing)
 const INITIAL_DEMO_ORDERS: CustomerOrder[] = [
   {
     id: 'FC-94821',
@@ -38,12 +38,12 @@ const INITIAL_DEMO_ORDERS: CustomerOrder[] = [
     deliveryTimeSlot: '24-30 Minutes (Direct Express Pod)',
     estimatedDeliveryTime: 'Arriving in ~18 minutes',
     items: [
-      { product: INITIAL_PRODUCTS[0], quantity: 2 }, // Bananas
-      { product: INITIAL_PRODUCTS[1], quantity: 1 }, // Whole Milk
+      { product: INITIAL_PRODUCTS[0], quantity: 2 }, // Bananas @ ₹69
+      { product: INITIAL_PRODUCTS[1], quantity: 1 }, // Whole Milk @ ₹79
     ],
-    subtotal: 7.77,
+    subtotal: 217,
     discount: 0,
-    total: 7.77,
+    total: 217,
     status: 'Picking at Pod #104',
     createdAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
     paymentMethod: '⚡ Express Pay',
@@ -56,13 +56,13 @@ const INITIAL_DEMO_ORDERS: CustomerOrder[] = [
     deliveryTimeSlot: 'Yesterday, 05:45 PM',
     estimatedDeliveryTime: 'Delivered',
     items: [
-      { product: INITIAL_PRODUCTS[2], quantity: 3 }, // Honeycrisp Apples
-      { product: INITIAL_PRODUCTS[3], quantity: 1 }, // Sourdough
-      { product: INITIAL_PRODUCTS[4], quantity: 2 }, // Cold Brew Coffee
+      { product: INITIAL_PRODUCTS[2], quantity: 3 }, // Honeycrisp Apples @ ₹199
+      { product: INITIAL_PRODUCTS[3], quantity: 1 }, // Sourdough @ ₹149
+      { product: INITIAL_PRODUCTS[4], quantity: 2 }, // Cold Brew Coffee @ ₹299
     ],
-    subtotal: 21.92,
-    discount: 4.00,
-    total: 17.92,
+    subtotal: 1344,
+    discount: 200,
+    total: 1144,
     couponCode: 'FRESH30',
     status: 'Delivered',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
@@ -76,12 +76,12 @@ const INITIAL_DEMO_ORDERS: CustomerOrder[] = [
     deliveryTimeSlot: '3 days ago',
     estimatedDeliveryTime: 'Delivered',
     items: [
-      { product: INITIAL_PRODUCTS[5], quantity: 4 }, // Avocados
-      { product: INITIAL_PRODUCTS[6], quantity: 2 }, // Greek Yogurt
+      { product: INITIAL_PRODUCTS[5], quantity: 4 }, // Avocados @ ₹349
+      { product: INITIAL_PRODUCTS[6], quantity: 2 }, // Greek Yogurt @ ₹189
     ],
-    subtotal: 28.54,
+    subtotal: 1774,
     discount: 0,
-    total: 28.54,
+    total: 1774,
     status: 'Delivered',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
     paymentMethod: '⚡ Express Pay',

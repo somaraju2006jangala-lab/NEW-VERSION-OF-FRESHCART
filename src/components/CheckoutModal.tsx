@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CartItem, CustomerOrder } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { formatINR } from '../utils/currency';
 import {
   X,
   CheckCircle,
@@ -224,7 +225,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       {it.quantity}x {it.product.title}
                     </span>
                     <span className="font-semibold tabular-nums">
-                      ${(it.product.price * it.quantity).toFixed(2)}
+                      {formatINR(it.product.price * it.quantity)}
                     </span>
                   </div>
                 ))}
@@ -232,7 +233,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               <div className="pt-2 border-t border-[#e2e8f0] flex justify-between font-bold text-[14px]">
                 <span>Total Amount Due</span>
                 <span className="text-[#006b2c] font-display tabular-nums">
-                  ${total.toFixed(2)}
+                  {formatINR(total)}
                 </span>
               </div>
             </div>
@@ -248,7 +249,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               ) : (
                 <>
                   <ShieldCheck className="w-4 h-4 text-[#7ffc97]" />
-                  <span>Place Order · ${total.toFixed(2)}</span>
+                  <span>Place Order · {formatINR(total)}</span>
                 </>
               )}
             </button>

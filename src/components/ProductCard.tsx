@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
+import { formatINR } from '../utils/currency';
 import { Plus, Minus, ShoppingCart, Bell, Check } from 'lucide-react';
 
 interface ProductCardProps {
@@ -103,7 +104,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           </h3>
           <div className="mt-2 flex items-baseline gap-1">
             <span className="text-[20px] font-bold text-[#0b1c30] tabular-nums font-display">
-              ${product.price.toFixed(2)}
+              {formatINR(product.price)}
             </span>
             <span className="text-[12px] text-[#565e74]">/ {product.unit}</span>
           </div>
