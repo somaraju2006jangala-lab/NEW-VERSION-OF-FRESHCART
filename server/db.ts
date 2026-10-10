@@ -615,6 +615,7 @@ export async function initializeDatabase(): Promise<void> {
       payment_method VARCHAR(32) NOT NULL DEFAULT 'COD',
       payment_status VARCHAR(64) NOT NULL DEFAULT 'PENDING',
       screenshot_url VARCHAR(512) NULL,
+      screenshot_data LONGTEXT NULL,
       verified_at TIMESTAMP NULL,
       verified_by VARCHAR(100) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -703,6 +704,7 @@ export async function initializeDatabase(): Promise<void> {
       screenshot_path VARCHAR(512) NULL,
       screenshot_mime VARCHAR(64) NULL,
       screenshot_size INT NULL,
+      screenshot_data LONGTEXT NULL,
       screenshot_uploaded_at TIMESTAMP NULL,
       razorpay_order_id VARCHAR(100) NULL,
       razorpay_payment_id VARCHAR(100) NULL,
@@ -782,6 +784,9 @@ export async function initializeDatabase(): Promise<void> {
     await currentPool.query('ALTER TABLE orders ADD COLUMN screenshot_url VARCHAR(512) NULL AFTER payment_status');
   } catch {}
   try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN screenshot_data LONGTEXT NULL AFTER screenshot_url');
+  } catch {}
+  try {
     await currentPool.query('ALTER TABLE orders ADD COLUMN verified_at TIMESTAMP NULL AFTER screenshot_url');
   } catch {}
   try {
@@ -812,6 +817,9 @@ export async function initializeDatabase(): Promise<void> {
   } catch {}
   try {
     await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_size INT NULL AFTER screenshot_mime');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_data LONGTEXT NULL AFTER screenshot_size');
   } catch {}
   try {
     await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_uploaded_at TIMESTAMP NULL AFTER screenshot_size');
@@ -1218,8 +1226,8 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
  * Upserts a customer into MySQL database.
  */
 export async function upsertCustomerInDb(customerData: any): Promise<boolean> {
-  if (!customerData?.id && !customerData?.customer_id) return false;
-  const customerId = customerData.customer_id || customerData.id;
+  const customerId = customerData?.customerId || customerData?.customer_id || customerData?.id;
+  if (!customerId) return false;
   const fullName = customerData.name || customerData.full_name || 'Customer';
   const email = (customerData.email || '').trim().toLowerCase();
   const mobile = (customerData.phone || customerData.mobile || '').trim();
@@ -1795,9 +1803,9 @@ export async function clearCartInDb(customerId: string): Promise<boolean> {
  * Upserts / creates an order in MySQL, including order items and payment record.
  */
 export async function upsertOrderInDb(orderData: any): Promise<boolean> {
-  if (!orderData?.id) return false;
+  const orderId = orderData?.id || orderData?.orderId;
+  if (!orderId) return false;
   const pool = getPool();
-  const orderId = orderData.id;
   const customerId = orderData.customerId || 'guest';
   const customerName = orderData.customerName || 'Customer';
   const email = orderData.customerEmail || orderData.email || '';
@@ -2670,10 +2678,12 @@ export async function savePaymentScreenshotInDb(data: {
   screenshotPath: string;
   mimeType: string;
   fileSize: number;
+  screenshotData?: string;
 }): Promise<SaveScreenshotResult> {
   const pool = getPool();
+  const cleanOrderId = data.orderId.replace(/^#/, '');
   const altId = data.orderId.startsWith('#') ? data.orderId.slice(1) : `#${data.orderId}`;
-  const screenshotUrl = `/api/payments/screenshot/${encodeURIComponent(data.orderId)}`;
+  const screenshotUrl = `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}`;
 
   const connection = await pool.getConnection();
   try {
@@ -2712,12 +2722,11 @@ export async function savePaymentScreenshotInDb(data: {
       };
     }
 
-    // Rule: If already PENDING_VERIFICATION or active screenshot exists, only permit if REJECTED
-    const isPending = currentOrderStatus === 'PENDING_VERIFICATION' || currentPaymentStatus === 'PENDING_VERIFICATION';
+    // Rule: If active screenshot proof exists, block duplicate upload UNLESS order was REJECTED by admin
     const hasProof = Boolean(currentOrderScreenshot || currentPaymentScreenshot);
     const isRejected = currentOrderStatus === 'REJECTED' || currentPaymentStatus === 'REJECTED';
 
-    if (isPending || (hasProof && !isRejected)) {
+    if (hasProof && !isRejected) {
       await connection.rollback();
       return {
         success: false,
@@ -2730,9 +2739,10 @@ export async function savePaymentScreenshotInDb(data: {
     await connection.query(
       `UPDATE orders
        SET payment_status = 'PENDING_VERIFICATION',
-           screenshot_url = ?
+           screenshot_url = ?,
+           screenshot_data = COALESCE(?, screenshot_data)
        WHERE order_id IN (?, ?)`,
-      [screenshotUrl, data.orderId, altId]
+      [screenshotUrl, data.screenshotData || null, data.orderId, altId]
     );
 
     // 4. Update payments table if existing, or create if not yet existing
@@ -2743,20 +2753,21 @@ export async function savePaymentScreenshotInDb(data: {
              screenshot_path = ?,
              screenshot_mime = ?,
              screenshot_size = ?,
+             screenshot_data = COALESCE(?, screenshot_data),
              screenshot_uploaded_at = NOW(),
              amount = CASE WHEN (amount IS NULL OR amount = 0) AND ? > 0 THEN ? ELSE amount END
          WHERE order_id IN (?, ?)`,
-        [data.screenshotPath, data.mimeType, data.fileSize, orderTotal, orderTotal, data.orderId, altId]
+        [data.screenshotPath, data.mimeType, data.fileSize, data.screenshotData || null, orderTotal, orderTotal, data.orderId, altId]
       );
     } else {
-      const paymentId = `PAY-${data.orderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+      const paymentId = `PAY-${cleanOrderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
       await connection.query(
         `INSERT INTO payments (
            payment_id, order_id, customer_id, payment_method, payment_status,
-           amount, screenshot_path, screenshot_mime, screenshot_size, screenshot_uploaded_at
+           amount, screenshot_path, screenshot_mime, screenshot_size, screenshot_data, screenshot_uploaded_at
          )
-         VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', ?, ?, ?, ?, NOW())`,
-        [paymentId, data.orderId, data.customerId || 'guest', orderTotal, data.screenshotPath, data.mimeType, data.fileSize]
+         VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', ?, ?, ?, ?, ?, NOW())`,
+        [paymentId, data.orderId, data.customerId || 'guest', orderTotal, data.screenshotPath, data.mimeType, data.fileSize, data.screenshotData || null]
       );
     }
 
@@ -2787,12 +2798,14 @@ export async function getPaymentRecordByOrderId(orderId: string): Promise<any | 
               p.currency, p.transaction_ref as transactionRef,
               p.upi_id as upiId, p.upi_merchant_name as upiMerchantName,
               p.screenshot_path as screenshotPath, p.screenshot_mime as screenshotMime,
-              p.screenshot_size as screenshotSize, p.screenshot_uploaded_at as screenshotUploadedAt,
+              p.screenshot_size as screenshotSize, p.screenshot_data as screenshotData,
+              p.screenshot_uploaded_at as screenshotUploadedAt,
               p.paid_at as paidAt, p.verified_at as verifiedAt, p.verified_by as verifiedBy,
               p.verification_notes as verificationNotes, p.otp_sent as otpSent, p.otp_sent_at as otpSentAt,
               p.created_at as createdAt,
               o.customer_name as customerName, o.mobile as customerPhone, o.email as customerEmail,
-              o.total as orderTotal, o.subtotal as subtotal, o.discount as discount, o.status as orderStatus
+              o.total as orderTotal, o.subtotal as subtotal, o.discount as discount, o.status as orderStatus,
+              o.screenshot_url as orderScreenshotUrl, o.screenshot_data as orderScreenshotData
        FROM payments p
        LEFT JOIN orders o ON (o.order_id = p.order_id OR o.order_id = ?)
        WHERE p.order_id IN (?, ?)
@@ -2867,6 +2880,7 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
         p.transaction_ref as transactionRef,
         p.upi_id as upiId,
         p.screenshot_path as screenshotPath,
+        p.screenshot_data as screenshotData,
         p.screenshot_uploaded_at as screenshotUploadedAt,
         COALESCE(p.verification_notes, '') as verificationNotes,
         COALESCE(p.otp_sent, 0) as otpSent
@@ -2899,6 +2913,7 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
         p2.transaction_ref as transactionRef,
         p2.upi_id as upiId,
         p2.screenshot_path as screenshotPath,
+        p2.screenshot_data as screenshotData,
         p2.screenshot_uploaded_at as screenshotUploadedAt,
         COALESCE(p2.verification_notes, '') as verificationNotes,
         COALESCE(p2.otp_sent, 0) as otpSent
@@ -2931,7 +2946,7 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
         subtotal: Number(row.subtotal) || 0,
         discount: Number(row.discount) || 0,
         paymentStatus: row.paymentStatus || 'PENDING',
-        screenshotUrl: row.screenshotUrl || (row.screenshotPath ? `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}` : undefined),
+        screenshotUrl: row.screenshotUrl || (row.screenshotPath || row.screenshotData ? `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}` : undefined),
         otpSent: Boolean(row.otpSent),
       };
     });
@@ -2993,7 +3008,8 @@ export async function verifyUpiPaymentInDb(params: {
              otp_sent_at = NOW(),
              screenshot_path = NULL,
              screenshot_mime = NULL,
-             screenshot_size = NULL
+             screenshot_size = NULL,
+             screenshot_data = NULL
          WHERE order_id IN (?, ?)`,
         [params.adminUsername, params.orderId, altId]
       );
@@ -3002,6 +3018,7 @@ export async function verifyUpiPaymentInDb(params: {
         `UPDATE orders
          SET payment_status = 'PAID',
              screenshot_url = NULL,
+             screenshot_data = NULL,
              verified_at = NOW(),
              verified_by = ?
          WHERE order_id IN (?, ?)`,

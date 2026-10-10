@@ -1596,16 +1596,18 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
     }
 
     // 2. Enforce one-upload restriction per order:
-    // If status is PENDING_VERIFICATION or active screenshot exists (and is not REJECTED), block upload!
-    const isAlreadyPending =
-      (order && order.paymentStatus === 'PENDING_VERIFICATION') ||
-      (payment && payment.paymentStatus === 'PENDING_VERIFICATION');
-    const hasActiveScreenshot = Boolean(order?.screenshotUrl || payment?.screenshotPath);
+    // If active screenshot proof exists (and is not REJECTED), block duplicate upload!
+    const hasActiveScreenshot = Boolean(
+      order?.screenshotUrl ||
+      payment?.screenshotPath ||
+      (order as any)?.screenshotData ||
+      (payment as any)?.screenshotData
+    );
     const isRejected =
       (order && order.paymentStatus === 'REJECTED') ||
       (payment && payment.paymentStatus === 'REJECTED');
 
-    if (isAlreadyPending || (hasActiveScreenshot && !isRejected)) {
+    if (hasActiveScreenshot && !isRejected) {
       sendJson(res, 400, {
         success: false,
         alreadySubmitted: true,
@@ -1623,11 +1625,13 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
         fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
       }
 
-      const cleanId = trimmedOrderId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const cleanId = trimmedOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
       const fileNameOnDisk = `proof_${cleanId}_${Date.now()}${ext}`;
       const filePathOnDisk = path.join(SCREENSHOTS_DIR, fileNameOnDisk);
 
       fs.writeFileSync(filePathOnDisk, fileBuffer);
+
+      const dataUriPayload = dataUriMatch ? rawImage : `data:${finalMime};base64,${base64Payload}`;
 
       // Save in MySQL database and update payment status to PENDING_VERIFICATION
       const saved = await savePaymentScreenshotInDb({
@@ -1636,6 +1640,7 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
         screenshotPath: filePathOnDisk,
         mimeType: finalMime,
         fileSize: fileBuffer.length,
+        screenshotData: dataUriPayload,
       });
 
       if (!saved.success) {
@@ -1652,13 +1657,15 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
         return;
       }
 
+      const cleanOrderId = trimmedOrderId.replace(/^#/, '');
+
       // DO NOT mark payment as PAID. DO NOT trigger OTP.
       sendJson(res, 200, {
         success: true,
         message: 'Payment proof submitted successfully. Please wait for admin verification.',
         paymentStatus: 'PENDING_VERIFICATION',
-        orderId: trimmedOrderId,
-        screenshotUrl: `/api/payments/screenshot/${encodeURIComponent(trimmedOrderId)}`,
+        orderId: cleanOrderId,
+        screenshotUrl: `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}`,
         fileSize: fileBuffer.length,
         mimeType: finalMime,
       });
@@ -1718,9 +1725,80 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
       return;
     }
 
-    // Check if screenshot exists in payment record
-    const filePath = payment?.screenshotPath;
-    if (!filePath || !fs.existsSync(filePath)) {
+    // Once payment is confirmed as PAID in MySQL and proof was purged, return 404
+    const isPaid = order?.paymentStatus === 'PAID' || payment?.paymentStatus === 'PAID';
+    if (isPaid && !payment?.screenshotPath) {
+      sendJson(res, 404, {
+        success: false,
+        error: 'Payment screenshot not found or has been securely removed following verification.',
+      });
+      return;
+    }
+
+    // Resolve screenshot binary data with multi-tiered fallback
+    let fileBuffer: Buffer | null = null;
+    let mime = payment?.screenshotMime || 'image/jpeg';
+    let filePath = payment?.screenshotPath;
+
+    // 1. Check direct file path on disk
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fileBuffer = fs.readFileSync(filePath);
+        if (filePath.endsWith('.png')) mime = 'image/png';
+        else if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) mime = 'image/jpeg';
+      } catch {}
+    }
+
+    // 2. Fallback: Search SCREENSHOTS_DIR by cleaned order ID
+    if (!fileBuffer) {
+      const cleanId = rawOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (fs.existsSync(SCREENSHOTS_DIR)) {
+        try {
+          const files = fs.readdirSync(SCREENSHOTS_DIR);
+          const match = files.find((f) => f.startsWith(`proof_${cleanId}_`));
+          if (match) {
+            const fallbackPath = path.join(SCREENSHOTS_DIR, match);
+            if (fs.existsSync(fallbackPath)) {
+              fileBuffer = fs.readFileSync(fallbackPath);
+              if (fallbackPath.endsWith('.png')) mime = 'image/png';
+              else if (fallbackPath.endsWith('.jpg') || fallbackPath.endsWith('.jpeg')) mime = 'image/jpeg';
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 3. Persistent Fallback: Restore from MySQL screenshot_data if disk file was wiped
+    if (!fileBuffer) {
+      const rawData =
+        payment?.screenshotData ||
+        (order as any)?.screenshotData ||
+        (order as any)?.screenshot_data;
+      if (rawData && typeof rawData === 'string' && rawData.trim()) {
+        try {
+          const match = rawData.match(/^data:([a-zA-Z0-9\/+-]+);base64,(.+)$/);
+          if (match) {
+            mime = match[1];
+            fileBuffer = Buffer.from(match[2], 'base64');
+          } else {
+            fileBuffer = Buffer.from(rawData, 'base64');
+          }
+
+          // Re-cache to disk for fast subsequent reads
+          if (fileBuffer && fileBuffer.length > 0) {
+            try {
+              if (!fs.existsSync(SCREENSHOTS_DIR)) {
+                fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+              }
+              const restoredName = `proof_${rawOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}_restored${mime === 'image/png' ? '.png' : '.jpg'}`;
+              fs.writeFileSync(path.join(SCREENSHOTS_DIR, restoredName), fileBuffer);
+            } catch {}
+          }
+        } catch {}
+      }
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
       sendJson(res, 404, {
         success: false,
         error: 'Payment screenshot not found or has been securely removed following verification.',
@@ -1729,13 +1807,10 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
     }
 
     // Return image file
-    const mime = payment?.screenshotMime || (filePath.endsWith('.png') ? 'image/png' : 'image/jpeg');
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
-
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
+    res.send(fileBuffer);
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to serve payment screenshot.' });
   }
@@ -1832,13 +1907,25 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
         return;
       }
 
-      // 2. MySQL successfully confirmed PAID! Now securely delete stored screenshot file
+      // 2. MySQL successfully confirmed PAID! Now securely delete stored screenshot file and any disk copies
       if (verifyResult.screenshotPathToDelete && fs.existsSync(verifyResult.screenshotPathToDelete)) {
         try {
           fs.unlinkSync(verifyResult.screenshotPathToDelete);
         } catch (unlinkErr) {
           console.warn('[Cleanup] Failed to unlink verified payment screenshot:', unlinkErr);
         }
+      }
+
+      const cleanIdForCleanup = trimmedOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (fs.existsSync(SCREENSHOTS_DIR)) {
+        try {
+          const files = fs.readdirSync(SCREENSHOTS_DIR);
+          for (const f of files) {
+            if (f.startsWith(`proof_${cleanIdForCleanup}_`)) {
+              try { fs.unlinkSync(path.join(SCREENSHOTS_DIR, f)); } catch {}
+            }
+          }
+        } catch {}
       }
 
       // 3. Send existing OTP to customer associated with the order (prevent duplicate OTP sending)
