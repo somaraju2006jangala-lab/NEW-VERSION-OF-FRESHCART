@@ -971,13 +971,31 @@ export function clearCustomerOrders(): void {
 }
 
 /**
- * Simulates requesting a password reset email/code.
+ * Requests a password reset via backend /api/auth/forgot-password.
+ * Keeps customer passwords private and unreadable to admins and users.
  */
 export async function requestPasswordReset(
   email: string
 ): Promise<{ success: boolean; message: string }> {
-  await new Promise((res) => setTimeout(res, 600));
   const trimmed = email.trim().toLowerCase();
+
+  try {
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: trimmed }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      return {
+        success: true,
+        message: data.message || `A secure password reset link has been dispatched to ${trimmed}.`,
+      };
+    }
+  } catch {
+    // Fall back to client storage check if network fails
+  }
+
   const customers = getStoredCustomers();
   const exists = customers.some((c) => c.email.toLowerCase() === trimmed);
 
@@ -992,4 +1010,37 @@ export async function requestPasswordReset(
     success: true,
     message: `A secure password reset link has been dispatched to ${trimmed}. Check your inbox!`,
   };
+}
+
+/**
+ * Resets a customer password using the secure one-way salted password reset API.
+ */
+export async function resetCustomerPassword(
+  identifier: string,
+  newPassword: string,
+  resetToken?: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier, newPassword, resetToken }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      return {
+        success: true,
+        message: data.message || 'Password successfully reset.',
+      };
+    }
+    return {
+      success: false,
+      error: data?.error || 'Failed to reset password.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error during password reset.',
+    };
+  }
 }

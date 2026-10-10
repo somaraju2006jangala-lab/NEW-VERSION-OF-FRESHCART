@@ -526,6 +526,7 @@ export async function initializeDatabase(): Promise<void> {
       address TEXT NULL,
       password_hash VARCHAR(255) NOT NULL,
       loyalty_tier VARCHAR(100) NOT NULL DEFAULT 'Fresh Member',
+      status VARCHAR(32) NOT NULL DEFAULT 'Active',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_customers_customer_id (customer_id),
@@ -864,6 +865,9 @@ export async function initializeDatabase(): Promise<void> {
   } catch {}
   try {
     await currentPool.query('ALTER TABLE payments ADD COLUMN otp_sent_at TIMESTAMP NULL AFTER otp_sent');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE customers ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT "Active" AFTER loyalty_tier');
   } catch {}
   try {
     await currentPool.query(`
@@ -1252,6 +1256,7 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, customer_id as id_str, customer_id, full_name as name, email, mobile as phone, address,
+              COALESCE(status, 'Active') as status,
               password_hash as passwordHash, loyalty_tier as loyaltyTier, created_at as createdAt
        FROM customers
        WHERE customer_id = ? 
@@ -1293,6 +1298,7 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
       savedAddresses: addrRows,
       passwordHash: customer.passwordHash,
       loyaltyTier: customer.loyaltyTier,
+      status: customer.status || 'Active',
       createdAt: customer.createdAt,
     };
   } catch (err: any) {
@@ -1485,12 +1491,14 @@ export async function upsertCustomerInDb(customerData: any): Promise<boolean> {
 
 /**
  * Retrieves all customers.
+ * Excludes internal password hashes.
  */
 export async function getCustomersFromDb(): Promise<any[]> {
   const pool = getPool();
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT customer_id as id, full_name as name, email, mobile as phone, address,
+              COALESCE(status, 'Active') as status,
               loyalty_tier as loyaltyTier, created_at as createdAt
        FROM customers
        ORDER BY created_at DESC`
@@ -1499,6 +1507,116 @@ export async function getCustomersFromDb(): Promise<any[]> {
   } catch (err: any) {
     console.warn('[MySQL] Error querying customers:', err?.message);
     return [];
+  }
+}
+
+/**
+ * Retrieves registered customer accounts for the Admin Portal.
+ * Excludes internal guest stubs.
+ * STRICTURE: Under no circumstances selects, reads, or returns password_hash or password.
+ */
+export async function getCustomerAccountsFromDb(searchQuery?: string): Promise<any[]> {
+  const pool = getPool();
+  try {
+    let sql = `SELECT customer_id as customerId, customer_id as id, full_name as name, email, mobile as phone, address,
+                      COALESCE(status, 'Active') as status, loyalty_tier as loyaltyTier, created_at as createdAt
+               FROM customers
+               WHERE customer_id NOT IN ('guest', 'guest_user')`;
+    const params: any[] = [];
+    if (searchQuery && searchQuery.trim()) {
+      const q = `%${searchQuery.trim().toLowerCase()}%`;
+      const phoneQ = `%${searchQuery.trim()}%`;
+      sql += ` AND (LOWER(full_name) LIKE ? OR LOWER(customer_id) LIKE ? OR LOWER(email) LIKE ? OR mobile LIKE ?)`;
+      params.push(q, q, q, phoneQ);
+    }
+    sql += ` ORDER BY created_at DESC`;
+
+    const [rows] = await pool.query<RowDataPacket[]>(sql, params);
+    return rows;
+  } catch (err: any) {
+    // If status column doesn't exist yet in MySQL instance, fallback gracefully
+    try {
+      let sql = `SELECT customer_id as customerId, customer_id as id, full_name as name, email, mobile as phone, address,
+                        'Active' as status, loyalty_tier as loyaltyTier, created_at as createdAt
+                 FROM customers
+                 WHERE customer_id NOT IN ('guest', 'guest_user')`;
+      const params: any[] = [];
+      if (searchQuery && searchQuery.trim()) {
+        const q = `%${searchQuery.trim().toLowerCase()}%`;
+        const phoneQ = `%${searchQuery.trim()}%`;
+        sql += ` AND (LOWER(full_name) LIKE ? OR LOWER(customer_id) LIKE ? OR LOWER(email) LIKE ? OR mobile LIKE ?)`;
+        params.push(q, q, q, phoneQ);
+      }
+      sql += ` ORDER BY created_at DESC`;
+      const [fallbackRows] = await pool.query<RowDataPacket[]>(sql, params);
+      return fallbackRows;
+    } catch (fallbackErr: any) {
+      console.warn('[MySQL] Error querying customer accounts:', fallbackErr?.message);
+      return [];
+    }
+  }
+}
+
+/**
+ * Retrieves a single registered customer account by customerId for the Admin Portal.
+ * STRICTURE: Under no circumstances selects, reads, or returns password_hash or password.
+ */
+export async function getCustomerAccountByIdFromDb(customerId: string): Promise<any | null> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT customer_id as customerId, customer_id as id, full_name as name, email, mobile as phone, address,
+              COALESCE(status, 'Active') as status, loyalty_tier as loyaltyTier, created_at as createdAt
+       FROM customers
+       WHERE customer_id = ? AND customer_id NOT IN ('guest', 'guest_user')
+       LIMIT 1`,
+      [customerId]
+    );
+    if (rows.length === 0) return null;
+    return rows[0];
+  } catch (err: any) {
+    console.warn('[MySQL] Error fetching customer account by ID:', err?.message);
+    return null;
+  }
+}
+
+/**
+ * Updates a customer account status (e.g. Active, Suspended) in MySQL.
+ */
+export async function updateCustomerStatusInDb(customerId: string, status: string): Promise<boolean> {
+  const pool = getPool();
+  try {
+    // Ensure status column exists
+    try {
+      await pool.query('ALTER TABLE customers ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT "Active" AFTER loyalty_tier');
+    } catch {}
+
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE customers SET status = ? WHERE customer_id = ?`,
+      [status, customerId]
+    );
+    return result.affectedRows > 0;
+  } catch (err: any) {
+    console.error('[MySQL] Error updating customer status:', err?.message);
+    return false;
+  }
+}
+
+/**
+ * Securely updates a customer password hash in MySQL.
+ * Strictly takes a pre-computed salted hash (e.g. bcrypt hash); never plain text or reversible formats.
+ */
+export async function updateCustomerPasswordHashInDb(customerId: string, passwordHash: string): Promise<boolean> {
+  const pool = getPool();
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE customers SET password_hash = ? WHERE customer_id = ?`,
+      [passwordHash, customerId]
+    );
+    return result.affectedRows > 0;
+  } catch (err: any) {
+    console.error('[MySQL] Error updating customer password hash:', err?.message);
+    return false;
   }
 }
 

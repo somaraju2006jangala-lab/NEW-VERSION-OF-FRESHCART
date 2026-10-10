@@ -7,6 +7,7 @@ export interface CustomerEntity {
   address?: string;
   password_hash: string;
   loyalty_tier?: string;
+  status?: string;
   created_at?: string | Date;
   updated_at?: string | Date;
 }

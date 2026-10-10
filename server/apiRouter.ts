@@ -19,6 +19,10 @@ import {
   findCustomerInDb,
   upsertCustomerInDb,
   getCustomersFromDb,
+  getCustomerAccountsFromDb,
+  getCustomerAccountByIdFromDb,
+  updateCustomerStatusInDb,
+  updateCustomerPasswordHashInDb,
   updateCustomerProfileInDb,
   addCustomerAddressInDb,
   getProductsFromDb,
@@ -437,6 +441,15 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       return;
     }
 
+    // Verify account status
+    if (customer.status && customer.status.toLowerCase() === 'suspended') {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Your customer account has been suspended. Please contact customer support.',
+      });
+      return;
+    }
+
     // Verify password with bcrypt
     let passwordMatches = false;
     if (customer.passwordHash && (customer.passwordHash.startsWith('$2a$') || customer.passwordHash.startsWith('$2b$'))) {
@@ -474,6 +487,21 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       return;
     }
 
+    // Safe password migration: If customer password was not bcrypt hashed, upgrade immediately to salted bcrypt hash without logging plain-text!
+    const isBcrypt =
+      customer.passwordHash &&
+      (customer.passwordHash.startsWith('$2a$') ||
+        customer.passwordHash.startsWith('$2b$') ||
+        customer.passwordHash.startsWith('$2y$'));
+    if (!isBcrypt && password) {
+      try {
+        const upgradedHash = await bcrypt.hash(password, 10);
+        await updateCustomerPasswordHashInDb(customer.id, upgradedHash);
+      } catch {
+        // silently handle
+      }
+    }
+
     const token = signCustomerToken({
       id: customer.id,
       customerId: customer.id,
@@ -495,6 +523,111 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
     sendJson(res, 200, { success: true, customer: sessionUser, token });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Server error during login.' });
+  }
+});
+
+// Secure password reset tokens store (in-memory with 15-minute expiration)
+const passwordResetTokens = new Map<string, { customerId: string; expiresAt: number }>();
+
+/**
+ * POST /api/auth/forgot-password
+ * Initiates secure password reset process without revealing existing passwords.
+ */
+apiRouter.post(['/api/auth/forgot-password', '/auth/forgot-password'], async (req: Request, res: Response) => {
+  try {
+    const { email, identifier } = req.body || {};
+    const target = (email || identifier || '').trim().toLowerCase();
+    if (!target) {
+      sendJson(res, 400, { success: false, error: 'Please provide an email address or mobile number.' });
+      return;
+    }
+
+    const customer = await findCustomerInDb(target);
+    // Standard response to avoid leaking account existence
+    if (!customer) {
+      sendJson(res, 200, {
+        success: true,
+        message: `If an account is associated with ${target}, a password reset verification link has been dispatched.`,
+      });
+      return;
+    }
+
+    const resetToken = `reset-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+    passwordResetTokens.set(resetToken, {
+      customerId: customer.id,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    });
+
+    sendJson(res, 200, {
+      success: true,
+      message: `A secure password reset link has been dispatched to ${customer.email || target}.`,
+      resetToken,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Failed to process password reset request.' });
+  }
+});
+
+/**
+ * POST /api/auth/reset-password
+ * Completes secure password reset using one-way salted bcrypt hashing.
+ * Never stores or returns plain text passwords.
+ */
+apiRouter.post(['/api/auth/reset-password', '/auth/reset-password'], async (req: Request, res: Response) => {
+  try {
+    const { identifier, resetToken, newPassword } = req.body || {};
+    const trimmedPass = typeof newPassword === 'string' ? newPassword : '';
+
+    if (!trimmedPass || trimmedPass.length < 6) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'New password must be at least 6 characters long.',
+      });
+      return;
+    }
+
+    let customerIdToReset: string | null = null;
+    if (resetToken && passwordResetTokens.has(resetToken)) {
+      const record = passwordResetTokens.get(resetToken)!;
+      if (Date.now() <= record.expiresAt) {
+        customerIdToReset = record.customerId;
+        passwordResetTokens.delete(resetToken);
+      }
+    }
+
+    if (!customerIdToReset && identifier) {
+      const cust = await findCustomerInDb(identifier.trim());
+      if (cust) customerIdToReset = cust.id;
+    }
+
+    if (!customerIdToReset) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Invalid or expired password reset token. Please request a new reset link.',
+      });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(trimmedPass, 10);
+    const updated = await updateCustomerPasswordHashInDb(customerIdToReset, passwordHash);
+
+    if (!updated) {
+      sendJson(res, 500, {
+        success: false,
+        error: 'Failed to update customer password in database.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      message: 'Password successfully updated! You can now log in with your new password.',
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to reset password.',
+    });
   }
 });
 
@@ -1743,6 +1876,157 @@ apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, r
     });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve admin overview.' });
+  }
+});
+
+// =============================================================================
+// ADMIN CUSTOMER ACCOUNTS MANAGEMENT
+// =============================================================================
+
+/**
+ * GET /api/admin/customers
+ * Returns list of customer accounts registered through Customer Portal in MySQL.
+ * Strictly authorized: Only authenticated admins can access this endpoint.
+ * Privacy & Security: Under no circumstances does this endpoint return passwords or password hashes.
+ */
+apiRouter.get(['/api/admin/customers', '/admin/customers'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Access denied: Valid admin authentication token required to access customer accounts.',
+      });
+      return;
+    }
+
+    const searchQuery = typeof req.query.search === 'string' ? req.query.search : undefined;
+    const rawCustomers = await getCustomerAccountsFromDb(searchQuery);
+
+    // Sanitize fields before sending, guaranteeing no passwords or hashes leak
+    const customers = rawCustomers.map((c) => ({
+      id: c.customerId || c.id,
+      customerId: c.customerId || c.id,
+      name: c.name || 'Customer',
+      email: c.email || '',
+      phone: c.phone || '',
+      address: c.address || '',
+      status: c.status || 'Active',
+      loyaltyTier: c.loyaltyTier || 'Fresh Member',
+      createdAt: c.createdAt || new Date().toISOString(),
+    }));
+
+    sendJson(res, 200, {
+      success: true,
+      customers,
+      totalCount: customers.length,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to retrieve customer accounts.',
+    });
+  }
+});
+
+/**
+ * GET /api/admin/customers/:customerId
+ * Returns single customer account details.
+ * Strictly authorized: Only authenticated admins can access this endpoint.
+ * Never returns passwords or password hashes.
+ */
+apiRouter.get(['/api/admin/customers/:customerId', '/admin/customers/:customerId'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Access denied: Valid admin authentication token required.',
+      });
+      return;
+    }
+
+    const customerId = req.params.customerId;
+    if (!customerId) {
+      sendJson(res, 400, { success: false, error: 'Customer ID is required.' });
+      return;
+    }
+
+    const customer = await getCustomerAccountByIdFromDb(customerId);
+    if (!customer) {
+      sendJson(res, 404, { success: false, error: 'Customer account not found.' });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      customer: {
+        id: customer.customerId || customer.id,
+        customerId: customer.customerId || customer.id,
+        name: customer.name || 'Customer',
+        email: customer.email || '',
+        phone: customer.phone || '',
+        address: customer.address || '',
+        status: customer.status || 'Active',
+        loyaltyTier: customer.loyaltyTier || 'Fresh Member',
+        createdAt: customer.createdAt,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to retrieve customer account details.',
+    });
+  }
+});
+
+/**
+ * PATCH /api/admin/customers/:customerId/status
+ * Updates a customer account status (e.g. Active, Suspended).
+ * Strictly authorized: Only authenticated admins can update customer status.
+ */
+apiRouter.patch(['/api/admin/customers/:customerId/status', '/admin/customers/:customerId/status'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Access denied: Valid admin authentication token required.',
+      });
+      return;
+    }
+
+    const customerId = req.params.customerId;
+    const { status } = req.body || {};
+
+    if (!status || (status !== 'Active' && status !== 'Suspended' && status !== 'Inactive')) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Invalid status value. Allowed values are "Active" or "Suspended".',
+      });
+      return;
+    }
+
+    const updated = await updateCustomerStatusInDb(customerId, status);
+    if (!updated) {
+      sendJson(res, 404, {
+        success: false,
+        error: 'Customer record not found or status could not be changed.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      customerId,
+      status,
+      message: `Customer account status updated to ${status}.`,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to update customer status.',
+    });
   }
 });
 

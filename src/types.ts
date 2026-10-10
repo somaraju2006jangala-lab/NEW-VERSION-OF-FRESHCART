@@ -96,6 +96,19 @@ export interface Customer {
   avatarUrl?: string;
   loyaltyTier?: string;
   token?: string;
+  status?: string;
+}
+
+export interface AdminCustomerAccount {
+  id: string;
+  customerId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address?: string | null;
+  status: string;
+  loyaltyTier?: string;
+  createdAt: string;
 }
 
 export interface CustomerOrder extends Order {

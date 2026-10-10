@@ -54,6 +54,8 @@ import {
   UserX,
   UserCheck,
   ShieldAlert,
+  User,
+  Phone,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { verifyOrderOtp, maskMobileNumber } from '../services/otpClientService';
@@ -74,6 +76,9 @@ import {
   createAuthorizedAdmin,
   toggleAdminStatus,
   deleteAuthorizedAdmin,
+  AdminCustomerAccount,
+  fetchAdminCustomerAccounts,
+  updateCustomerAccountStatus,
 } from '../services/adminService';
 
 
@@ -250,8 +255,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [filterStockStatus, setFilterStockStatus] = useState('all');
   const [adminSearch, setAdminSearch] = useState('');
   const [activeTab, setActiveTab] = useState<
-    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins'
+    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins' | 'customers'
   >('inventory');
+
+  // Customer Accounts Management State
+  const [customerAccounts, setCustomerAccounts] = useState<AdminCustomerAccount[]>([]);
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState<boolean>(false);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState<string>('');
+  const [customerStatusFilter, setCustomerStatusFilter] = useState<'all' | 'Active' | 'Suspended'>('all');
+  const [customerMgmtError, setCustomerMgmtError] = useState<string | null>(null);
+  const [customerMgmtSuccess, setCustomerMgmtSuccess] = useState<string | null>(null);
+  const [selectedCustomerDetail, setSelectedCustomerDetail] = useState<AdminCustomerAccount | null>(null);
+  const [isTogglingCustomerStatus, setIsTogglingCustomerStatus] = useState<string | null>(null);
 
   // Authorized Administrators Management State
   const [adminsList, setAdminsList] = useState<AuthorizedAdmin[]>([]);
@@ -276,6 +291,49 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [deletingAdmin, setDeletingAdmin] = useState<AuthorizedAdmin | null>(null);
   const [isDeletingAdmin, setIsDeletingAdmin] = useState<boolean>(false);
 
+  const loadCustomerAccounts = async (search?: string) => {
+    setIsLoadingCustomers(true);
+    setCustomerMgmtError(null);
+    try {
+      const res = await fetchAdminCustomerAccounts(search !== undefined ? search : customerSearchQuery);
+      if (res.success) {
+        setCustomerAccounts(res.customers);
+      } else {
+        setCustomerMgmtError(res.error || 'Failed to load customer accounts from MySQL database.');
+      }
+    } catch {
+      setCustomerMgmtError('Network error while retrieving customer accounts.');
+    } finally {
+      setIsLoadingCustomers(false);
+    }
+  };
+
+  const handleToggleCustomerStatus = async (customer: AdminCustomerAccount) => {
+    const nextStatus = customer.status === 'Active' ? 'Suspended' : 'Active';
+    setIsTogglingCustomerStatus(customer.customerId);
+    setCustomerMgmtError(null);
+    setCustomerMgmtSuccess(null);
+    try {
+      const res = await updateCustomerAccountStatus(customer.customerId, nextStatus);
+      if (res.success) {
+        setCustomerMgmtSuccess(`Customer account ${customer.customerId} status set to ${nextStatus}.`);
+        setTimeout(() => setCustomerMgmtSuccess(null), 4000);
+        setCustomerAccounts((prev) =>
+          prev.map((c) => (c.customerId === customer.customerId ? { ...c, status: nextStatus } : c))
+        );
+        if (selectedCustomerDetail && selectedCustomerDetail.customerId === customer.customerId) {
+          setSelectedCustomerDetail({ ...selectedCustomerDetail, status: nextStatus });
+        }
+      } else {
+        setCustomerMgmtError(res.error || 'Failed to update customer account status.');
+      }
+    } catch {
+      setCustomerMgmtError('Network error updating customer status.');
+    } finally {
+      setIsTogglingCustomerStatus(null);
+    }
+  };
+
   const loadAdmins = async () => {
     setIsLoadingAdmins(true);
     setAdminMgmtError(null);
@@ -297,6 +355,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   useEffect(() => {
     loadAdmins();
+    loadCustomerAccounts();
   }, []);
 
   const handleCreateAdmin = async (e: React.FormEvent) => {
@@ -1365,6 +1424,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             >
               {activeAdminsCount}/{maxAdminsLimit}
             </span>
+          </button>
+          <button
+            type="button"
+            id="admin-tab-customer-accounts"
+            onClick={() => {
+              setActiveTab('customers');
+              loadCustomerAccounts();
+            }}
+            className={`pb-3 text-[13px] font-semibold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'customers'
+                ? 'border-[#006b2c] text-[#006b2c]'
+                : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Customer Accounts</span>
+            {customerAccounts.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                {customerAccounts.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -3899,6 +3979,369 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
         )}
+
+        {/* Tab 9: Customer Accounts Management */}
+        {activeTab === 'customers' && (
+          <div className="space-y-6 animate-in fade-in">
+            {/* Header & Security Notice */}
+            <div className="bg-white rounded-xl border border-[#e2e8f0] shadow-xs p-5 sm:p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#e2e8f0]">
+                <div>
+                  <h3 className="text-[18px] font-bold text-[#0b1c30] font-display flex items-center gap-2">
+                    <Users className="w-5 h-5 text-[#006b2c]" />
+                    <span>Customer Accounts</span>
+                  </h3>
+                  <p className="text-[12px] text-[#64748b] mt-0.5">
+                    Live accounts registered through the FreshCart Customer Portal in MySQL. Passwords are protected with one-way salted bcrypt algorithms and are cryptographically inaccessible to all administrators.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => loadCustomerAccounts()}
+                    disabled={isLoadingCustomers}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#e2e8f0] text-[#0b1c30] hover:bg-[#f8fafc] text-[12px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                    title="Refresh customer accounts from database"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-[#64748b] ${isLoadingCustomers ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status & Feedback Alerts */}
+              {customerMgmtError && (
+                <div className="p-3.5 rounded-xl bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] text-[12px] flex items-start gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-[#dc2626]" />
+                  <div className="flex-1 font-semibold">{customerMgmtError}</div>
+                  <button
+                    type="button"
+                    onClick={() => setCustomerMgmtError(null)}
+                    className="text-[#991b1b] hover:text-black cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {customerMgmtSuccess && (
+                <div className="p-3.5 rounded-xl bg-[#f0fdf4] border border-[#bbf7d0] text-[#166534] text-[12px] flex items-start gap-2 animate-in fade-in">
+                  <CheckCircle className="w-4 h-4 mt-0.5 shrink-0 text-[#16a34a]" />
+                  <div className="flex-1 font-semibold">{customerMgmtSuccess}</div>
+                  <button
+                    type="button"
+                    onClick={() => setCustomerMgmtSuccess(null)}
+                    className="text-[#166534] hover:text-black cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* KPI Summary Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="p-4 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-semibold text-[#64748b] uppercase tracking-wider block">
+                      Total Registered
+                    </span>
+                    <span className="text-[22px] font-bold text-[#0b1c30] mt-0.5 block font-display">
+                      {customerAccounts.length}
+                    </span>
+                    <span className="text-[11px] text-[#64748b] mt-0.5 block">Shared MySQL Database</span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#006b2c] flex items-center justify-center border border-emerald-100">
+                    <Users className="w-5 h-5 text-[#006b2c]" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-semibold text-[#64748b] uppercase tracking-wider block">
+                      Active Accounts
+                    </span>
+                    <span className="text-[22px] font-bold text-[#006b2c] mt-0.5 block font-display">
+                      {customerAccounts.filter((c) => c.status === 'Active').length}
+                    </span>
+                    <span className="text-[11px] text-[#64748b] mt-0.5 block">Full ordering access</span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#006b2c] flex items-center justify-center border border-emerald-100">
+                    <UserCheck className="w-5 h-5 text-[#006b2c]" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-semibold text-[#64748b] uppercase tracking-wider block">
+                      Suspended Accounts
+                    </span>
+                    <span className="text-[22px] font-bold text-amber-700 mt-0.5 block font-display">
+                      {customerAccounts.filter((c) => c.status !== 'Active').length}
+                    </span>
+                    <span className="text-[11px] text-[#64748b] mt-0.5 block">Access restricted</span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center border border-amber-200">
+                    <UserX className="w-5 h-5 text-amber-700" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block flex items-center gap-1">
+                      <Lock className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Password Security</span>
+                    </span>
+                    <span className="text-[15px] font-bold text-emerald-900 mt-0.5 block">
+                      Salted Bcrypt (Hidden)
+                    </span>
+                    <span className="text-[11px] text-emerald-700 mt-0.5 block">
+                      Irreversible & private
+                    </span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-[#006b2c] flex items-center justify-center border border-emerald-300">
+                    <ShieldCheck className="w-5 h-5 text-[#006b2c]" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Security Privacy Info Banner */}
+              <div className="p-3.5 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-[12px] text-[#475569] flex items-center gap-3">
+                <Lock className="w-4 h-4 text-[#006b2c] shrink-0" />
+                <p className="flex-1">
+                  <strong>Zero-Knowledge Password Protection:</strong> In accordance with FreshCart privacy standards, customer passwords are cryptographically hashed using salted bcrypt (one-way). Passwords can never be viewed, retrieved, or decrypted by administrators or through backend APIs.
+                </p>
+              </div>
+
+              {/* Search & Filter Toolbar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-[#94a3b8] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    id="admin-customer-search-input"
+                    value={customerSearchQuery}
+                    onChange={(e) => {
+                      setCustomerSearchQuery(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        loadCustomerAccounts(customerSearchQuery);
+                      }
+                    }}
+                    placeholder="Search by name, user ID, email, or phone number..."
+                    className="w-full pl-10 pr-9 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c] bg-white transition-all"
+                  />
+                  {customerSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomerSearchQuery('');
+                        loadCustomerAccounts('');
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94a3b8] hover:text-[#0b1c30] cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    id="admin-customer-status-filter"
+                    value={customerStatusFilter}
+                    onChange={(e) => setCustomerStatusFilter(e.target.value as any)}
+                    className="px-3 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
+                  >
+                    <option value="all">All Account Statuses</option>
+                    <option value="Active">Active Accounts</option>
+                    <option value="Suspended">Suspended Accounts</option>
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => loadCustomerAccounts(customerSearchQuery)}
+                    className="px-3.5 py-2.5 rounded-xl bg-[#006b2c] hover:bg-[#005222] text-white text-[12px] font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Search className="w-3.5 h-3.5" />
+                    <span>Search</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Customers Table */}
+              <div className="border border-[#e2e8f0] rounded-xl overflow-hidden overflow-x-auto">
+                <table className="w-full text-left border-collapse text-[13px]">
+                  <thead>
+                    <tr className="bg-[#f8fafc] border-b border-[#e2e8f0] text-[11px] font-bold text-[#64748b] uppercase tracking-wider">
+                      <th className="py-3 px-4">Customer Name</th>
+                      <th className="py-3 px-4">Customer User ID</th>
+                      <th className="py-3 px-4">Email Address</th>
+                      <th className="py-3 px-4">Phone Number</th>
+                      <th className="py-3 px-4">Registration Date</th>
+                      <th className="py-3 px-4">Account Status</th>
+                      <th className="py-3 px-4">Password Security</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e2e8f0]">
+                    {isLoadingCustomers ? (
+                      <tr>
+                        <td colSpan={8} className="py-12 text-center text-[#64748b]">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <span className="w-6 h-6 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                            <span className="text-[13px] font-semibold">Loading customer accounts from MySQL...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (() => {
+                      const query = customerSearchQuery.trim().toLowerCase();
+                      const filtered = customerAccounts.filter((c) => {
+                        if (customerStatusFilter !== 'all' && c.status !== customerStatusFilter) return false;
+                        if (!query) return true;
+                        return (
+                          (c.name && c.name.toLowerCase().includes(query)) ||
+                          (c.customerId && c.customerId.toLowerCase().includes(query)) ||
+                          (c.email && c.email.toLowerCase().includes(query)) ||
+                          (c.phone && c.phone.toLowerCase().includes(query))
+                        );
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={8} className="py-12 text-center text-[#64748b]">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Users className="w-8 h-8 text-[#94a3b8]" />
+                                <span className="text-[14px] font-bold text-[#0b1c30]">No customer accounts found</span>
+                                <span className="text-[12px] text-[#64748b]">
+                                  {customerSearchQuery
+                                    ? `No records match "${customerSearchQuery}". Try clearing search.`
+                                    : 'No customers registered in database yet.'}
+                                </span>
+                                {customerSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCustomerSearchQuery('');
+                                      loadCustomerAccounts('');
+                                    }}
+                                    className="mt-2 text-[12px] text-[#006b2c] font-bold hover:underline cursor-pointer"
+                                  >
+                                    Clear search query
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return filtered.map((cust) => {
+                        const isToggling = isTogglingCustomerStatus === cust.customerId;
+                        return (
+                          <tr key={cust.customerId} className="hover:bg-[#f8fafc] transition-colors">
+                            {/* Customer Name */}
+                            <td className="py-3.5 px-4 font-semibold text-[#0b1c30]">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-emerald-100 text-[#006b2c] font-bold flex items-center justify-center text-[12px] border border-emerald-200">
+                                  {cust.name ? cust.name.charAt(0).toUpperCase() : 'C'}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-[#0b1c30]">{cust.name}</div>
+                                  <div className="text-[10px] text-[#64748b]">{cust.loyaltyTier || 'Fresh Member'}</div>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* User ID */}
+                            <td className="py-3.5 px-4">
+                              <span className="font-mono text-[12px] font-semibold px-2 py-0.5 rounded-md bg-[#f1f5f9] text-[#0b1c30] border border-[#e2e8f0]">
+                                {cust.customerId}
+                              </span>
+                            </td>
+
+                            {/* Email */}
+                            <td className="py-3.5 px-4 text-[#0b1c30]">
+                              <div className="flex items-center gap-1.5 text-[12px]">
+                                <Mail className="w-3.5 h-3.5 text-[#94a3b8]" />
+                                <span>{cust.email || '—'}</span>
+                              </div>
+                            </td>
+
+                            {/* Phone */}
+                            <td className="py-3.5 px-4 text-[#0b1c30]">
+                              <div className="flex items-center gap-1.5 text-[12px]">
+                                <Phone className="w-3.5 h-3.5 text-[#94a3b8]" />
+                                <span>{cust.phone ? formatIndianDisplayNumber(cust.phone) : '—'}</span>
+                              </div>
+                            </td>
+
+                            {/* Registration Date */}
+                            <td className="py-3.5 px-4 text-[#64748b] text-[11px]">
+                              {cust.createdAt ? formatOrderDateTime(cust.createdAt) : 'Registered'}
+                            </td>
+
+                            {/* Account Status */}
+                            <td className="py-3.5 px-4">
+                              {cust.status === 'Active' ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                                  <span>Active</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                                  <span>Suspended</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Password Security */}
+                            <td className="py-3.5 px-4">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200" title="Salted bcrypt hash stored securely. Inaccessible to admins.">
+                                <Lock className="w-3 h-3 text-[#006b2c]" />
+                                <span>Encrypted (Hidden)</span>
+                              </span>
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-3.5 px-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  id={`btn-view-customer-${cust.customerId}`}
+                                  onClick={() => setSelectedCustomerDetail(cust)}
+                                  className="px-2.5 py-1 rounded-lg border border-[#cbd5e1] text-[#0b1c30] hover:bg-[#f1f5f9] text-[11px] font-semibold transition-colors cursor-pointer"
+                                  title="View full customer details"
+                                >
+                                  View Details
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isToggling}
+                                  onClick={() => handleToggleCustomerStatus(cust)}
+                                  className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer disabled:opacity-50 ${
+                                    cust.status === 'Active'
+                                      ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100'
+                                      : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                                  }`}
+                                  title={cust.status === 'Active' ? 'Suspend customer account' : 'Reactivate customer account'}
+                                >
+                                  {isToggling ? '...' : cust.status === 'Active' ? 'Suspend' : 'Activate'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Add New Authorized Admin Modal */}
@@ -4605,6 +5048,133 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <span>Confirm Rejection</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Customer Account Details Modal */}
+      {selectedCustomerDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-[#e2e8f0] p-6 sm:p-7 space-y-5 animate-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-[#e2e8f0]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-[#006b2c] flex items-center justify-center border border-emerald-100 font-bold text-base">
+                  {selectedCustomerDetail.name ? selectedCustomerDetail.name.charAt(0).toUpperCase() : 'C'}
+                </div>
+                <div>
+                  <h3 className="text-[18px] font-bold text-[#0b1c30] font-display">
+                    Customer Account Details
+                  </h3>
+                  <p className="text-[12px] text-[#64748b]">
+                    Registered through FreshCart Customer Portal
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedCustomerDetail(null)}
+                className="w-8 h-8 rounded-full hover:bg-[#f1f5f9] flex items-center justify-center text-[#64748b] hover:text-[#0b1c30] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Customer Details Content */}
+            <div className="space-y-4">
+              {/* Account summary cards */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] space-y-1">
+                  <span className="text-[11px] font-semibold text-[#64748b] block">Customer User ID</span>
+                  <span className="font-mono text-[13px] font-bold text-[#0b1c30] block">
+                    {selectedCustomerDetail.customerId}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] space-y-1">
+                  <span className="text-[11px] font-semibold text-[#64748b] block">Account Status</span>
+                  {selectedCustomerDetail.status === 'Active' ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                      <span>Active</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                      <span>Suspended</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Detail Rows */}
+              <div className="rounded-xl border border-[#e2e8f0] divide-y divide-[#e2e8f0] text-[13px]">
+                <div className="p-3 flex justify-between items-center">
+                  <span className="text-[#64748b]">Full Name:</span>
+                  <span className="font-bold text-[#0b1c30]">{selectedCustomerDetail.name}</span>
+                </div>
+                <div className="p-3 flex justify-between items-center">
+                  <span className="text-[#64748b]">Email Address:</span>
+                  <span className="font-medium text-[#0b1c30]">{selectedCustomerDetail.email || 'None provided'}</span>
+                </div>
+                <div className="p-3 flex justify-between items-center">
+                  <span className="text-[#64748b]">Phone Number:</span>
+                  <span className="font-medium text-[#0b1c30]">
+                    {selectedCustomerDetail.phone ? formatIndianDisplayNumber(selectedCustomerDetail.phone) : 'None provided'}
+                  </span>
+                </div>
+                <div className="p-3 flex justify-between items-center">
+                  <span className="text-[#64748b]">Loyalty Tier:</span>
+                  <span className="font-semibold text-[#006b2c]">{selectedCustomerDetail.loyaltyTier || 'Fresh Member'}</span>
+                </div>
+                <div className="p-3 flex justify-between items-center">
+                  <span className="text-[#64748b]">Registration Date:</span>
+                  <span className="text-[#0b1c30]">{formatOrderDateTime(selectedCustomerDetail.createdAt)}</span>
+                </div>
+                {selectedCustomerDetail.address && (
+                  <div className="p-3 flex justify-between items-start">
+                    <span className="text-[#64748b] shrink-0">Saved Address:</span>
+                    <span className="text-right text-[#0b1c30] max-w-[260px]">{selectedCustomerDetail.address}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Password Protection Card */}
+              <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-[12px] space-y-1.5">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                  <Lock className="w-4 h-4 text-[#006b2c]" />
+                  <span>Password Security Guarantee</span>
+                </div>
+                <p className="text-emerald-800 leading-relaxed text-[11px]">
+                  Customer passwords are cryptographically hashed using salted, one-way bcrypt. By cryptographic design, customer passwords <strong>cannot be viewed, retrieved, or decrypted</strong> by administrators or through backend APIs.
+                </p>
+                <p className="text-emerald-700 text-[11px]">
+                  If a customer forgets their password, they must use the secure customer password reset workflow.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between pt-3 border-t border-[#e2e8f0]">
+              <button
+                type="button"
+                onClick={() => handleToggleCustomerStatus(selectedCustomerDetail)}
+                disabled={isTogglingCustomerStatus === selectedCustomerDetail.customerId}
+                className={`px-4 py-2 rounded-xl text-[12px] font-bold border transition-colors cursor-pointer ${
+                  selectedCustomerDetail.status === 'Active'
+                    ? 'border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100'
+                    : 'border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100'
+                }`}
+              >
+                {selectedCustomerDetail.status === 'Active' ? 'Suspend Account' : 'Reactivate Account'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedCustomerDetail(null)}
+                className="px-5 py-2 rounded-xl bg-[#0b1c30] hover:bg-[#1e293b] text-white text-[12px] font-bold transition-colors cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

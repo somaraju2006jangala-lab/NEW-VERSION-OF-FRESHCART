@@ -305,3 +305,102 @@ export async function deleteAuthorizedAdmin(
     };
   }
 }
+
+export interface AdminCustomerAccount {
+  id: string;
+  customerId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address?: string | null;
+  status: string;
+  loyaltyTier?: string;
+  createdAt: string;
+}
+
+/**
+ * Fetches registered customer accounts from backend /api/admin/customers.
+ * Supports optional search query (name, user ID, email, phone).
+ * Privacy & Security: Passwords/hashes are never exposed or returned.
+ */
+export async function fetchAdminCustomerAccounts(searchQuery?: string): Promise<{
+  success: boolean;
+  customers: AdminCustomerAccount[];
+  totalCount?: number;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const url = new URL('/api/admin/customers', window.location.origin);
+    if (searchQuery && searchQuery.trim()) {
+      url.searchParams.set('search', searchQuery.trim());
+    }
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        customers: [],
+        error: data.error || 'Failed to load customer accounts from MySQL database.',
+      };
+    }
+
+    return {
+      success: true,
+      customers: data.customers || [],
+      totalCount: data.totalCount || 0,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      customers: [],
+      error: err?.message || 'Network error while fetching customer accounts.',
+    };
+  }
+}
+
+/**
+ * Updates a customer account status (e.g. Active, Suspended) via backend /api/admin/customers/:customerId/status.
+ */
+export async function updateCustomerAccountStatus(
+  customerId: string,
+  status: 'Active' | 'Suspended'
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch(`/api/admin/customers/${encodeURIComponent(customerId)}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ status }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error: data.error || 'Failed to update customer account status.',
+      };
+    }
+
+    return {
+      success: true,
+      message: data.message || `Customer status updated to ${status}.`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error while updating customer status.',
+    };
+  }
+}
