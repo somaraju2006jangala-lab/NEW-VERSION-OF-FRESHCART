@@ -4346,18 +4346,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       {/* Add New Authorized Admin Modal */}
       {showAddAdminModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-[#e2e8f0] p-6 sm:p-7 space-y-5 animate-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-[#e2e8f0]">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[rgba(0,0,0,0.65)] backdrop-blur-xs animate-in fade-in"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)' }}
+        >
+          <div 
+            className="rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-white/15 backdrop-blur-md p-6 sm:p-7 space-y-5 animate-in zoom-in-95"
+            style={{ 
+              backgroundColor: 'rgba(10, 10, 10, 0.88)', 
+              backdropFilter: 'blur(16px)', 
+              WebkitBackdropFilter: 'blur(16px)',
+              borderColor: 'rgba(255, 255, 255, 0.15)' 
+            }}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-[#006b2c] flex items-center justify-center border border-emerald-100">
-                  <UserPlus className="w-5 h-5 text-[#006b2c]" />
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                  <UserPlus className="w-5 h-5 text-emerald-400" />
                 </div>
                 <div>
-                  <h3 className="text-[18px] font-bold text-[#0b1c30] font-display">
+                  <h3 className="text-[18px] font-bold text-white font-display">
                     Authorize Administrator
                   </h3>
-                  <p className="text-[12px] text-[#64748b]">
+                  <p className="text-[12px] text-slate-400">
                     Add an authorized admin account to the persistent database.
                   </p>
                 </div>
@@ -4365,15 +4376,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowAddAdminModal(false)}
-                className="w-8 h-8 rounded-full hover:bg-[#f1f5f9] flex items-center justify-center text-[#64748b] hover:text-[#0b1c30] cursor-pointer"
+                className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {addAdminModalError && (
-              <div className="p-3.5 rounded-xl bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] text-[12px] flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-[#dc2626]" />
+              <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-[12px] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-rose-400" />
                 <div className="flex-1 font-semibold">{addAdminModalError}</div>
               </div>
             )}
@@ -4381,7 +4392,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <form onSubmit={handleCreateAdmin} className="space-y-4">
               {/* Full Name */}
               <div className="space-y-1">
-                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                <label className="block text-[12px] font-semibold text-slate-200">
                   Full Name <span className="text-rose-500">*</span>
                 </label>
                 <input
@@ -4391,13 +4402,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   placeholder="e.g. Maya Krishnan"
                   value={newAdminFullName}
                   onChange={(e) => setNewAdminFullName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/15 bg-white/5 text-[13px] text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
                 />
               </div>
 
               {/* Registered Email */}
               <div className="space-y-1">
-                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                <label className="block text-[12px] font-semibold text-slate-200">
                   Registered Email Address <span className="text-rose-500">*</span>
                 </label>
                 <input
@@ -4407,14 +4418,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   placeholder="e.g. maya@freshcart.com"
                   value={newAdminEmail}
                   onChange={(e) => setNewAdminEmail(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/15 bg-white/5 text-[13px] text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
                 />
               </div>
 
               {/* Custom Admin User ID */}
               <div className="space-y-1">
-                <label className="block text-[12px] font-semibold text-[#0b1c30]">
-                  Admin User ID <span className="text-[11px] font-normal text-[#64748b]">(Optional)</span>
+                <label className="block text-[12px] font-semibold text-slate-200">
+                  Admin User ID <span className="text-[11px] font-normal text-slate-400">(Optional)</span>
                 </label>
                 <input
                   id="new-admin-id-input"
@@ -4422,13 +4433,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   placeholder="e.g. adm_maya_105 (Auto-generated if left blank)"
                   value={newAdminCustomId}
                   onChange={(e) => setNewAdminCustomId(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/15 bg-white/5 text-[13px] text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
                 />
               </div>
 
               {/* Assigned Password */}
               <div className="space-y-1">
-                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                <label className="block text-[12px] font-semibold text-slate-200">
                   Assigned Administrator Password <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative flex items-center">
@@ -4440,12 +4451,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     placeholder="Minimum 6 characters"
                     value={newAdminPassword}
                     onChange={(e) => setNewAdminPassword(e.target.value)}
-                    className="w-full px-3.5 pr-10 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                    className="w-full px-3.5 pr-10 py-2.5 rounded-xl border border-white/15 bg-white/5 text-[13px] text-white placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewAdminPassword(!showNewAdminPassword)}
-                    className="absolute right-3 text-[#94a3b8] hover:text-[#0b1c30] p-1 cursor-pointer"
+                    className="absolute right-3 text-slate-400 hover:text-white p-1 cursor-pointer transition-colors"
                   >
                     {showNewAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -4453,9 +4464,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               {/* Role Info Notice */}
-              <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-[11px] text-[#64748b] space-y-1">
-                <div className="font-bold text-[#0b1c30] flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#006b2c]" />
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-[11px] text-slate-400 space-y-1">
+                <div className="font-bold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Assigned Role: Standard Administrator</span>
                 </div>
                 <p>
@@ -4463,12 +4474,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#e2e8f0]">
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-white/10">
                 <button
                   type="button"
                   onClick={() => setShowAddAdminModal(false)}
                   disabled={isSubmittingAdmin}
-                  className="px-4 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] font-semibold text-[#64748b] hover:bg-[#f8fafc] cursor-pointer"
+                  className="px-4 py-2.5 rounded-xl border border-white/20 text-[13px] font-semibold text-slate-300 hover:bg-white/10 cursor-pointer transition-colors"
                 >
                   Cancel
                 </button>
@@ -5055,19 +5066,30 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       )}
       {/* Customer Account Details Modal */}
       {selectedCustomerDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-[#e2e8f0] p-6 sm:p-7 space-y-5 animate-in zoom-in-95">
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[rgba(0,0,0,0.65)] backdrop-blur-xs animate-in fade-in"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.65)' }}
+        >
+          <div 
+            className="rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-white/15 backdrop-blur-md p-6 sm:p-7 space-y-5 animate-in zoom-in-95"
+            style={{ 
+              backgroundColor: 'rgba(10, 10, 10, 0.88)', 
+              backdropFilter: 'blur(16px)', 
+              WebkitBackdropFilter: 'blur(16px)',
+              borderColor: 'rgba(255, 255, 255, 0.15)' 
+            }}
+          >
             {/* Modal Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-[#e2e8f0]">
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-[#006b2c] flex items-center justify-center border border-emerald-100 font-bold text-base">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20 font-bold text-base">
                   {selectedCustomerDetail.name ? selectedCustomerDetail.name.charAt(0).toUpperCase() : 'C'}
                 </div>
                 <div>
-                  <h3 className="text-[18px] font-bold text-[#0b1c30] font-display">
+                  <h3 className="text-[18px] font-bold text-white font-display">
                     Customer Account Details
                   </h3>
-                  <p className="text-[12px] text-[#64748b]">
+                  <p className="text-[12px] text-slate-400">
                     Registered through FreshCart Customer Portal
                   </p>
                 </div>
@@ -5075,7 +5097,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedCustomerDetail(null)}
-                className="w-8 h-8 rounded-full hover:bg-[#f1f5f9] flex items-center justify-center text-[#64748b] hover:text-[#0b1c30] cursor-pointer"
+                className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white cursor-pointer transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -5085,22 +5107,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <div className="space-y-4">
               {/* Account summary cards */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] space-y-1">
-                  <span className="text-[11px] font-semibold text-[#64748b] block">Customer User ID</span>
-                  <span className="font-mono text-[13px] font-bold text-[#0b1c30] block">
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-1">
+                  <span className="text-[11px] font-semibold text-slate-400 block">Customer User ID</span>
+                  <span className="font-mono text-[13px] font-bold text-white block">
                     {selectedCustomerDetail.customerId}
                   </span>
                 </div>
-                <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] space-y-1">
-                  <span className="text-[11px] font-semibold text-[#64748b] block">Account Status</span>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10 space-y-1">
+                  <span className="text-[11px] font-semibold text-slate-400 block">Account Status</span>
                   {selectedCustomerDetail.status === 'Active' ? (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       <span>Active</span>
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
                       <span>Suspended</span>
                     </span>
                   )}
@@ -5108,62 +5130,62 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               {/* Detail Rows */}
-              <div className="rounded-xl border border-[#e2e8f0] divide-y divide-[#e2e8f0] text-[13px]">
+              <div className="rounded-xl border border-white/10 divide-y divide-white/10 text-[13px] bg-white/5">
                 <div className="p-3 flex justify-between items-center">
-                  <span className="text-[#64748b]">Full Name:</span>
-                  <span className="font-bold text-[#0b1c30]">{selectedCustomerDetail.name}</span>
+                  <span className="text-slate-400">Full Name:</span>
+                  <span className="font-bold text-white">{selectedCustomerDetail.name}</span>
                 </div>
                 <div className="p-3 flex justify-between items-center">
-                  <span className="text-[#64748b]">Email Address:</span>
-                  <span className="font-medium text-[#0b1c30]">{selectedCustomerDetail.email || 'None provided'}</span>
+                  <span className="text-slate-400">Email Address:</span>
+                  <span className="font-medium text-slate-200">{selectedCustomerDetail.email || 'None provided'}</span>
                 </div>
                 <div className="p-3 flex justify-between items-center">
-                  <span className="text-[#64748b]">Phone Number:</span>
-                  <span className="font-medium text-[#0b1c30]">
+                  <span className="text-slate-400">Phone Number:</span>
+                  <span className="font-medium text-slate-200">
                     {selectedCustomerDetail.phone ? formatIndianDisplayNumber(selectedCustomerDetail.phone) : 'None provided'}
                   </span>
                 </div>
                 <div className="p-3 flex justify-between items-center">
-                  <span className="text-[#64748b]">Loyalty Tier:</span>
-                  <span className="font-semibold text-[#006b2c]">{selectedCustomerDetail.loyaltyTier || 'Fresh Member'}</span>
+                  <span className="text-slate-400">Loyalty Tier:</span>
+                  <span className="font-semibold text-emerald-400">{selectedCustomerDetail.loyaltyTier || 'Fresh Member'}</span>
                 </div>
                 <div className="p-3 flex justify-between items-center">
-                  <span className="text-[#64748b]">Registration Date:</span>
-                  <span className="text-[#0b1c30]">{formatOrderDateTime(selectedCustomerDetail.createdAt)}</span>
+                  <span className="text-slate-400">Registration Date:</span>
+                  <span className="text-slate-200">{formatOrderDateTime(selectedCustomerDetail.createdAt)}</span>
                 </div>
                 {selectedCustomerDetail.address && (
                   <div className="p-3 flex justify-between items-start">
-                    <span className="text-[#64748b] shrink-0">Saved Address:</span>
-                    <span className="text-right text-[#0b1c30] max-w-[260px]">{selectedCustomerDetail.address}</span>
+                    <span className="text-slate-400 shrink-0">Saved Address:</span>
+                    <span className="text-right text-slate-200 max-w-[260px]">{selectedCustomerDetail.address}</span>
                   </div>
                 )}
               </div>
 
               {/* Password Protection Card */}
-              <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-[12px] space-y-1.5">
-                <div className="flex items-center gap-1.5 font-bold text-emerald-900">
-                  <Lock className="w-4 h-4 text-[#006b2c]" />
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-[12px] space-y-1.5">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                  <Lock className="w-4 h-4 text-emerald-400" />
                   <span>Password Security Guarantee</span>
                 </div>
-                <p className="text-emerald-800 leading-relaxed text-[11px]">
+                <p className="text-emerald-200/90 leading-relaxed text-[11px]">
                   Customer passwords are cryptographically hashed using salted, one-way bcrypt. By cryptographic design, customer passwords <strong>cannot be viewed, retrieved, or decrypted</strong> by administrators or through backend APIs.
                 </p>
-                <p className="text-emerald-700 text-[11px]">
+                <p className="text-emerald-300/80 text-[11px]">
                   If a customer forgets their password, they must use the secure customer password reset workflow.
                 </p>
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="flex items-center justify-between pt-3 border-t border-[#e2e8f0]">
+            <div className="flex items-center justify-between pt-3 border-t border-white/10">
               <button
                 type="button"
                 onClick={() => handleToggleCustomerStatus(selectedCustomerDetail)}
                 disabled={isTogglingCustomerStatus === selectedCustomerDetail.customerId}
                 className={`px-4 py-2 rounded-xl text-[12px] font-bold border transition-colors cursor-pointer ${
                   selectedCustomerDetail.status === 'Active'
-                    ? 'border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100'
-                    : 'border-emerald-300 text-emerald-800 bg-emerald-50 hover:bg-emerald-100'
+                    ? 'border-amber-500/30 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
+                    : 'border-emerald-500/30 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20'
                 }`}
               >
                 {selectedCustomerDetail.status === 'Active' ? 'Suspend Account' : 'Reactivate Account'}
@@ -5172,7 +5194,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedCustomerDetail(null)}
-                className="px-5 py-2 rounded-xl bg-[#0b1c30] hover:bg-[#1e293b] text-white text-[12px] font-bold transition-colors cursor-pointer"
+                className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[12px] font-bold transition-colors cursor-pointer border border-white/20"
               >
                 Close
               </button>
