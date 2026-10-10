@@ -136,6 +136,8 @@ export interface CustomerOtpResult {
   error?: string;
 }
 
+import { getStoredAdminToken } from './adminService';
+
 /**
  * Queries safe order verification status from backend.
  * Admin passes { role: 'admin' } to verify.
@@ -149,8 +151,18 @@ export async function getOrderOtpStatus(
     if (options?.customerId) params.set('customerId', options.customerId);
     if (options?.role) params.set('role', options.role);
     const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const headers: Record<string, string> = {};
+    if (options?.role === 'admin') {
+      headers['x-admin-role'] = 'admin';
+      const adminToken = getStoredAdminToken();
+      if (adminToken) {
+        headers['Authorization'] = `Bearer ${adminToken}`;
+      }
+    }
+
     const res = await fetch(`/api/otp/status/${encodeURIComponent(orderId)}${qs}`, {
-      headers: options?.role === 'admin' ? { 'x-admin-role': 'admin' } : {},
+      headers,
     });
     if (!res.ok) return null;
     return await res.json();

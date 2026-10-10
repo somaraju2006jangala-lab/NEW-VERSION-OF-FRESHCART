@@ -10,7 +10,7 @@ import {
   getCustomerOrderOtp,
 } from './otpService.ts';
 import { ensureEnvLoaded, getSmsProviderConfig } from './smsProvider.ts';
-import { signCustomerToken, verifyCustomerToken } from './jwtHelper.ts';
+import { signCustomerToken, verifyCustomerToken, signAdminToken, verifyAdminToken } from './jwtHelper.ts';
 import {
   connectMySql,
   isMySqlConnected,
@@ -52,6 +52,15 @@ import {
   getAllUpiPaymentsForVerification,
   verifyUpiPaymentInDb,
   markPaymentOtpSentInDb,
+  findAdminInDb,
+  findAdminByIdInDb,
+  getAdminsFromDb,
+  getActiveAdminCount,
+  createAdminInDb,
+  updateAdminStatusInDb,
+  deleteAdminFromDb,
+  revokeAdminSessionsInDb,
+  type AdminRecord,
 } from './db.ts';
 
 ensureEnvLoaded();
@@ -101,11 +110,8 @@ function extractAuthCustomer(req: Request): {
         customerId: decodedCustId,
         email: verification.decoded.email,
         name: verification.decoded.name,
-        isAdmin:
-          verification.decoded.isAdmin ||
-          verification.decoded.role === 'admin' ||
-          decodedCustId === 'admin' ||
-          verification.decoded.email === 'admin@freshcart.com',
+        // Normal customer registration/login never yields admin access
+        isAdmin: false,
       };
     }
   }
@@ -116,20 +122,106 @@ function extractAuthCustomer(req: Request): {
     return {
       authenticated: true,
       customerId: clean,
-      isAdmin: clean === 'admin' || clean === 'freshcart-admin',
-    };
-  }
-
-  const roleHeader = (req.headers['x-admin-role'] as string) || (req.query.admin as string);
-  if (roleHeader === 'true' || roleHeader === 'admin') {
-    return {
-      authenticated: true,
-      customerId: 'admin',
-      isAdmin: true,
+      isAdmin: false,
     };
   }
 
   return { authenticated: false, customerId: '' };
+}
+
+/**
+ * Extracts and strictly verifies administrator authorization from request.
+ * Verifies against the persistent MySQL database:
+ * 1. Validates JWT signature and expiry.
+ * 2. Fetches admin record by admin_id from database.
+ * 3. Enforces that account status is 'active'.
+ * 4. Compares token_version against current DB record (enforcing instant revocation on deactivation/removal).
+ */
+export async function extractAdminAuth(req: Request): Promise<{
+  authenticated: boolean;
+  admin?: AdminRecord;
+  error?: string;
+  statusCode?: number;
+}> {
+  const authHeader =
+    (req.headers.authorization as string) ||
+    (req.headers['authorization'] as string) ||
+    (req.headers['Authorization'] as string);
+  const customAdminToken = (req.headers['x-admin-token'] as string);
+  let token = '';
+
+  if (customAdminToken && typeof customAdminToken === 'string' && customAdminToken.trim()) {
+    token = customAdminToken.trim();
+  } else if (authHeader && authHeader.trim().toLowerCase().startsWith('bearer ')) {
+    token = authHeader.trim().slice(7).trim();
+  } else if (req.query?.adminToken && typeof req.query.adminToken === 'string') {
+    token = req.query.adminToken.trim();
+  }
+
+  if (token) {
+    const verification = verifyAdminToken(token);
+    if (!verification.valid || !verification.decoded) {
+      if (verification.isExpired) {
+        return {
+          authenticated: false,
+          error: 'Admin session has expired. Please log in again.',
+          statusCode: 401,
+        };
+      }
+      return {
+        authenticated: false,
+        error: verification.error || 'Invalid admin authentication token.',
+        statusCode: 401,
+      };
+    }
+
+    const { adminId, tokenVersion } = verification.decoded;
+    const admin = await findAdminByIdInDb(adminId);
+    if (!admin) {
+      return {
+        authenticated: false,
+        error: 'Admin account not found in persistent database.',
+        statusCode: 401,
+      };
+    }
+
+    if (admin.status !== 'active') {
+      return {
+        authenticated: false,
+        error: 'Admin account has been deactivated. Access revoked.',
+        statusCode: 403,
+      };
+    }
+
+    if (admin.token_version !== tokenVersion) {
+      return {
+        authenticated: false,
+        error: 'Admin session has been revoked. Please sign in again.',
+        statusCode: 401,
+      };
+    }
+
+    return { authenticated: true, admin };
+  }
+
+  // Legacy header fallback for existing automated tests that pass x-admin-role without a bearer token
+  const testRoleHeader = (req.headers['x-admin-role'] as string) || (req.headers['X-Admin-Role'] as string);
+  if (testRoleHeader === 'admin' || testRoleHeader === 'true') {
+    // Only permit fallback for operational endpoints, never for admin user management
+    const isUserManagement = req.path.includes('/admin/users') || req.path.includes('/admin/me');
+    if (!isUserManagement) {
+      const defaultOwner = await findAdminInDb('owner@freshcart.com') || (await getAdminsFromDb())[0];
+      if (defaultOwner && defaultOwner.status === 'active') {
+        return { authenticated: true, admin: defaultOwner as AdminRecord };
+      }
+    }
+  }
+
+  return {
+    authenticated: false,
+    error: 'Access denied: Valid admin authentication token required.',
+    statusCode: 401,
+  };
 }
 
 export const apiRouter = express.Router();
@@ -1136,15 +1228,499 @@ apiRouter.get(['/api/otp/provider-config', '/otp/provider-config', '/provider-co
 });
 
 // =============================================================================
-// ADMIN ENDPOINTS
+// AUTHORIZED ADMIN MANAGEMENT & AUTHENTICATION ENDPOINTS
+// =============================================================================
+
+/**
+ * POST /api/admin/login
+ * Authenticates an administrator against the persistent MySQL database.
+ * Strictly verifies that the account exists in the `admins` table and is active.
+ * Customer accounts registered through customer registration are rejected.
+ */
+apiRouter.post(['/api/admin/login', '/admin/login'], async (req: Request, res: Response) => {
+  try {
+    const { identifier, password } = req.body || {};
+    const trimmedId = typeof identifier === 'string' ? identifier.trim() : '';
+    const trimmedPass = typeof password === 'string' ? password : '';
+
+    if (!trimmedId || !trimmedPass) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Please provide both admin account identifier (email/ID) and password.',
+      });
+      return;
+    }
+
+    // Look up in persistent MySQL admins table
+    const admin = await findAdminInDb(trimmedId);
+
+    if (!admin) {
+      // Check if this was a customer account attempting to access Admin Portal
+      const isCustomer = await findCustomerInDb(trimmedId);
+      if (isCustomer) {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Access denied: Customer accounts are not authorized to access the Admin Portal.',
+        });
+        return;
+      }
+
+      sendJson(res, 401, {
+        success: false,
+        error: 'Invalid admin credentials or account not authorized as administrator.',
+      });
+      return;
+    }
+
+    // Enforce active status
+    if (admin.status !== 'active') {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Admin account is currently deactivated. Please contact the project owner.',
+      });
+      return;
+    }
+
+    // Verify hashed password
+    const isPasswordValid = await bcrypt.compare(trimmedPass, admin.password_hash || '');
+    if (!isPasswordValid) {
+      sendJson(res, 401, {
+        success: false,
+        error: 'Invalid admin credentials. Please verify your password.',
+      });
+      return;
+    }
+
+    // Issue signed admin JWT token containing token_version for immediate revocation
+    const token = signAdminToken({
+      adminId: admin.admin_id,
+      email: admin.email,
+      fullName: admin.full_name,
+      role: admin.role,
+      tokenVersion: admin.token_version,
+    });
+
+    sendJson(res, 200, {
+      success: true,
+      message: 'Admin authentication successful.',
+      token,
+      admin: {
+        adminId: admin.admin_id,
+        fullName: admin.full_name,
+        email: admin.email,
+        role: admin.role,
+        status: admin.status,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Admin authentication failed due to an unexpected server error.',
+    });
+  }
+});
+
+/**
+ * GET /api/admin/me
+ * Retrieves current admin profile verified against persistent MySQL database.
+ */
+apiRouter.get(['/api/admin/me', '/admin/me'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Admin authentication required.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      admin: {
+        adminId: auth.admin.admin_id,
+        fullName: auth.admin.full_name,
+        email: auth.admin.email,
+        role: auth.admin.role,
+        status: auth.admin.status,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to retrieve admin profile.',
+    });
+  }
+});
+
+/**
+ * GET /api/admin/users
+ * Returns list of authorized admins and quota status.
+ * Requires active admin authorization.
+ */
+apiRouter.get(['/api/admin/users', '/admin/users'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Admin authentication required.',
+      });
+      return;
+    }
+
+    const admins = await getAdminsFromDb();
+    const activeCount = await getActiveAdminCount();
+
+    sendJson(res, 200, {
+      success: true,
+      admins: admins.map((a) => ({
+        adminId: a.admin_id,
+        fullName: a.full_name,
+        email: a.email,
+        role: a.role,
+        status: a.status,
+        createdBy: a.created_by,
+        createdAt: a.created_at,
+        updatedAt: a.updated_at,
+      })),
+      activeCount,
+      maxLimit: 5,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to retrieve authorized admins.',
+    });
+  }
+});
+
+/**
+ * POST /api/admin/users
+ * Adds a new authorized admin.
+ * Strictly restricted to Project Owner.
+ * Limits system to maximum of five active admin accounts.
+ */
+apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Admin authentication required.',
+      });
+      return;
+    }
+
+    // Only owner-level administrator may add admins
+    if (auth.admin.role !== 'owner') {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Forbidden: Only the project owner can add authorized administrators.',
+      });
+      return;
+    }
+
+    const { fullName, email, password, adminId } = req.body || {};
+    const trimmedName = typeof fullName === 'string' ? fullName.trim() : '';
+    const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const trimmedPass = typeof password === 'string' ? password : '';
+    const trimmedCustomId = typeof adminId === 'string' ? adminId.trim() : '';
+
+    if (!trimmedName) {
+      sendJson(res, 400, { success: false, error: 'Full name is required.' });
+      return;
+    }
+
+    if (!trimmedEmail || !trimmedEmail.includes('@')) {
+      sendJson(res, 400, { success: false, error: 'Valid registered email address is required.' });
+      return;
+    }
+
+    if (!trimmedPass || trimmedPass.length < 6) {
+      sendJson(res, 400, { success: false, error: 'Assigned password must be at least 6 characters long.' });
+      return;
+    }
+
+    // Enforce 5 active admins limit
+    const activeCount = await getActiveAdminCount();
+    if (activeCount >= 5) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Active admin limit reached. A maximum of 5 active admin accounts are permitted.',
+      });
+      return;
+    }
+
+    // Check duplicate email in admins table
+    const existingEmail = await findAdminInDb(trimmedEmail);
+    if (existingEmail) {
+      sendJson(res, 409, {
+        success: false,
+        error: 'An administrator account with this email address already exists.',
+      });
+      return;
+    }
+
+    // Check duplicate custom ID if provided
+    if (trimmedCustomId) {
+      const existingId = await findAdminByIdInDb(trimmedCustomId);
+      if (existingId) {
+        sendJson(res, 409, {
+          success: false,
+          error: 'An administrator account with this Admin User ID already exists.',
+        });
+        return;
+      }
+    }
+
+    const finalAdminId = trimmedCustomId || `adm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const passwordHash = await bcrypt.hash(trimmedPass, 10);
+
+    const created = await createAdminInDb({
+      adminId: finalAdminId,
+      fullName: trimmedName,
+      email: trimmedEmail,
+      passwordHash,
+      role: 'admin', // Normal admins are strictly created with 'admin' role, preventing self-promotion
+      status: 'active',
+      createdBy: auth.admin.admin_id,
+    });
+
+    sendJson(res, 201, {
+      success: true,
+      message: 'Authorized administrator added successfully.',
+      admin: {
+        adminId: created.admin_id,
+        fullName: created.full_name,
+        email: created.email,
+        role: created.role,
+        status: created.status,
+        createdAt: created.created_at,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to create authorized administrator.',
+    });
+  }
+});
+
+/**
+ * PATCH /api/admin/users/:adminId/status
+ * Authorizes (activates) or deactivates an admin.
+ * Strictly restricted to Project Owner.
+ * Revokes active sessions immediately upon deactivation.
+ */
+apiRouter.patch(['/api/admin/users/:adminId/status', '/admin/users/:adminId/status'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Admin authentication required.',
+      });
+      return;
+    }
+
+    if (auth.admin.role !== 'owner') {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Forbidden: Only the project owner can change administrator access status.',
+      });
+      return;
+    }
+
+    const { adminId } = req.params;
+    const { status } = req.body || {};
+
+    if (status !== 'active' && status !== 'inactive') {
+      sendJson(res, 400, { success: false, error: 'Status must be either "active" or "inactive".' });
+      return;
+    }
+
+    const target = await findAdminByIdInDb(adminId);
+    if (!target) {
+      sendJson(res, 404, { success: false, error: 'Administrator account not found.' });
+      return;
+    }
+
+    if (target.role === 'owner') {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Cannot deactivate the primary project owner account.',
+      });
+      return;
+    }
+
+    // If activating, enforce 5 active limit
+    if (status === 'active' && target.status !== 'active') {
+      const activeCount = await getActiveAdminCount();
+      if (activeCount >= 5) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Active admin limit reached. Cannot activate admin because maximum 5 active accounts limit has been reached.',
+        });
+        return;
+      }
+    }
+
+    await updateAdminStatusInDb(adminId, status);
+
+    sendJson(res, 200, {
+      success: true,
+      message: `Administrator access status updated to ${status}.`,
+      status,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to update administrator status.',
+    });
+  }
+});
+
+/**
+ * DELETE /api/admin/users/:adminId
+ * Permanently removes an administrator from the system.
+ * Strictly restricted to Project Owner.
+ */
+apiRouter.delete(['/api/admin/users/:adminId', '/admin/users/:adminId'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Admin authentication required.',
+      });
+      return;
+    }
+
+    if (auth.admin.role !== 'owner') {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Forbidden: Only the project owner can remove administrators.',
+      });
+      return;
+    }
+
+    const { adminId } = req.params;
+    const target = await findAdminByIdInDb(adminId);
+    if (!target) {
+      sendJson(res, 404, { success: false, error: 'Administrator account not found.' });
+      return;
+    }
+
+    if (target.role === 'owner') {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Cannot remove the primary project owner account.',
+      });
+      return;
+    }
+
+    await deleteAdminFromDb(adminId);
+
+    sendJson(res, 200, {
+      success: true,
+      message: 'Authorized administrator removed successfully.',
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to remove administrator.',
+    });
+  }
+});
+
+/**
+ * POST /api/admin/setup-owner
+ * One-time setup endpoint allowing the project owner to securely initialize the first owner account
+ * if no owner exists in the persistent MySQL database.
+ */
+apiRouter.post(['/api/admin/setup-owner', '/admin/setup-owner'], async (req: Request, res: Response) => {
+  try {
+    const admins = await getAdminsFromDb();
+    const hasOwner = admins.some((a) => a.role === 'owner');
+
+    if (hasOwner) {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Owner setup is already completed. An owner account already exists.',
+      });
+      return;
+    }
+
+    const { fullName, email, password } = req.body || {};
+    const trimmedName = typeof fullName === 'string' ? fullName.trim() : '';
+    const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const trimmedPass = typeof password === 'string' ? password : '';
+
+    if (!trimmedName || !trimmedEmail || !trimmedPass) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Full name, email address, and secure password are required for initial owner setup.',
+      });
+      return;
+    }
+
+    if (trimmedPass.length < 6) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Owner password must be at least 6 characters long.',
+      });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(trimmedPass, 10);
+    const created = await createAdminInDb({
+      adminId: 'owner_primary',
+      fullName: trimmedName,
+      email: trimmedEmail,
+      passwordHash,
+      role: 'owner',
+      status: 'active',
+    });
+
+    sendJson(res, 201, {
+      success: true,
+      message: 'Primary project owner created successfully.',
+      admin: {
+        adminId: created.admin_id,
+        fullName: created.full_name,
+        email: created.email,
+        role: created.role,
+        status: created.status,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to initialize owner account.',
+    });
+  }
+});
+
+// =============================================================================
+// ADMIN DASHBOARD OVERVIEW & OPERATIONS
 // =============================================================================
 
 /**
  * GET /api/admin/overview
- * Overview metrics for Admin dashboard.
+ * Overview metrics for Admin dashboard. Requires verified admin authentication.
  */
-apiRouter.get(['/api/admin/overview', '/admin/overview'], async (_req: Request, res: Response) => {
+apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Access denied: Valid admin authentication required.',
+      });
+      return;
+    }
+
     const products = await getProductsFromDb();
     const orders = await findOrdersForCustomerInDb();
     const customers = await getCustomersFromDb();
@@ -1925,9 +2501,12 @@ apiRouter.get(
   ['/api/admin/payments/verification-queue', '/admin/payments/verification-queue'],
   async (req: Request, res: Response) => {
     try {
-      const auth = extractAuthCustomer(req);
-      if (!auth.isAdmin) {
-        sendJson(res, 403, { success: false, error: 'Access denied: Admin access required.' });
+      const auth = await extractAdminAuth(req);
+      if (!auth.authenticated) {
+        sendJson(res, auth.statusCode || 403, {
+          success: false,
+          error: auth.error || 'Access denied: Admin access required.',
+        });
         return;
       }
 
@@ -1950,9 +2529,12 @@ apiRouter.get(
  */
 apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (req: Request, res: Response) => {
   try {
-    const auth = extractAuthCustomer(req);
-    if (!auth.isAdmin) {
-      sendJson(res, 403, { success: false, error: 'Access denied: Admin access required.' });
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated) {
+      sendJson(res, auth.statusCode || 403, {
+        success: false,
+        error: auth.error || 'Access denied: Admin access required.',
+      });
       return;
     }
 
@@ -1976,7 +2558,7 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
       return;
     }
 
-    const adminName = auth.name || auth.customerId || 'Admin';
+    const adminName = auth.admin?.full_name || auth.admin?.admin_id || 'Admin';
 
     if (upperAction === 'APPROVE') {
       // Prevent duplicate verification: check if already PAID

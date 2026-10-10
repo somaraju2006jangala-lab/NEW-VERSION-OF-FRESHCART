@@ -758,6 +758,23 @@ export async function initializeDatabase(): Promise<void> {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_payment_settings_upi (upi_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    `CREATE TABLE IF NOT EXISTS admins (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      admin_id VARCHAR(64) NOT NULL UNIQUE,
+      full_name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL UNIQUE,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(32) NOT NULL DEFAULT 'admin',
+      status VARCHAR(32) NOT NULL DEFAULT 'active',
+      token_version INT NOT NULL DEFAULT 1,
+      created_by VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_admins_admin_id (admin_id),
+      INDEX idx_admins_email (email),
+      INDEX idx_admins_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
   ];
 
   for (const sql of tableStatements) {
@@ -1187,6 +1204,21 @@ export async function seedInitialDataIfDbEmpty(): Promise<void> {
         ['delivery_settings', JSON.stringify({ deliveryChargeRules: defaultRules, deliveryCharges: 40 })]
       );
       console.log('[MySQL] Seeded default app settings.');
+    }
+
+    // 6. Seed Initial Project Owner Admin if none exists
+    const [adminRows] = await currentPool.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM admins');
+    if (adminRows[0]?.count === 0) {
+      const ownerEmail = (process.env.ADMIN_OWNER_EMAIL || 'owner@freshcart.com').trim().toLowerCase();
+      const ownerPassword = process.env.ADMIN_OWNER_PASSWORD || 'FreshCartOwner2026!';
+      const ownerName = process.env.ADMIN_OWNER_NAME || 'FreshCart Project Owner';
+      const ownerPasswordHash = await bcrypt.hash(ownerPassword, 10);
+      await currentPool.query(
+        `INSERT INTO admins (admin_id, full_name, email, password_hash, role, status, token_version)
+         VALUES (?, ?, ?, ?, 'owner', 'active', 1)`,
+        ['admin_owner_001', ownerName, ownerEmail, ownerPasswordHash]
+      );
+      console.log(`[MySQL] Initialized primary project owner admin: ${ownerEmail} (${ownerName})`);
     }
   } catch (err: any) {
     console.warn('[MySQL Seed Error]:', err?.message);
@@ -3435,5 +3467,202 @@ export async function markPaymentOtpSentInDb(orderId: string): Promise<boolean> 
   }
   return false;
 }
+
+// -----------------------------------------------------------------------------
+// AUTHORIZED ADMIN MANAGEMENT OPERATIONS
+// -----------------------------------------------------------------------------
+
+export interface AdminRecord {
+  id?: number;
+  admin_id: string;
+  full_name: string;
+  email: string;
+  password_hash?: string;
+  role: 'owner' | 'admin';
+  status: 'active' | 'inactive';
+  token_version: number;
+  created_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/**
+ * Finds an admin by identifier (email or admin_id) in the persistent MySQL database.
+ */
+export async function findAdminInDb(identifier: string): Promise<AdminRecord | null> {
+  if (!identifier || typeof identifier !== 'string') return null;
+  const pool = getPool();
+  const clean = identifier.trim();
+  const cleanLower = clean.toLowerCase();
+
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, admin_id, full_name, email, password_hash, role, status, token_version, created_by, created_at, updated_at
+       FROM admins
+       WHERE admin_id = ? OR LOWER(email) = ? OR LOWER(admin_id) = ?
+       LIMIT 1`,
+      [clean, cleanLower, cleanLower]
+    );
+    if (!rows || rows.length === 0) return null;
+    return rows[0] as AdminRecord;
+  } catch (err: any) {
+    console.error('[MySQL] Error looking up admin by identifier:', err?.message);
+    return null;
+  }
+}
+
+/**
+ * Finds an admin by their unique admin_id.
+ */
+export async function findAdminByIdInDb(adminId: string): Promise<AdminRecord | null> {
+  if (!adminId || typeof adminId !== 'string') return null;
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, admin_id, full_name, email, password_hash, role, status, token_version, created_by, created_at, updated_at
+       FROM admins
+       WHERE admin_id = ?
+       LIMIT 1`,
+      [adminId.trim()]
+    );
+    if (!rows || rows.length === 0) return null;
+    return rows[0] as AdminRecord;
+  } catch (err: any) {
+    console.error('[MySQL] Error looking up admin by ID:', err?.message);
+    return null;
+  }
+}
+
+/**
+ * Returns all registered authorized admins from the database.
+ * Omits password_hash for security.
+ */
+export async function getAdminsFromDb(): Promise<Omit<AdminRecord, 'password_hash'>[]> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, admin_id, full_name, email, role, status, token_version, created_by, created_at, updated_at
+       FROM admins
+       ORDER BY CASE WHEN role = 'owner' THEN 0 ELSE 1 END, created_at ASC`
+    );
+    return rows as Omit<AdminRecord, 'password_hash'>[];
+  } catch (err: any) {
+    console.error('[MySQL] Error getting admin list:', err?.message);
+    return [];
+  }
+}
+
+/**
+ * Returns the current count of active administrators.
+ */
+export async function getActiveAdminCount(): Promise<number> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM admins WHERE status = 'active'`
+    );
+    return Number(rows[0]?.count || 0);
+  } catch (err: any) {
+    console.error('[MySQL] Error counting active admins:', err?.message);
+    return 0;
+  }
+}
+
+/**
+ * Inserts a new authorized admin into the persistent MySQL database.
+ * Strictly limits total active admins to 5.
+ */
+export async function createAdminInDb(params: {
+  adminId: string;
+  fullName: string;
+  email: string;
+  passwordHash: string;
+  role?: 'owner' | 'admin';
+  createdBy?: string;
+  status?: 'active' | 'inactive';
+}): Promise<AdminRecord> {
+  const pool = getPool();
+  const role = params.role || 'admin';
+  const status = params.status || 'active';
+
+  // Limit check: maximum 5 active admin accounts
+  if (status === 'active') {
+    const activeCount = await getActiveAdminCount();
+    if (activeCount >= 5) {
+      throw new Error('Active admin limit reached. A maximum of 5 active admin accounts are permitted.');
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO admins (admin_id, full_name, email, password_hash, role, status, token_version, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+    [
+      params.adminId,
+      params.fullName.trim(),
+      params.email.trim().toLowerCase(),
+      params.passwordHash,
+      role,
+      status,
+      params.createdBy || null,
+    ]
+  );
+
+  const created = await findAdminByIdInDb(params.adminId);
+  if (!created) {
+    throw new Error('Failed to retrieve newly created admin record.');
+  }
+  return created;
+}
+
+/**
+ * Updates an admin's status (active/inactive).
+ * Automatically increments token_version to invalidate existing sessions upon deactivation.
+ */
+export async function updateAdminStatusInDb(
+  adminId: string,
+  status: 'active' | 'inactive'
+): Promise<void> {
+  const pool = getPool();
+  const target = await findAdminByIdInDb(adminId);
+  if (!target) {
+    throw new Error(`Admin with ID "${adminId}" not found.`);
+  }
+
+  // If activating, enforce max 5 active admin limit
+  if (status === 'active' && target.status !== 'active') {
+    const activeCount = await getActiveAdminCount();
+    if (activeCount >= 5) {
+      throw new Error('Active admin limit reached. Cannot activate admin because maximum 5 active accounts limit has been reached.');
+    }
+  }
+
+  // Updating status increments token_version to immediately revoke all active sessions for this admin
+  await pool.query(
+    `UPDATE admins
+     SET status = ?, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP
+     WHERE admin_id = ?`,
+    [status, adminId]
+  );
+}
+
+/**
+ * Removes an admin completely from the database.
+ */
+export async function deleteAdminFromDb(adminId: string): Promise<void> {
+  const pool = getPool();
+  await pool.query('DELETE FROM admins WHERE admin_id = ?', [adminId]);
+}
+
+/**
+ * Revokes all active sessions for an admin by incrementing token_version.
+ */
+export async function revokeAdminSessionsInDb(adminId: string): Promise<void> {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE admins SET token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP WHERE admin_id = ?`,
+    [adminId]
+  );
+}
+
 
 

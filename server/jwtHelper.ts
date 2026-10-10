@@ -95,3 +95,74 @@ export function verifyCustomerToken(token: string): {
     };
   }
 }
+
+export interface AdminTokenPayload {
+  adminId: string;
+  email: string;
+  fullName: string;
+  role: 'owner' | 'admin';
+  tokenVersion: number;
+  [key: string]: any;
+}
+
+/**
+ * Signs a JWT token for an authorized administrator.
+ */
+export function signAdminToken(
+  payload: AdminTokenPayload,
+  expiresIn: string = '7d'
+): string {
+  const normalizedPayload = {
+    ...payload,
+    isAdmin: true,
+    tokenType: 'admin',
+  };
+  return jwt.sign(normalizedPayload, JWT_SECRET, { expiresIn } as any);
+}
+
+/**
+ * Verifies an admin JWT token and extracts administrator identity.
+ * Validates expiration and payload structure.
+ */
+export function verifyAdminToken(token: string): {
+  valid: boolean;
+  decoded?: AdminTokenPayload;
+  error?: string;
+  isExpired?: boolean;
+} {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'Admin authentication token is required.' };
+  }
+
+  const cleanToken = token.startsWith('Bearer ') ? token.slice(7).trim() : token.trim();
+
+  try {
+    const decoded = jwt.verify(cleanToken, JWT_SECRET) as any;
+    if (!decoded || !decoded.adminId || !decoded.role) {
+      return { valid: false, error: 'Invalid admin token claims.' };
+    }
+    return {
+      valid: true,
+      decoded: {
+        adminId: decoded.adminId,
+        email: decoded.email || '',
+        fullName: decoded.fullName || '',
+        role: decoded.role,
+        tokenVersion: typeof decoded.tokenVersion === 'number' ? decoded.tokenVersion : 1,
+      },
+    };
+  } catch (err: any) {
+    if (err instanceof jwt.TokenExpiredError) {
+      return {
+        valid: false,
+        isExpired: true,
+        error: 'Admin authentication token has expired. Please sign in again.',
+      };
+    }
+    return {
+      valid: false,
+      error: 'Invalid admin authentication token.',
+    };
+  }
+}
+

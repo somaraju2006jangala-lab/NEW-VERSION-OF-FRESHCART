@@ -38,6 +38,9 @@ import {
   CreditCard,
   QrCode,
   Eye,
+  EyeOff,
+  Mail,
+  AlertCircle,
   RefreshCw,
   FileImage,
   XCircle,
@@ -46,6 +49,11 @@ import {
   ZoomOut,
   Maximize2,
   ExternalLink,
+  LogOut,
+  UserPlus,
+  UserX,
+  UserCheck,
+  ShieldAlert,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { verifyOrderOtp, maskMobileNumber } from '../services/otpClientService';
@@ -60,6 +68,14 @@ import {
   fetchPaymentVerificationQueue,
   PaymentVerificationItem,
 } from '../services/paymentService';
+import {
+  AuthorizedAdmin,
+  fetchAuthorizedAdmins,
+  createAuthorizedAdmin,
+  toggleAdminStatus,
+  deleteAuthorizedAdmin,
+} from '../services/adminService';
+
 
 export interface ParsedHistoryPeriod {
   type: 'all' | 'relative';
@@ -196,6 +212,8 @@ interface AdminPortalProps {
   onUpdateDeliveryRules?: (rules: DeliveryChargeRule[]) => Promise<void> | void;
   taxAndPackingPercentage?: number;
   onUpdateTaxAndPacking?: (percentage: number) => Promise<void> | void;
+  currentAdmin?: AuthorizedAdmin | null;
+  onAdminLogout?: () => void;
 }
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
@@ -224,12 +242,158 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   onUpdateDeliveryRules,
   taxAndPackingPercentage,
   onUpdateTaxAndPacking,
+  currentAdmin,
+  onAdminLogout,
 }) => {
   const { t } = useLanguage();
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterStockStatus, setFilterStockStatus] = useState('all');
   const [adminSearch, setAdminSearch] = useState('');
-  const [activeTab, setActiveTab] = useState<'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification'>('inventory');
+  const [activeTab, setActiveTab] = useState<
+    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins'
+  >('inventory');
+
+  // Authorized Administrators Management State
+  const [adminsList, setAdminsList] = useState<AuthorizedAdmin[]>([]);
+  const [activeAdminsCount, setActiveAdminsCount] = useState<number>(1);
+  const [maxAdminsLimit, setMaxAdminsLimit] = useState<number>(5);
+  const [isLoadingAdmins, setIsLoadingAdmins] = useState<boolean>(false);
+  const [adminMgmtError, setAdminMgmtError] = useState<string | null>(null);
+  const [adminMgmtSuccess, setAdminMgmtSuccess] = useState<string | null>(null);
+
+  // Add Admin Modal State
+  const [showAddAdminModal, setShowAddAdminModal] = useState<boolean>(false);
+  const [newAdminFullName, setNewAdminFullName] = useState<string>('');
+  const [newAdminEmail, setNewAdminEmail] = useState<string>('');
+  const [newAdminCustomId, setNewAdminCustomId] = useState<string>('');
+  const [newAdminPassword, setNewAdminPassword] = useState<string>('');
+  const [showNewAdminPassword, setShowNewAdminPassword] = useState<boolean>(false);
+  const [isSubmittingAdmin, setIsSubmittingAdmin] = useState<boolean>(false);
+  const [addAdminModalError, setAddAdminModalError] = useState<string | null>(null);
+
+  // Status toggle & Delete confirmation state
+  const [togglingAdminId, setTogglingAdminId] = useState<string | null>(null);
+  const [deletingAdmin, setDeletingAdmin] = useState<AuthorizedAdmin | null>(null);
+  const [isDeletingAdmin, setIsDeletingAdmin] = useState<boolean>(false);
+
+  const loadAdmins = async () => {
+    setIsLoadingAdmins(true);
+    setAdminMgmtError(null);
+    try {
+      const res = await fetchAuthorizedAdmins();
+      if (res.success) {
+        setAdminsList(res.admins);
+        setActiveAdminsCount(res.activeCount);
+        setMaxAdminsLimit(res.maxLimit || 5);
+      } else {
+        setAdminMgmtError(res.error || 'Failed to retrieve authorized administrators.');
+      }
+    } catch {
+      setAdminMgmtError('Network error while retrieving administrator list.');
+    } finally {
+      setIsLoadingAdmins(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAdmins();
+  }, []);
+
+  const handleCreateAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddAdminModalError(null);
+
+    const name = newAdminFullName.trim();
+    const email = newAdminEmail.trim().toLowerCase();
+    const pass = newAdminPassword;
+    const customId = newAdminCustomId.trim();
+
+    if (!name) {
+      setAddAdminModalError('Please enter the full name of the authorized administrator.');
+      return;
+    }
+    if (!email || !email.includes('@')) {
+      setAddAdminModalError('Please enter a valid registered email address.');
+      return;
+    }
+    if (!pass || pass.length < 6) {
+      setAddAdminModalError('Assigned password must be at least 6 characters long.');
+      return;
+    }
+
+    if (activeAdminsCount >= maxAdminsLimit) {
+      setAddAdminModalError(`Active admin limit reached. A maximum of ${maxAdminsLimit} active admin accounts are permitted.`);
+      return;
+    }
+
+    setIsSubmittingAdmin(true);
+    try {
+      const res = await createAuthorizedAdmin({
+        fullName: name,
+        email,
+        password: pass,
+        adminId: customId || undefined,
+      });
+
+      if (res.success) {
+        setShowAddAdminModal(false);
+        setNewAdminFullName('');
+        setNewAdminEmail('');
+        setNewAdminCustomId('');
+        setNewAdminPassword('');
+        setAdminMgmtSuccess(`Successfully authorized ${name} as a new administrator.`);
+        setTimeout(() => setAdminMgmtSuccess(null), 4000);
+        await loadAdmins();
+      } else {
+        setAddAdminModalError(res.error || 'Failed to add authorized administrator.');
+      }
+    } catch {
+      setAddAdminModalError('Unexpected error occurred while creating administrator.');
+    } finally {
+      setIsSubmittingAdmin(false);
+    }
+  };
+
+  const handleToggleAdminStatus = async (admin: AuthorizedAdmin) => {
+    const nextStatus = admin.status === 'active' ? 'inactive' : 'active';
+    setTogglingAdminId(admin.adminId);
+    setAdminMgmtError(null);
+    try {
+      const res = await toggleAdminStatus(admin.adminId, nextStatus);
+      if (res.success) {
+        setAdminMgmtSuccess(`Administrator ${admin.fullName} has been ${nextStatus === 'active' ? 'activated' : 'deactivated'}.`);
+        setTimeout(() => setAdminMgmtSuccess(null), 4000);
+        await loadAdmins();
+      } else {
+        setAdminMgmtError(res.error || 'Failed to update administrator status.');
+      }
+    } catch {
+      setAdminMgmtError('Network error while updating administrator status.');
+    } finally {
+      setTogglingAdminId(null);
+    }
+  };
+
+  const handleConfirmDeleteAdmin = async () => {
+    if (!deletingAdmin) return;
+    setIsDeletingAdmin(true);
+    setAdminMgmtError(null);
+    try {
+      const res = await deleteAuthorizedAdmin(deletingAdmin.adminId);
+      if (res.success) {
+        setAdminMgmtSuccess(`Administrator ${deletingAdmin.fullName} has been permanently removed.`);
+        setTimeout(() => setAdminMgmtSuccess(null), 4000);
+        setDeletingAdmin(null);
+        await loadAdmins();
+      } else {
+        setAdminMgmtError(res.error || 'Failed to remove administrator.');
+      }
+    } catch {
+      setAdminMgmtError('Network error while removing administrator.');
+    } finally {
+      setIsDeletingAdmin(false);
+    }
+  };
 
   // Customizable Delivery Charges Rules State
   const [rules, setRules] = useState<DeliveryChargeRule[]>(() => {
@@ -970,13 +1134,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <div className="flex items-center gap-2 pl-2">
               <img
                 src={USER_AVATAR_URL}
-                alt="Sarah L."
+                alt={currentAdmin?.fullName || 'Admin User'}
                 className="w-8 h-8 rounded-full object-cover border border-[#475569]"
               />
               <div className="hidden sm:block text-left">
-                <p className="text-[12px] font-semibold leading-tight">Sarah L.</p>
-                <p className="text-[10px] text-[#94a3b8] leading-tight">{t('opsManager')}</p>
+                <p className="text-[12px] font-semibold leading-tight">{currentAdmin?.fullName || 'Sarah L.'}</p>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-sm leading-tight ${
+                      currentAdmin?.role === 'owner'
+                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    }`}
+                  >
+                    {currentAdmin?.role === 'owner' ? 'Project Owner' : t('opsManager')}
+                  </span>
+                </div>
               </div>
+              {onAdminLogout && (
+                <button
+                  type="button"
+                  id="admin-logout-btn"
+                  onClick={onAdminLogout}
+                  className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer border border-rose-500/30 shadow-2xs"
+                  title="Sign out of Admin Portal"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Sign Out</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1154,6 +1340,31 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 {pendingVerificationCount}
               </span>
             )}
+          </button>
+          <button
+            type="button"
+            id="admin-tab-authorized-admins"
+            onClick={() => {
+              setActiveTab('admins');
+              loadAdmins();
+            }}
+            className={`pb-3 text-[13px] font-semibold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'admins'
+                ? 'border-[#006b2c] text-[#006b2c]'
+                : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Authorized Admins</span>
+            <span
+              className={`ml-1 px-1.5 py-0.5 text-[10px] font-bold rounded-full border ${
+                activeAdminsCount >= maxAdminsLimit
+                  ? 'bg-amber-100 text-amber-800 border-amber-300'
+                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+              }`}
+            >
+              {activeAdminsCount}/{maxAdminsLimit}
+            </span>
           </button>
         </div>
 
@@ -3382,7 +3593,520 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
         )}
+
+        {/* Tab 8: Authorized Administrator Management */}
+        {activeTab === 'admins' && (
+          <div className="space-y-6">
+            {/* Header & Quota Card */}
+            <div className="bg-white rounded-xl border border-[#e2e8f0] shadow-xs p-5 sm:p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#e2e8f0]">
+                <div>
+                  <h3 className="text-[18px] font-bold text-[#0b1c30] font-display flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-[#006b2c]" />
+                    <span>Authorized Administrator Management</span>
+                  </h3>
+                  <p className="text-[12px] text-[#64748b] mt-0.5">
+                    Persistent MySQL authorization control. System access is strictly restricted to authorized administrator accounts. Maximum 5 active admin accounts.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={loadAdmins}
+                    disabled={isLoadingAdmins}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[#e2e8f0] text-[#0b1c30] hover:bg-[#f8fafc] text-[12px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                    title="Refresh administrator list"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-[#64748b] ${isLoadingAdmins ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+
+                  {currentAdmin?.role === 'owner' ? (
+                    <button
+                      type="button"
+                      id="btn-add-authorized-admin"
+                      disabled={activeAdminsCount >= maxAdminsLimit}
+                      onClick={() => {
+                        setAddAdminModalError(null);
+                        setNewAdminFullName('');
+                        setNewAdminEmail('');
+                        setNewAdminCustomId('');
+                        setNewAdminPassword('');
+                        setShowAddAdminModal(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#006b2c] hover:bg-[#005222] text-white text-[12px] font-bold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                      title={
+                        activeAdminsCount >= maxAdminsLimit
+                          ? 'Active admin quota reached (max 5 accounts)'
+                          : 'Add a new authorized administrator'
+                      }
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      <span>Add Authorized Admin</span>
+                    </button>
+                  ) : (
+                    <span className="text-[11px] font-medium text-[#64748b] bg-[#f1f5f9] px-2.5 py-1.5 rounded-lg border border-[#e2e8f0]">
+                      Standard Admin Mode (View Only)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* 5-Admin Quota Progress Bar */}
+              <div className="bg-[#f8fafc] rounded-xl border border-[#e2e8f0] p-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-[#0b1c30]">
+                      Active Administrator Quota:
+                    </span>
+                    <span className="text-[13px] font-black font-display tabular-nums text-[#006b2c]">
+                      {activeAdminsCount} / {maxAdminsLimit}
+                    </span>
+                    <span className="text-[11px] text-[#64748b]">
+                      ({maxAdminsLimit - activeAdminsCount} {maxAdminsLimit - activeAdminsCount === 1 ? 'slot' : 'slots'} available)
+                    </span>
+                  </div>
+
+                  {activeAdminsCount >= maxAdminsLimit && (
+                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-amber-600" />
+                      <span>Quota Limit Reached (Max 5 Active)</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="w-full bg-[#e2e8f0] rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      activeAdminsCount >= maxAdminsLimit
+                        ? 'bg-amber-500'
+                        : activeAdminsCount >= 4
+                        ? 'bg-emerald-500'
+                        : 'bg-[#006b2c]'
+                    }`}
+                    style={{ width: `${Math.min(100, (activeAdminsCount / maxAdminsLimit) * 100)}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-[#64748b] mt-2">
+                  System strictly allows up to 5 active admin accounts. Deactivate or remove existing accounts to free up active admin slots.
+                </p>
+              </div>
+
+              {/* Success Notification */}
+              {adminMgmtSuccess && (
+                <div className="p-3.5 rounded-xl bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] text-[12px] flex items-center justify-between animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-[#059669] shrink-0" />
+                    <span className="font-semibold">{adminMgmtSuccess}</span>
+                  </div>
+                  <button onClick={() => setAdminMgmtSuccess(null)} className="text-[#059669] hover:text-[#047857]">
+                    &times;
+                  </button>
+                </div>
+              )}
+
+              {/* Error Notification */}
+              {adminMgmtError && (
+                <div className="p-3.5 rounded-xl bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] text-[12px] flex items-center justify-between animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                    <span className="font-semibold">{adminMgmtError}</span>
+                  </div>
+                  <button onClick={() => setAdminMgmtError(null)} className="text-[#dc2626] hover:text-[#b91c1c]">
+                    &times;
+                  </button>
+                </div>
+              )}
+
+              {/* Authorized Administrators Directory Table */}
+              <div className="overflow-x-auto rounded-xl border border-[#e2e8f0]">
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className="bg-[#f8fafc] border-b border-[#e2e8f0] text-[#64748b] font-bold text-[11px] uppercase tracking-wider">
+                      <th className="py-3 px-4">Admin Personnel</th>
+                      <th className="py-3 px-4">Account Identifiers</th>
+                      <th className="py-3 px-4">Access Role</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Authorized On</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e2e8f0] bg-white">
+                    {isLoadingAdmins && adminsList.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-10 text-center text-[#64748b]">
+                          <div className="flex flex-col items-center gap-2">
+                            <span className="w-5 h-5 border-2 border-[#006b2c]/30 border-t-[#006b2c] rounded-full animate-spin" />
+                            <span>Loading authorized administrators...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : adminsList.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-10 text-center text-[#64748b]">
+                          No administrators found in the database.
+                        </td>
+                      </tr>
+                    ) : (
+                      adminsList.map((adm) => {
+                        const isOwnerRow = adm.role === 'owner';
+                        const isSelf = currentAdmin?.adminId === adm.adminId;
+                        const isTogglingThis = togglingAdminId === adm.adminId;
+
+                        return (
+                          <tr
+                            key={adm.adminId}
+                            id={`admin-row-${adm.adminId}`}
+                            className="hover:bg-[#f8fafc]/80 transition-colors"
+                          >
+                            {/* Personnel Name */}
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center gap-2.5">
+                                <div
+                                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[11px] shrink-0 ${
+                                    isOwnerRow
+                                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                                      : 'bg-[#eff4ff] text-[#006b2c] border border-[#006b2c]/20'
+                                  }`}
+                                >
+                                  {adm.fullName ? adm.fullName.charAt(0).toUpperCase() : 'A'}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-[#0b1c30] flex items-center gap-1.5">
+                                    <span>{adm.fullName}</span>
+                                    {isSelf && (
+                                      <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-medium">
+                                        You
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-[#64748b]">
+                                    {isOwnerRow ? 'Project Owner' : 'Operations Manager'}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Identifiers: Email & ID */}
+                            <td className="py-3.5 px-4">
+                              <div className="space-y-0.5">
+                                <div className="font-medium text-[#0b1c30] flex items-center gap-1">
+                                  <Mail className="w-3 h-3 text-[#94a3b8]" />
+                                  <span>{adm.email}</span>
+                                </div>
+                                <div className="text-[10px] font-mono text-[#64748b] bg-[#f1f5f9] px-1.5 py-0.5 rounded inline-block">
+                                  ID: {adm.adminId}
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Access Role */}
+                            <td className="py-3.5 px-4">
+                              {isOwnerRow ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  <ShieldAlert className="w-3 h-3 text-purple-600" />
+                                  <span>Project Owner</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                                  <span>Administrator</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Status */}
+                            <td className="py-3.5 px-4">
+                              {adm.status === 'active' ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                                  <span>Active</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                                  <span>Deactivated</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Created Date */}
+                            <td className="py-3.5 px-4 text-[#64748b] text-[11px]">
+                              {adm.createdAt ? formatOrderDateTime(adm.createdAt) : 'Initial Setup'}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-3.5 px-4 text-right">
+                              {currentAdmin?.role === 'owner' ? (
+                                isOwnerRow ? (
+                                  <span className="text-[11px] font-medium text-slate-400 italic">
+                                    Protected Owner
+                                  </span>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-2">
+                                    {/* Toggle Active / Inactive */}
+                                    <button
+                                      type="button"
+                                      id={`btn-toggle-status-${adm.adminId}`}
+                                      disabled={isTogglingThis || (adm.status !== 'active' && activeAdminsCount >= maxAdminsLimit)}
+                                      onClick={() => handleToggleAdminStatus(adm)}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                                        adm.status === 'active'
+                                          ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100'
+                                          : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                                      }`}
+                                      title={
+                                        adm.status === 'active'
+                                          ? 'Deactivate administrator and revoke active sessions'
+                                          : activeAdminsCount >= maxAdminsLimit
+                                          ? 'Cannot activate: maximum 5 active admin limit reached'
+                                          : 'Authorize and activate administrator'
+                                      }
+                                    >
+                                      {isTogglingThis ? (
+                                        <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin inline-block" />
+                                      ) : adm.status === 'active' ? (
+                                        'Deactivate'
+                                      ) : (
+                                        'Authorize'
+                                      )}
+                                    </button>
+
+                                    {/* Remove Admin */}
+                                    <button
+                                      type="button"
+                                      id={`btn-delete-admin-${adm.adminId}`}
+                                      onClick={() => setDeletingAdmin(adm)}
+                                      className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+                                      title="Permanently remove administrator"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )
+                              ) : (
+                                <span className="text-[11px] text-slate-400 italic">Read-only</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Add New Authorized Admin Modal */}
+      {showAddAdminModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-[#e2e8f0] p-6 sm:p-7 space-y-5 animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-[#e2e8f0]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-[#006b2c] flex items-center justify-center border border-emerald-100">
+                  <UserPlus className="w-5 h-5 text-[#006b2c]" />
+                </div>
+                <div>
+                  <h3 className="text-[18px] font-bold text-[#0b1c30] font-display">
+                    Authorize Administrator
+                  </h3>
+                  <p className="text-[12px] text-[#64748b]">
+                    Add an authorized admin account to the persistent database.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddAdminModal(false)}
+                className="w-8 h-8 rounded-full hover:bg-[#f1f5f9] flex items-center justify-center text-[#64748b] hover:text-[#0b1c30] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {addAdminModalError && (
+              <div className="p-3.5 rounded-xl bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] text-[12px] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-[#dc2626]" />
+                <div className="flex-1 font-semibold">{addAdminModalError}</div>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateAdmin} className="space-y-4">
+              {/* Full Name */}
+              <div className="space-y-1">
+                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                  Full Name <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="new-admin-fullname-input"
+                  type="text"
+                  required
+                  placeholder="e.g. Maya Krishnan"
+                  value={newAdminFullName}
+                  onChange={(e) => setNewAdminFullName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                />
+              </div>
+
+              {/* Registered Email */}
+              <div className="space-y-1">
+                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                  Registered Email Address <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  id="new-admin-email-input"
+                  type="email"
+                  required
+                  placeholder="e.g. maya@freshcart.com"
+                  value={newAdminEmail}
+                  onChange={(e) => setNewAdminEmail(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                />
+              </div>
+
+              {/* Custom Admin User ID */}
+              <div className="space-y-1">
+                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                  Admin User ID <span className="text-[11px] font-normal text-[#64748b]">(Optional)</span>
+                </label>
+                <input
+                  id="new-admin-id-input"
+                  type="text"
+                  placeholder="e.g. adm_maya_105 (Auto-generated if left blank)"
+                  value={newAdminCustomId}
+                  onChange={(e) => setNewAdminCustomId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                />
+              </div>
+
+              {/* Assigned Password */}
+              <div className="space-y-1">
+                <label className="block text-[12px] font-semibold text-[#0b1c30]">
+                  Assigned Administrator Password <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative flex items-center">
+                  <input
+                    id="new-admin-password-input"
+                    type={showNewAdminPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="Minimum 6 characters"
+                    value={newAdminPassword}
+                    onChange={(e) => setNewAdminPassword(e.target.value)}
+                    className="w-full px-3.5 pr-10 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] placeholder:text-[#94a3b8] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] focus:border-[#006b2c]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewAdminPassword(!showNewAdminPassword)}
+                    className="absolute right-3 text-[#94a3b8] hover:text-[#0b1c30] p-1 cursor-pointer"
+                  >
+                    {showNewAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Role Info Notice */}
+              <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-[11px] text-[#64748b] space-y-1">
+                <div className="font-bold text-[#0b1c30] flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#006b2c]" />
+                  <span>Assigned Role: Standard Administrator</span>
+                </div>
+                <p>
+                  Passwords are securely hashed using bcrypt before database insertion. Normal administrators cannot promote themselves or other accounts to owner access.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#e2e8f0]">
+                <button
+                  type="button"
+                  onClick={() => setShowAddAdminModal(false)}
+                  disabled={isSubmittingAdmin}
+                  className="px-4 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] font-semibold text-[#64748b] hover:bg-[#f8fafc] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  id="submit-create-admin-btn"
+                  disabled={isSubmittingAdmin || activeAdminsCount >= maxAdminsLimit}
+                  className="px-5 py-2.5 rounded-xl bg-[#006b2c] hover:bg-[#005222] text-white text-[13px] font-bold shadow-xs transition-all duration-200 cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isSubmittingAdmin ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Saving in Database...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus className="w-4 h-4" />
+                      <span>Authorize Administrator</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Admin Confirmation Modal */}
+      {deletingAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[#e2e8f0] p-6 space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="text-[17px] font-bold text-[#0b1c30] font-display">
+                  Remove Administrator
+                </h3>
+                <p className="text-[12px] text-[#64748b]">
+                  Permanent administrator access revocation.
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[13px] text-[#3e4a3d] leading-relaxed">
+              Are you sure you want to remove <strong>{deletingAdmin.fullName}</strong> ({deletingAdmin.email})? Their account and credentials will be deleted from the persistent database, and all active sessions will be terminated immediately.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#e2e8f0]">
+              <button
+                type="button"
+                onClick={() => setDeletingAdmin(null)}
+                disabled={isDeletingAdmin}
+                className="px-4 py-2 rounded-lg text-[13px] font-semibold text-[#64748b] hover:bg-[#f1f5f9] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-remove-admin-btn"
+                onClick={handleConfirmDeleteAdmin}
+                disabled={isDeletingAdmin}
+                className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[13px] font-bold shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                {isDeletingAdmin ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Removing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Removal</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add New Product Modal */}
       <AddProductModal

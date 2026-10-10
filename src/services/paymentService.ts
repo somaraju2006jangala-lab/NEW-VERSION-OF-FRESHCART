@@ -1,4 +1,5 @@
 import { UpiPaymentSettings, UpiPaymentRecord } from '../types';
+import { getStoredAdminToken } from './adminService';
 
 export const UPI_ID_REGEX = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z0-9.\-_]{2,64}$/;
 
@@ -323,12 +324,13 @@ export async function adminVerifyPayment(
   error?: string;
 }> {
   try {
+    const adminToken = token || getStoredAdminToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'x-admin-role': 'admin',
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
     }
 
     const res = await fetch('/api/admin/payments/verify', {
@@ -396,12 +398,13 @@ export async function fetchPaymentVerificationQueue(
   token?: string
 ): Promise<{ success: boolean; payments: PaymentVerificationItem[]; error?: string }> {
   try {
+    const adminToken = token || getStoredAdminToken();
     const headers: Record<string, string> = {
       'Accept': 'application/json',
       'x-admin-role': 'admin',
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
     }
 
     const res = await fetch('/api/admin/payments/verification-queue', {

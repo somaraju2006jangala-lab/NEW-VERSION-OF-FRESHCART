@@ -14,8 +14,17 @@ import { CartPage } from './components/CartPage';
 import { CheckoutPage } from './components/CheckoutPage';
 import { ProductModal } from './components/ProductModal';
 import { AdminPortal } from './components/AdminPortal';
+import { AdminLogin } from './components/AdminLogin';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
+import {
+  AuthorizedAdmin,
+  getStoredAdminUser,
+  getStoredAdminToken,
+  fetchAdminProfile,
+  clearAdminSession,
+} from './services/adminService';
+
 import { CustomerDashboard } from './components/CustomerDashboard';
 import { TrustBanner } from './components/TrustBanner';
 import { Footer } from './components/Footer';
@@ -88,6 +97,35 @@ function FreshCartStore() {
 
   // Default to login when unauthenticated; storefront when authenticated
   const [currentView, setCurrentView] = useState<ViewType>('login');
+
+  // Authorized Admin Authentication & Session State
+  const [currentAdmin, setCurrentAdmin] = useState<AuthorizedAdmin | null>(() => getStoredAdminUser());
+
+  useEffect(() => {
+    const verifyAdmin = async () => {
+      const token = getStoredAdminToken();
+      if (token) {
+        const res = await fetchAdminProfile();
+        if (res.success && res.admin) {
+          setCurrentAdmin(res.admin);
+        } else {
+          setCurrentAdmin(null);
+        }
+      } else {
+        setCurrentAdmin(null);
+      }
+    };
+    if (currentView === 'admin') {
+      verifyAdmin();
+    }
+  }, [currentView]);
+
+  const handleAdminLogout = () => {
+    clearAdminSession();
+    setCurrentAdmin(null);
+    navigateToView(currentUser ? 'storefront' : 'login');
+  };
+
 
   // Cart state: starts with no pre-seeded items (NO minimum product requirement)
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -747,32 +785,44 @@ function FreshCartStore() {
       {/* Main Content Area */}
       <main className="flex-1 pt-24 sm:pt-28 relative z-10">
         {currentView === 'admin' ? (
-          <AdminPortal
-            products={products}
-            inventoryLogs={inventoryLogs}
-            coupons={coupons}
-            customerOrders={customerOrders}
-            onUpdateOrderStatus={handleUpdateOrderStatus}
-            onDeleteCustomerOrder={handleDeleteCustomerOrder}
-            onBackToStorefront={() => navigateToView(currentUser ? 'storefront' : 'login')}
-            onUpdateProductStock={handleUpdateProductStock}
-            onUpdateProductPrice={handleUpdateProductPrice}
-            onUpdateProductUnit={handleUpdateProductUnit}
-            onAddProduct={handleAddProduct}
-            onEditProduct={handleEditProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onSimulateCdcPulse={handleSimulateCdcPulse}
-            onCreateCoupon={handleCreateCoupon}
-            onUpdateCoupon={handleUpdateCoupon}
-            onDeleteCoupon={handleDeleteCoupon}
-            onToggleCoupon={handleToggleCouponStatus}
-            onDeleteInventoryLog={handleDeleteInventoryLog}
-            onClearInventoryLogs={handleClearInventoryLogs}
-            deliveryCharges={deliveryCharges}
-            onUpdateDeliveryCharges={handleUpdateDeliveryCharges}
-            deliveryRules={deliveryRules}
-            onUpdateDeliveryRules={handleUpdateDeliveryRules}
-          />
+          currentAdmin ? (
+            <AdminPortal
+              products={products}
+              inventoryLogs={inventoryLogs}
+              coupons={coupons}
+              customerOrders={customerOrders}
+              currentAdmin={currentAdmin}
+              onAdminLogout={handleAdminLogout}
+              onUpdateOrderStatus={handleUpdateOrderStatus}
+              onDeleteCustomerOrder={handleDeleteCustomerOrder}
+              onBackToStorefront={() => navigateToView(currentUser ? 'storefront' : 'login')}
+              onUpdateProductStock={handleUpdateProductStock}
+              onUpdateProductPrice={handleUpdateProductPrice}
+              onUpdateProductUnit={handleUpdateProductUnit}
+              onAddProduct={handleAddProduct}
+              onEditProduct={handleEditProduct}
+              onDeleteProduct={handleDeleteProduct}
+              onSimulateCdcPulse={handleSimulateCdcPulse}
+              onCreateCoupon={handleCreateCoupon}
+              onUpdateCoupon={handleUpdateCoupon}
+              onDeleteCoupon={handleDeleteCoupon}
+              onToggleCoupon={handleToggleCouponStatus}
+              onDeleteInventoryLog={handleDeleteInventoryLog}
+              onClearInventoryLogs={handleClearInventoryLogs}
+              deliveryCharges={deliveryCharges}
+              onUpdateDeliveryCharges={handleUpdateDeliveryCharges}
+              deliveryRules={deliveryRules}
+              onUpdateDeliveryRules={handleUpdateDeliveryRules}
+            />
+          ) : (
+            <AdminLogin
+              onLoginSuccess={(admin) => {
+                setCurrentAdmin(admin);
+                navigateToView('admin');
+              }}
+              onBackToStorefront={() => navigateToView(currentUser ? 'storefront' : 'login')}
+            />
+          )
         ) : currentView === 'login' ? (
           <LoginPage
             onNavigateToRegister={() => navigateToView('register')}

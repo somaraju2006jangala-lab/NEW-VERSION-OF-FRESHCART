@@ -284,4 +284,25 @@ CREATE TABLE IF NOT EXISTS payment_settings (
   INDEX idx_payment_settings_upi (upi_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- --------------------------------------------------------
+-- Table: admins (Authorized Admin Management System)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS admins (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  admin_id VARCHAR(64) NOT NULL UNIQUE,
+  full_name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  role VARCHAR(32) NOT NULL DEFAULT 'admin',
+  status VARCHAR(32) NOT NULL DEFAULT 'active',
+  token_version INT NOT NULL DEFAULT 1,
+  created_by VARCHAR(64) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_admins_admin_id (admin_id),
+  INDEX idx_admins_email (email),
+  INDEX idx_admins_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 
