@@ -300,6 +300,8 @@ export interface PaymentVerificationItem {
   customerMobile?: string;
   customerEmail?: string;
   orderTotal?: number;
+  subtotal?: number;
+  discount?: number;
 }
 
 /**
@@ -409,7 +411,19 @@ export async function fetchPaymentVerificationQueue(
 
     const data = await res.json().catch(() => null);
     if (res.ok && data?.success) {
-      return { success: true, payments: data.payments || [] };
+      const payments = (data.payments || []).map((p: any) => {
+        const finalAmount = Math.max(0, Number(p.amount) || Number(p.orderTotal) || Number(p.total) || 0);
+        return {
+          ...p,
+          id: p.id || p.paymentId || `VERIFY-${String(p.orderId || '').replace(/^#/, '')}`,
+          orderId: String(p.orderId || '').replace(/^#/, ''),
+          amount: finalAmount,
+          orderTotal: Math.max(0, Number(p.orderTotal) || Number(p.total) || finalAmount),
+          subtotal: Number(p.subtotal) || 0,
+          discount: Number(p.discount) || 0,
+        };
+      });
+      return { success: true, payments };
     }
     return { success: false, payments: [], error: data?.error || 'Failed to fetch verification queue.' };
   } catch (err: any) {

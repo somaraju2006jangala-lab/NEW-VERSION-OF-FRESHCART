@@ -635,9 +635,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const res = await adminVerifyPayment(item.orderId, 'APPROVE');
       if (res.success) {
+        const cleanId = item.orderId.replace(/^#/, '');
         setQueueFeedback({
           type: 'success',
-          message: `Payment for Order #${item.orderId} verified successfully and confirmed as PAID in database. Delivery OTP dispatched to customer.`,
+          message: `Payment for Order #${cleanId} verified successfully and confirmed as PAID in database. Delivery OTP dispatched to customer.`,
         });
         updateOrderPaymentStatus(item.orderId, 'PAID', {
           verifiedAt: res.verifiedAt || new Date().toISOString(),
@@ -679,9 +680,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const res = await adminVerifyPayment(item.orderId, 'REJECT', reason.trim());
       if (res.success) {
+        const cleanId = item.orderId.replace(/^#/, '');
         setQueueFeedback({
           type: 'success',
-          message: `Payment for Order #${item.orderId} marked as REJECTED. Proof retained for audit. Customer may submit retry proof.`,
+          message: `Payment for Order #${cleanId} marked as REJECTED. Proof retained for audit. Customer may submit retry proof.`,
         });
         updateOrderPaymentStatus(item.orderId, 'REJECTED', {
           verificationNotes: reason.trim(),
@@ -3202,7 +3204,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           return (
                             <tr key={item.id || item.orderId} className="hover:bg-white/[0.03] transition-colors">
                               <td className="py-3 px-4 font-mono font-bold text-white whitespace-nowrap">
-                                #{item.orderId}
+                                #{item.orderId.replace(/^#/, '')}
                               </td>
                               <td className="py-3 px-4">
                                 <div className="font-semibold text-white">{item.customerName || 'Customer'}</div>
@@ -3211,7 +3213,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 </div>
                               </td>
                               <td className="py-3 px-4 font-bold text-emerald-400 text-sm whitespace-nowrap">
-                                {formatINR(item.amount || item.orderTotal || 0)}
+                                {formatINR(Number(item.amount || item.orderTotal || (item as any).total || 0))}
                               </td>
                               <td className="py-3 px-4 text-slate-300 whitespace-nowrap">
                                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[11px]">
@@ -3627,7 +3629,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <span>Payment Screenshot Proof</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Order #{viewingScreenshotItem.orderId} • {formatINR(viewingScreenshotItem.amount || viewingScreenshotItem.orderTotal || 0)}
+                  Order #{viewingScreenshotItem.orderId.replace(/^#/, '')} • {formatINR(Number(viewingScreenshotItem.amount || viewingScreenshotItem.orderTotal || (viewingScreenshotItem as any).total || 0))}
                 </p>
               </div>
               <button
@@ -3736,7 +3738,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   Reject Payment Proof
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Order #{rejectingItem.orderId} • {formatINR(rejectingItem.amount || rejectingItem.orderTotal || 0)}
+                  Order #{rejectingItem.orderId.replace(/^#/, '')} • {formatINR(Number(rejectingItem.amount || rejectingItem.orderTotal || (rejectingItem as any).total || 0))}
                 </p>
               </div>
             </div>

@@ -831,6 +831,18 @@ export async function initializeDatabase(): Promise<void> {
   try {
     await currentPool.query('ALTER TABLE payments ADD COLUMN otp_sent_at TIMESTAMP NULL AFTER otp_sent');
   } catch {}
+  try {
+    await currentPool.query(`
+      UPDATE payments p
+      JOIN orders o ON (
+        o.order_id = p.order_id OR
+        o.order_id = CONCAT('#', p.order_id) OR
+        p.order_id = CONCAT('#', o.order_id)
+      )
+      SET p.amount = o.total
+      WHERE (p.amount IS NULL OR p.amount = 0) AND o.total > 0
+    `);
+  } catch {}
 
   // Seed default data if tables are empty
   await seedInitialDataIfDbEmpty();
@@ -1815,6 +1827,8 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
       );
     }
 
+    const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+
     // 2. Insert or update order
     await connection.query(
       `INSERT INTO orders (order_id, customer_id, customer_name, email, mobile, delivery_address, subtotal, discount, total, coupon_code, status, payment_id, payment_method, payment_status)
@@ -1822,6 +1836,14 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
        ON DUPLICATE KEY UPDATE
          status = VALUES(status),
          delivery_address = VALUES(delivery_address),
+         customer_name = VALUES(customer_name),
+         email = VALUES(email),
+         mobile = VALUES(mobile),
+         subtotal = VALUES(subtotal),
+         discount = VALUES(discount),
+         total = VALUES(total),
+         coupon_code = VALUES(coupon_code),
+         payment_method = VALUES(payment_method),
          payment_status = VALUES(payment_status)`,
       [
         orderId,
@@ -1863,21 +1885,46 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
     }
 
     // 4. Create/update payments record (Razorpay / UPI ready)
-    await connection.query(
-      `INSERT INTO payments (payment_id, order_id, customer_id, payment_method, payment_status, amount, currency)
-       VALUES (?, ?, ?, ?, ?, ?, 'INR')
-       ON DUPLICATE KEY UPDATE
-         payment_method = VALUES(payment_method),
-         payment_status = VALUES(payment_status)`,
-      [
-        paymentId,
-        orderId,
-        customerId,
-        paymentMethod === 'UPI' ? 'UPI' : (paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'COD'),
-        paymentStatus || 'PENDING',
-        total,
-      ]
+    const [existingPayments] = await connection.query<RowDataPacket[]>(
+      `SELECT payment_id FROM payments WHERE order_id IN (?, ?) LIMIT 1`,
+      [orderId, altId]
     );
+
+    if (existingPayments.length > 0) {
+      await connection.query(
+        `UPDATE payments
+         SET amount = ?,
+             payment_method = ?,
+             payment_status = ?,
+             customer_id = ?
+         WHERE order_id IN (?, ?)`,
+        [
+          total,
+          paymentMethod === 'UPI' ? 'UPI' : (paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'COD'),
+          paymentStatus || 'PENDING',
+          customerId,
+          orderId,
+          altId,
+        ]
+      );
+    } else {
+      await connection.query(
+        `INSERT INTO payments (payment_id, order_id, customer_id, payment_method, payment_status, amount, currency)
+         VALUES (?, ?, ?, ?, ?, ?, 'INR')
+         ON DUPLICATE KEY UPDATE
+           amount = VALUES(amount),
+           payment_method = VALUES(payment_method),
+           payment_status = VALUES(payment_status)`,
+        [
+          paymentId,
+          orderId,
+          customerId,
+          paymentMethod === 'UPI' ? 'UPI' : (paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'COD'),
+          paymentStatus || 'PENDING',
+          total,
+        ]
+      );
+    }
 
     await connection.commit();
     return true;
@@ -2549,31 +2596,52 @@ export async function createUpiPaymentAttemptInDb(paymentData: {
   const transactionRef = paymentData.transactionRef;
   const paymentStatus = paymentData.paymentStatus || 'INITIATED';
 
+  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+
   try {
-    await pool.query(
-      `INSERT INTO payments (
-         payment_id, order_id, customer_id, payment_method, payment_status,
-         amount, currency, transaction_ref, upi_id, upi_merchant_name
-       )
-       VALUES (?, ?, ?, ?, ?, ?, 'INR', ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         payment_status = VALUES(payment_status),
-         amount = VALUES(amount),
-         transaction_ref = VALUES(transaction_ref),
-         upi_id = VALUES(upi_id),
-         upi_merchant_name = VALUES(upi_merchant_name)`,
-      [
-        paymentId,
-        orderId,
-        customerId,
-        paymentMethod,
-        paymentStatus,
-        amount,
-        transactionRef,
-        upiId,
-        merchantName,
-      ]
+    const [existing] = await pool.query<RowDataPacket[]>(
+      `SELECT payment_id, payment_status FROM payments WHERE order_id IN (?, ?) LIMIT 1`,
+      [orderId, altId]
     );
+
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE payments
+         SET amount = ?,
+             transaction_ref = ?,
+             upi_id = ?,
+             upi_merchant_name = ?,
+             payment_method = 'UPI',
+             payment_status = CASE WHEN payment_status IN ('PAID', 'PENDING_VERIFICATION') THEN payment_status ELSE ? END
+         WHERE order_id IN (?, ?)`,
+        [amount, transactionRef, upiId, merchantName, paymentStatus, orderId, altId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO payments (
+           payment_id, order_id, customer_id, payment_method, payment_status,
+           amount, currency, transaction_ref, upi_id, upi_merchant_name
+         )
+         VALUES (?, ?, ?, ?, ?, ?, 'INR', ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           payment_status = VALUES(payment_status),
+           amount = VALUES(amount),
+           transaction_ref = VALUES(transaction_ref),
+           upi_id = VALUES(upi_id),
+           upi_merchant_name = VALUES(upi_merchant_name)`,
+        [
+          paymentId,
+          orderId,
+          customerId,
+          paymentMethod,
+          paymentStatus,
+          amount,
+          transactionRef,
+          upiId,
+          merchantName,
+        ]
+      );
+    }
     return true;
   } catch (err: any) {
     console.error('[MySQL] Error recording UPI payment attempt:', err?.message);
@@ -2613,13 +2681,13 @@ export async function savePaymentScreenshotInDb(data: {
 
     // 1. Lock and check existing order record
     const [orderRows] = await connection.query<RowDataPacket[]>(
-      `SELECT payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      `SELECT total, subtotal, discount, payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
       [data.orderId, altId]
     );
 
     // 2. Lock and check existing payment record
     const [existing] = await connection.query<RowDataPacket[]>(
-      `SELECT payment_id, payment_status, screenshot_path FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
+      `SELECT payment_id, payment_status, screenshot_path, amount FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
       [data.orderId, altId]
     );
 
@@ -2627,6 +2695,12 @@ export async function savePaymentScreenshotInDb(data: {
     const currentPaymentStatus = existing[0]?.payment_status;
     const currentOrderScreenshot = orderRows[0]?.screenshot_url;
     const currentPaymentScreenshot = existing[0]?.screenshot_path;
+    const orderTotal = Math.max(
+      0,
+      Number(orderRows[0]?.total) ||
+      Number(existing[0]?.amount) ||
+      0
+    );
 
     // Rule: If already PAID in MySQL, permanently disable upload
     if (currentOrderStatus === 'PAID' || currentPaymentStatus === 'PAID') {
@@ -2669,19 +2743,20 @@ export async function savePaymentScreenshotInDb(data: {
              screenshot_path = ?,
              screenshot_mime = ?,
              screenshot_size = ?,
-             screenshot_uploaded_at = NOW()
+             screenshot_uploaded_at = NOW(),
+             amount = CASE WHEN (amount IS NULL OR amount = 0) AND ? > 0 THEN ? ELSE amount END
          WHERE order_id IN (?, ?)`,
-        [data.screenshotPath, data.mimeType, data.fileSize, data.orderId, altId]
+        [data.screenshotPath, data.mimeType, data.fileSize, orderTotal, orderTotal, data.orderId, altId]
       );
     } else {
       const paymentId = `PAY-${data.orderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
       await connection.query(
         `INSERT INTO payments (
            payment_id, order_id, customer_id, payment_method, payment_status,
-           screenshot_path, screenshot_mime, screenshot_size, screenshot_uploaded_at
+           amount, screenshot_path, screenshot_mime, screenshot_size, screenshot_uploaded_at
          )
-         VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', ?, ?, ?, NOW())`,
-        [paymentId, data.orderId, data.customerId || 'guest', data.screenshotPath, data.mimeType, data.fileSize]
+         VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', ?, ?, ?, ?, NOW())`,
+        [paymentId, data.orderId, data.customerId || 'guest', orderTotal, data.screenshotPath, data.mimeType, data.fileSize]
       );
     }
 
@@ -2708,7 +2783,8 @@ export async function getPaymentRecordByOrderId(orderId: string): Promise<any | 
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT p.id, p.payment_id as paymentId, p.order_id as orderId, p.customer_id as customerId,
               p.payment_method as paymentMethod, p.payment_status as paymentStatus,
-              p.amount, p.currency, p.transaction_ref as transactionRef,
+              COALESCE(NULLIF(CAST(p.amount AS DECIMAL(10,2)), 0.00), NULLIF(CAST(o.total AS DECIMAL(10,2)), 0.00), CAST(p.amount AS DECIMAL(10,2)), CAST(o.total AS DECIMAL(10,2)), 0.00) as amount,
+              p.currency, p.transaction_ref as transactionRef,
               p.upi_id as upiId, p.upi_merchant_name as upiMerchantName,
               p.screenshot_path as screenshotPath, p.screenshot_mime as screenshotMime,
               p.screenshot_size as screenshotSize, p.screenshot_uploaded_at as screenshotUploadedAt,
@@ -2716,17 +2792,27 @@ export async function getPaymentRecordByOrderId(orderId: string): Promise<any | 
               p.verification_notes as verificationNotes, p.otp_sent as otpSent, p.otp_sent_at as otpSentAt,
               p.created_at as createdAt,
               o.customer_name as customerName, o.mobile as customerPhone, o.email as customerEmail,
-              o.total as orderTotal, o.status as orderStatus
+              o.total as orderTotal, o.subtotal as subtotal, o.discount as discount, o.status as orderStatus
        FROM payments p
        LEFT JOIN orders o ON (o.order_id = p.order_id OR o.order_id = ?)
        WHERE p.order_id IN (?, ?)
-       ORDER BY p.id DESC
+       ORDER BY
+         CASE WHEN p.screenshot_path IS NOT NULL THEN 1 ELSE 2 END,
+         CASE WHEN p.payment_status = 'PENDING_VERIFICATION' THEN 1 ELSE 2 END,
+         CASE WHEN p.amount > 0 THEN 1 ELSE 2 END,
+         p.id DESC
        LIMIT 1`,
       [altId, orderId, altId]
     );
 
     if (rows.length === 0) return null;
-    return rows[0];
+    const row = rows[0];
+    const finalAmount = Math.max(0, Number(row.amount) || Number(row.orderTotal) || 0);
+    return {
+      ...row,
+      amount: finalAmount,
+      orderTotal: Math.max(0, Number(row.orderTotal) || finalAmount),
+    };
   } catch (err: any) {
     console.error('[MySQL] Error fetching payment record:', err?.message);
     return null;
@@ -2740,28 +2826,115 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
   const pool = getPool();
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT o.order_id as orderId, o.customer_id as customerId, o.customer_name as customerName,
-              o.email as customerEmail, o.mobile as customerPhone, o.total, o.status as orderStatus,
-              o.payment_method as paymentMethod, o.payment_status as paymentStatus,
-              o.screenshot_url as screenshotUrl, o.verified_at as verifiedAt, o.verified_by as verifiedBy,
-              o.created_at as createdAt,
-              p.payment_id as paymentId, p.transaction_ref as transactionRef, p.upi_id as upiId,
-              p.screenshot_path as screenshotPath, p.screenshot_uploaded_at as screenshotUploadedAt,
-              p.verification_notes as verificationNotes, p.otp_sent as otpSent
-       FROM orders o
-       LEFT JOIN payments p ON (p.order_id = o.order_id)
-       WHERE o.payment_method LIKE '%UPI%' OR p.payment_method = 'UPI' OR o.payment_status = 'PENDING_VERIFICATION' OR p.screenshot_path IS NOT NULL
-       ORDER BY
-         CASE
-           WHEN o.payment_status = 'PENDING_VERIFICATION' THEN 1
-           WHEN o.payment_status = 'REJECTED' THEN 2
-           WHEN o.payment_status = 'PAYMENT_ATTEMPTED' THEN 3
-           WHEN o.payment_status = 'PAID' THEN 4
-           ELSE 5
-         END,
-         o.created_at DESC`
+      `WITH ranked_payments AS (
+        SELECT
+          p.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY CASE WHEN p.order_id LIKE '#%' THEN SUBSTRING(p.order_id, 2) ELSE p.order_id END
+            ORDER BY
+              CASE WHEN p.screenshot_path IS NOT NULL THEN 1 ELSE 2 END,
+              CASE WHEN p.payment_status = 'PENDING_VERIFICATION' THEN 1 ELSE 2 END,
+              CASE WHEN p.amount > 0 THEN 1 ELSE 2 END,
+              p.screenshot_uploaded_at DESC,
+              p.id DESC
+          ) as rn
+        FROM payments p
+      )
+      SELECT
+        CASE WHEN o.order_id LIKE '#%' THEN SUBSTRING(o.order_id, 2) ELSE o.order_id END as orderId,
+        o.customer_id as customerId,
+        o.customer_name as customerName,
+        o.email as customerEmail,
+        o.mobile as customerPhone,
+        COALESCE(
+          NULLIF(CAST(p.amount AS DECIMAL(10,2)), 0.00),
+          NULLIF(CAST(o.total AS DECIMAL(10,2)), 0.00),
+          CAST(p.amount AS DECIMAL(10,2)),
+          CAST(o.total AS DECIMAL(10,2)),
+          0.00
+        ) as amount,
+        o.total as orderTotal,
+        o.subtotal as subtotal,
+        o.discount as discount,
+        o.status as orderStatus,
+        COALESCE(p.payment_method, o.payment_method, 'UPI') as paymentMethod,
+        COALESCE(o.payment_status, p.payment_status, 'PENDING') as paymentStatus,
+        o.screenshot_url as screenshotUrl,
+        COALESCE(p.verified_at, o.verified_at) as verifiedAt,
+        COALESCE(p.verified_by, o.verified_by) as verifiedBy,
+        o.created_at as createdAt,
+        p.payment_id as paymentId,
+        p.transaction_ref as transactionRef,
+        p.upi_id as upiId,
+        p.screenshot_path as screenshotPath,
+        p.screenshot_uploaded_at as screenshotUploadedAt,
+        COALESCE(p.verification_notes, '') as verificationNotes,
+        COALESCE(p.otp_sent, 0) as otpSent
+      FROM orders o
+      LEFT JOIN ranked_payments p ON (
+        rn = 1 AND
+        (CASE WHEN p.order_id LIKE '#%' THEN SUBSTRING(p.order_id, 2) ELSE p.order_id END) =
+        (CASE WHEN o.order_id LIKE '#%' THEN SUBSTRING(o.order_id, 2) ELSE o.order_id END)
+      )
+      WHERE o.payment_method LIKE '%UPI%' OR p.payment_method = 'UPI' OR o.payment_status = 'PENDING_VERIFICATION' OR p.screenshot_path IS NOT NULL
+      UNION ALL
+      SELECT
+        CASE WHEN p2.order_id LIKE '#%' THEN SUBSTRING(p2.order_id, 2) ELSE p2.order_id END as orderId,
+        p2.customer_id as customerId,
+        'Customer' as customerName,
+        NULL as customerEmail,
+        NULL as customerPhone,
+        CAST(p2.amount AS DECIMAL(10,2)) as amount,
+        p2.amount as orderTotal,
+        p2.amount as subtotal,
+        0.00 as discount,
+        'Pending' as orderStatus,
+        p2.payment_method as paymentMethod,
+        p2.payment_status as paymentStatus,
+        NULL as screenshotUrl,
+        p2.verified_at as verifiedAt,
+        p2.verified_by as verifiedBy,
+        p2.created_at as createdAt,
+        p2.payment_id as paymentId,
+        p2.transaction_ref as transactionRef,
+        p2.upi_id as upiId,
+        p2.screenshot_path as screenshotPath,
+        p2.screenshot_uploaded_at as screenshotUploadedAt,
+        COALESCE(p2.verification_notes, '') as verificationNotes,
+        COALESCE(p2.otp_sent, 0) as otpSent
+      FROM ranked_payments p2
+      WHERE rn = 1 AND NOT EXISTS (
+        SELECT 1 FROM orders o2 WHERE
+        (CASE WHEN p2.order_id LIKE '#%' THEN SUBSTRING(p2.order_id, 2) ELSE p2.order_id END) =
+        (CASE WHEN o2.order_id LIKE '#%' THEN SUBSTRING(o2.order_id, 2) ELSE o2.order_id END)
+      )
+      ORDER BY
+        CASE
+          WHEN paymentStatus = 'PENDING_VERIFICATION' THEN 1
+          WHEN paymentStatus = 'REJECTED' THEN 2
+          WHEN paymentStatus = 'PAYMENT_ATTEMPTED' THEN 3
+          WHEN paymentStatus = 'PAID' THEN 4
+          ELSE 5
+        END,
+        createdAt DESC`
     );
-    return rows;
+
+    return rows.map((row) => {
+      const parsedAmount = Math.max(0, Number(row.amount) || Number(row.orderTotal) || Number(row.total) || 0);
+      const cleanOrderId = String(row.orderId || '').replace(/^#/, '');
+      return {
+        ...row,
+        id: row.paymentId || `VERIFY-${cleanOrderId}`,
+        orderId: cleanOrderId,
+        amount: parsedAmount,
+        orderTotal: Math.max(0, Number(row.orderTotal) || Number(row.total) || parsedAmount),
+        subtotal: Number(row.subtotal) || 0,
+        discount: Number(row.discount) || 0,
+        paymentStatus: row.paymentStatus || 'PENDING',
+        screenshotUrl: row.screenshotUrl || (row.screenshotPath ? `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}` : undefined),
+        otpSent: Boolean(row.otpSent),
+      };
+    });
   } catch (err: any) {
     console.error('[MySQL] Error fetching UPI payments for verification:', err?.message);
     return [];
