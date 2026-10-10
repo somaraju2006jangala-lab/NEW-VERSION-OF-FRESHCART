@@ -852,6 +852,20 @@ export async function initializeDatabase(): Promise<void> {
     `);
   } catch {}
 
+  // Ensure default guest customer records exist to satisfy foreign key constraints fk_payments_customer
+  try {
+    const defaultPasswordHash = await bcrypt.hash('password123', 10);
+    await currentPool.query(`
+      INSERT INTO customers (customer_id, full_name, email, mobile, address, password_hash, loyalty_tier)
+      VALUES 
+        ('guest', 'Guest Customer', NULL, NULL, 'Walk-in / Guest', ?, 'Fresh Member'),
+        ('guest_user', 'Guest User', NULL, NULL, 'Walk-in / Guest', ?, 'Fresh Member')
+      ON DUPLICATE KEY UPDATE full_name = VALUES(full_name)
+    `, [defaultPasswordHash, defaultPasswordHash]);
+  } catch (err: any) {
+    console.warn('[MySQL] Notice: Guest customer record seeding:', err?.message);
+  }
+
   // Seed default data if tables are empty
   await seedInitialDataIfDbEmpty();
 }
@@ -1219,6 +1233,103 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
   } catch (err: any) {
     console.warn('[MySQL] Error querying customer:', err?.message);
     return null;
+  }
+}
+
+/**
+ * Ensures that a customer record exists in MySQL before inserting foreign-key dependent rows (e.g. orders, payments).
+ * Resolves by customer_id, then by email/mobile if already registered, and creates a record if none exists.
+ * Returns the guaranteed valid, existing customer_id.
+ */
+export async function ensureCustomerExists(
+  connOrPool: Pool | PoolConnection,
+  customerData: {
+    customerId?: string;
+    customerName?: string;
+    email?: string | null;
+    mobile?: string | null;
+    address?: string | null;
+  }
+): Promise<string> {
+  const targetId = (customerData.customerId || '').trim() || 'guest';
+  const name =
+    (customerData.customerName || '').trim() ||
+    (targetId === 'guest' || targetId === 'guest_user' ? 'Guest Customer' : 'Customer');
+  const email = (customerData.email || '').trim().toLowerCase() || null;
+  const mobile = (customerData.mobile || '').trim() || null;
+  const address = (customerData.address || '').trim() || null;
+
+  try {
+    // 1. Direct check by customer_id
+    const [byId] = await connOrPool.query<RowDataPacket[]>(
+      'SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1',
+      [targetId]
+    );
+    if (byId.length > 0 && byId[0].customer_id) {
+      return byId[0].customer_id;
+    }
+
+    // 2. If targetId not found, check if a registered customer exists with the given email or mobile
+    if (email || mobile) {
+      const [byContact] = await connOrPool.query<RowDataPacket[]>(
+        `SELECT customer_id FROM customers 
+         WHERE (? IS NOT NULL AND email = ?) 
+            OR (? IS NOT NULL AND mobile = ?) 
+         LIMIT 1`,
+        [email, email, mobile, mobile]
+      );
+      if (byContact.length > 0 && byContact[0].customer_id) {
+        return byContact[0].customer_id;
+      }
+    }
+
+    // 3. Not found: safely insert the customer record
+    const defaultHash = await bcrypt.hash('password123', 10);
+    const isGuest = targetId === 'guest' || targetId === 'guest_user';
+    const insertEmail = isGuest ? null : email;
+    const insertMobile = isGuest ? null : mobile;
+
+    await connOrPool.query(
+      `INSERT INTO customers (customer_id, full_name, email, mobile, address, password_hash)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE full_name = VALUES(full_name)`,
+      [targetId, name, insertEmail, insertMobile, address, defaultHash]
+    );
+
+    const [verify] = await connOrPool.query<RowDataPacket[]>(
+      'SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1',
+      [targetId]
+    );
+    if (verify.length > 0 && verify[0].customer_id) {
+      return verify[0].customer_id;
+    }
+  } catch (err: any) {
+    if (err?.code === 'ER_DUP_ENTRY') {
+      try {
+        const [existing] = await connOrPool.query<RowDataPacket[]>(
+          'SELECT customer_id FROM customers WHERE email = ? OR mobile = ? LIMIT 1',
+          [email, mobile]
+        );
+        if (existing.length > 0 && existing[0].customer_id) {
+          return existing[0].customer_id;
+        }
+      } catch {}
+    }
+    console.error('[MySQL Customer Resolution] Could not insert customer:', err?.message);
+  }
+
+  // 4. Safe fallback: ensure 'guest' exists and return 'guest'
+  try {
+    const defaultHash = await bcrypt.hash('password123', 10);
+    await connOrPool.query(
+      `INSERT INTO customers (customer_id, full_name, password_hash)
+       VALUES ('guest', 'Guest Customer', ?)
+       ON DUPLICATE KEY UPDATE customer_id = customer_id`,
+      [defaultHash]
+    );
+    return 'guest';
+  } catch {
+    return targetId || 'guest';
   }
 }
 
@@ -1801,16 +1912,25 @@ export async function clearCartInDb(customerId: string): Promise<boolean> {
 
 /**
  * Upserts / creates an order in MySQL, including order items and payment record.
+ * Executes atomically within a MySQL transaction:
+ * 1. Ensures customer exists in `customers` table and retrieves verified customer_id.
+ * 2. Locks existing order to detect exact order_id format (avoiding # vs raw mismatches).
+ * 3. Saves/updates order in `orders`.
+ * 4. Saves order items in `order_items`.
+ * 5. Updates or creates payment record in `payments` referencing verified order and customer.
+ * 6. Commits on complete success, or rolls back on any error.
  */
 export async function upsertOrderInDb(orderData: any): Promise<boolean> {
-  const orderId = orderData?.id || orderData?.orderId;
-  if (!orderId) return false;
+  const orderId = (orderData?.id || orderData?.orderId || '').trim();
+  if (!orderId) {
+    console.error('[MySQL Order Upsert] Missing orderId');
+    return false;
+  }
   const pool = getPool();
-  const customerId = orderData.customerId || 'guest';
-  const customerName = orderData.customerName || 'Customer';
-  const email = orderData.customerEmail || orderData.email || '';
-  const mobile = orderData.customerPhone || orderData.phone || orderData.mobile || '';
-  const deliveryAddress = orderData.deliveryAddress || 'Address on file';
+  const customerName = (orderData.customerName || 'Customer').trim();
+  const email = (orderData.customerEmail || orderData.email || '').trim().toLowerCase() || null;
+  const mobile = (orderData.customerPhone || orderData.phone || orderData.mobile || '').trim() || null;
+  const deliveryAddress = (orderData.deliveryAddress || 'Address on file').trim();
   const subtotal = Math.max(0, Number(orderData.subtotal) || 0);
   const discount = Math.max(0, Number(orderData.discount) || 0);
   const total = Math.max(0, Number(orderData.total) || 0);
@@ -1824,24 +1944,35 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
   try {
     await connection.beginTransaction();
 
-    // 1. Ensure customer exists if customerId is provided
-    if (customerId && customerId !== 'guest') {
-      const defaultHash = await bcrypt.hash('password123', 10);
-      await connection.query(
-        `INSERT INTO customers (customer_id, full_name, email, mobile, address, password_hash)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE full_name = VALUES(full_name)`,
-        [customerId, customerName, email || null, mobile || null, deliveryAddress, defaultHash]
-      );
-    }
+    // 1. Ensure customer exists and resolve valid customer_id
+    const validCustomerId = await ensureCustomerExists(connection, {
+      customerId: orderData.customerId,
+      customerName,
+      email,
+      mobile,
+      address: deliveryAddress,
+    });
 
     const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
-    // 2. Insert or update order
+    // 2. Lock and check if order already exists under either ID format
+    const [existingOrders] = await connection.query<RowDataPacket[]>(
+      `SELECT order_id, payment_id, payment_status, status FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      [orderId, altId]
+    );
+
+    // Use exact generated order_id from database if already present, otherwise use provided orderId
+    const actualOrderId = existingOrders.length > 0 ? existingOrders[0].order_id : orderId;
+
+    // 3. Insert or update order
     await connection.query(
-      `INSERT INTO orders (order_id, customer_id, customer_name, email, mobile, delivery_address, subtotal, discount, total, coupon_code, status, payment_id, payment_method, payment_status)
+      `INSERT INTO orders (
+         order_id, customer_id, customer_name, email, mobile, delivery_address,
+         subtotal, discount, total, coupon_code, status, payment_id, payment_method, payment_status
+       )
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
+         customer_id = VALUES(customer_id),
          status = VALUES(status),
          delivery_address = VALUES(delivery_address),
          customer_name = VALUES(customer_name),
@@ -1854,11 +1985,11 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
          payment_method = VALUES(payment_method),
          payment_status = VALUES(payment_status)`,
       [
-        orderId,
-        customerId,
+        actualOrderId,
+        validCustomerId,
         customerName,
-        email || null,
-        mobile || null,
+        email,
+        mobile,
         deliveryAddress,
         subtotal,
         discount,
@@ -1871,9 +2002,9 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
       ]
     );
 
-    // 3. Insert order items if present
+    // 4. Insert order items if present
     if (Array.isArray(orderData.items) && orderData.items.length > 0) {
-      await connection.query('DELETE FROM order_items WHERE order_id = ?', [orderId]);
+      await connection.query('DELETE FROM order_items WHERE order_id IN (?, ?)', [actualOrderId, altId]);
 
       for (const item of orderData.items) {
         const prod = item.product || item;
@@ -1887,16 +2018,19 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
         await connection.query(
           `INSERT INTO order_items (order_id, product_id, product_name, quantity, unit, price, subtotal)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [orderId, prodId, prodTitle, qty, unit, price, itemSubtotal]
+          [actualOrderId, prodId, prodTitle, qty, unit, price, itemSubtotal]
         );
       }
     }
 
-    // 4. Create/update payments record (Razorpay / UPI ready)
+    // 5. Create or update payments record referencing valid actualOrderId and validCustomerId
     const [existingPayments] = await connection.query<RowDataPacket[]>(
-      `SELECT payment_id FROM payments WHERE order_id IN (?, ?) LIMIT 1`,
-      [orderId, altId]
+      `SELECT payment_id, payment_status FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
+      [actualOrderId, altId]
     );
+
+    const effectivePaymentMethod =
+      paymentMethod === 'UPI' ? 'UPI' : (paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'COD');
 
     if (existingPayments.length > 0) {
       await connection.query(
@@ -1904,30 +2038,35 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
          SET amount = ?,
              payment_method = ?,
              payment_status = ?,
-             customer_id = ?
-         WHERE order_id IN (?, ?)`,
+             customer_id = ?,
+             order_id = ?
+         WHERE payment_id = ?`,
         [
           total,
-          paymentMethod === 'UPI' ? 'UPI' : (paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'COD'),
-          paymentStatus || 'PENDING',
-          customerId,
-          orderId,
-          altId,
+          effectivePaymentMethod,
+          paymentStatus || existingPayments[0].payment_status || 'PENDING',
+          validCustomerId,
+          actualOrderId,
+          existingPayments[0].payment_id,
         ]
       );
     } else {
       await connection.query(
-        `INSERT INTO payments (payment_id, order_id, customer_id, payment_method, payment_status, amount, currency)
+        `INSERT INTO payments (
+           payment_id, order_id, customer_id, payment_method, payment_status, amount, currency
+         )
          VALUES (?, ?, ?, ?, ?, ?, 'INR')
          ON DUPLICATE KEY UPDATE
+           customer_id = VALUES(customer_id),
+           order_id = VALUES(order_id),
            amount = VALUES(amount),
            payment_method = VALUES(payment_method),
            payment_status = VALUES(payment_status)`,
         [
           paymentId,
-          orderId,
-          customerId,
-          paymentMethod === 'UPI' ? 'UPI' : (paymentMethod === 'RAZORPAY' ? 'RAZORPAY' : 'COD'),
+          actualOrderId,
+          validCustomerId,
+          effectivePaymentMethod,
           paymentStatus || 'PENDING',
           total,
         ]
@@ -1938,7 +2077,7 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
     return true;
   } catch (err: any) {
     await connection.rollback();
-    console.error('[MySQL] Error saving order:', err?.message);
+    console.error('[MySQL Order Upsert] Error saving order to database:', err?.message);
     return false;
   } finally {
     connection.release();
@@ -2583,65 +2722,148 @@ export async function saveUpiPaymentSettingsToDb(settings: {
 }
 
 export async function createUpiPaymentAttemptInDb(paymentData: {
-  paymentId: string;
+  paymentId?: string;
   orderId: string;
   customerId: string;
   amount: number;
   upiId: string;
   merchantName: string;
-  paymentMethod: string;
+  paymentMethod?: string;
   transactionRef: string;
-  paymentStatus: string;
+  paymentStatus?: string;
+  customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
 }): Promise<boolean> {
   const pool = getPool();
-  const paymentId = paymentData.paymentId || `PAY-${paymentData.transactionRef}`;
-  const orderId = paymentData.orderId;
-  const customerId = paymentData.customerId || 'guest';
-  const amount = Number(paymentData.amount) || 0;
+  const orderId = (paymentData.orderId || '').trim();
+  if (!orderId) {
+    console.error('[MySQL UPI Payment Attempt] Missing orderId');
+    return false;
+  }
+
+  const transactionRef = paymentData.transactionRef || `TR-${Date.now()}`;
+  const paymentId = paymentData.paymentId || `PAY-${transactionRef}`;
+  const amount = Math.max(0, Number(paymentData.amount) || 0);
   const upiId = paymentData.upiId;
   const merchantName = paymentData.merchantName;
-  const paymentMethod = 'UPI';
-  const transactionRef = paymentData.transactionRef;
   const paymentStatus = paymentData.paymentStatus || 'INITIATED';
 
-  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
-
+  const connection = await pool.getConnection();
   try {
-    const [existing] = await pool.query<RowDataPacket[]>(
-      `SELECT payment_id, payment_status FROM payments WHERE order_id IN (?, ?) LIMIT 1`,
+    await connection.beginTransaction();
+
+    // 1. Ensure customer exists and resolve valid customer_id
+    const validCustomerId = await ensureCustomerExists(connection, {
+      customerId: paymentData.customerId,
+      customerName: paymentData.customerName,
+      email: paymentData.customerEmail,
+      mobile: paymentData.customerPhone,
+      address: paymentData.deliveryAddress,
+    });
+
+    const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+
+    // 2. Lock and check orders table
+    const [existingOrders] = await connection.query<RowDataPacket[]>(
+      `SELECT order_id, customer_id, total, status, payment_id, payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
       [orderId, altId]
     );
 
-    if (existing.length > 0) {
-      await pool.query(
+    let actualOrderId = orderId;
+
+    if (existingOrders.length === 0) {
+      // Order does not exist yet in orders table:
+      // Create and successfully save the order in `orders` BEFORE inserting its associated payment record!
+      await connection.query(
+        `INSERT INTO orders (
+           order_id, customer_id, customer_name, delivery_address,
+           subtotal, discount, total, status, payment_id, payment_method, payment_status
+         )
+         VALUES (?, ?, ?, ?, ?, 0.00, ?, 'Pending', ?, 'UPI', ?)`,
+        [
+          actualOrderId,
+          validCustomerId,
+          paymentData.customerName || 'Customer',
+          paymentData.deliveryAddress || 'Address on file',
+          amount,
+          amount,
+          paymentId,
+          paymentStatus,
+        ]
+      );
+    } else {
+      // Order already exists: use the exact saved order_id
+      actualOrderId = existingOrders[0].order_id;
+      await connection.query(
+        `UPDATE orders
+         SET payment_method = 'UPI',
+             payment_id = COALESCE(payment_id, ?),
+             customer_id = COALESCE(NULLIF(customer_id, 'guest'), ?),
+             total = CASE WHEN (total IS NULL OR total = 0) AND ? > 0 THEN ? ELSE total END
+         WHERE order_id = ?`,
+        [paymentId, validCustomerId, amount, amount, actualOrderId]
+      );
+    }
+
+    // 3. Lock and check payments table for this order
+    const [existingPayments] = await connection.query<RowDataPacket[]>(
+      `SELECT payment_id, payment_status, amount FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
+      [actualOrderId, altId]
+    );
+
+    if (existingPayments.length > 0) {
+      // Update existing payment attempt (avoids duplicate payments on retries!)
+      await connection.query(
         `UPDATE payments
-         SET amount = ?,
+         SET amount = CASE WHEN ? > 0 THEN ? ELSE amount END,
              transaction_ref = ?,
              upi_id = ?,
              upi_merchant_name = ?,
              payment_method = 'UPI',
-             payment_status = CASE WHEN payment_status IN ('PAID', 'PENDING_VERIFICATION') THEN payment_status ELSE ? END
-         WHERE order_id IN (?, ?)`,
-        [amount, transactionRef, upiId, merchantName, paymentStatus, orderId, altId]
+             customer_id = ?,
+             order_id = ?,
+             payment_status = CASE 
+               WHEN payment_status IN ('PAID', 'PENDING_VERIFICATION') THEN payment_status 
+               ELSE ? 
+             END
+         WHERE payment_id = ?`,
+        [
+          amount,
+          amount,
+          transactionRef,
+          upiId,
+          merchantName,
+          validCustomerId,
+          actualOrderId,
+          paymentStatus,
+          existingPayments[0].payment_id,
+        ]
       );
     } else {
-      await pool.query(
+      // Insert new payment attempt referencing verified actualOrderId and validCustomerId
+      await connection.query(
         `INSERT INTO payments (
            payment_id, order_id, customer_id, payment_method, payment_status,
            amount, currency, transaction_ref, upi_id, upi_merchant_name
          )
-         VALUES (?, ?, ?, ?, ?, ?, 'INR', ?, ?, ?)
+         VALUES (?, ?, ?, 'UPI', ?, ?, 'INR', ?, ?, ?)
          ON DUPLICATE KEY UPDATE
-           payment_status = VALUES(payment_status),
            amount = VALUES(amount),
            transaction_ref = VALUES(transaction_ref),
            upi_id = VALUES(upi_id),
-           upi_merchant_name = VALUES(upi_merchant_name)`,
+           upi_merchant_name = VALUES(upi_merchant_name),
+           customer_id = VALUES(customer_id),
+           order_id = VALUES(order_id),
+           payment_status = CASE
+             WHEN payment_status IN ('PAID', 'PENDING_VERIFICATION') THEN payment_status
+             ELSE VALUES(payment_status)
+           END`,
         [
           paymentId,
-          orderId,
-          customerId,
-          paymentMethod,
+          actualOrderId,
+          validCustomerId,
           paymentStatus,
           amount,
           transactionRef,
@@ -2650,10 +2872,15 @@ export async function createUpiPaymentAttemptInDb(paymentData: {
         ]
       );
     }
+
+    await connection.commit();
     return true;
   } catch (err: any) {
-    console.error('[MySQL] Error recording UPI payment attempt:', err?.message);
+    await connection.rollback();
+    console.error('[MySQL UPI Payment Attempt] Failed to record payment attempt:', err?.message);
     return false;
+  } finally {
+    connection.release();
   }
 }
 
@@ -2679,85 +2906,141 @@ export async function savePaymentScreenshotInDb(data: {
   mimeType: string;
   fileSize: number;
   screenshotData?: string;
+  customerName?: string;
+  email?: string;
+  mobile?: string;
+  total?: number;
 }): Promise<SaveScreenshotResult> {
   const pool = getPool();
-  const cleanOrderId = data.orderId.replace(/^#/, '');
-  const altId = data.orderId.startsWith('#') ? data.orderId.slice(1) : `#${data.orderId}`;
+  const orderId = (data.orderId || '').trim();
+  if (!orderId) {
+    return { success: false, error: 'orderId is required' };
+  }
+
+  const cleanOrderId = orderId.replace(/^#/, '');
+  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
   const screenshotUrl = `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}`;
 
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
-    // 1. Lock and check existing order record
+    // 1. Ensure customer exists and resolve valid customer_id
+    const validCustomerId = await ensureCustomerExists(connection, {
+      customerId: data.customerId,
+      customerName: data.customerName,
+      email: data.email,
+      mobile: data.mobile,
+    });
+
+    // 2. Lock and check existing order record
     const [orderRows] = await connection.query<RowDataPacket[]>(
-      `SELECT total, subtotal, discount, payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
-      [data.orderId, altId]
+      `SELECT order_id, total, subtotal, discount, payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      [orderId, altId]
     );
 
-    // 2. Lock and check existing payment record
+    // 3. Lock and check existing payment record
     const [existing] = await connection.query<RowDataPacket[]>(
       `SELECT payment_id, payment_status, screenshot_path, amount FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
-      [data.orderId, altId]
+      [orderId, altId]
     );
 
-    const currentOrderStatus = orderRows[0]?.payment_status;
-    const currentPaymentStatus = existing[0]?.payment_status;
-    const currentOrderScreenshot = orderRows[0]?.screenshot_url;
-    const currentPaymentScreenshot = existing[0]?.screenshot_path;
-    const orderTotal = Math.max(
-      0,
-      Number(orderRows[0]?.total) ||
-      Number(existing[0]?.amount) ||
-      0
-    );
+    let actualOrderId = orderId;
+    let orderTotal = Math.max(0, Number(data.total) || 0);
 
-    // Rule: If already PAID in MySQL, permanently disable upload
-    if (currentOrderStatus === 'PAID' || currentPaymentStatus === 'PAID') {
-      await connection.rollback();
-      return {
-        success: false,
-        alreadyPaid: true,
-        error: 'Payment for this order has already been confirmed as PAID. No additional proof required.',
-      };
+    if (orderRows.length > 0) {
+      actualOrderId = orderRows[0].order_id;
+      orderTotal = Math.max(
+        0,
+        Number(orderRows[0]?.total) ||
+        Number(existing[0]?.amount) ||
+        orderTotal
+      );
+
+      const currentOrderStatus = orderRows[0]?.payment_status;
+      const currentPaymentStatus = existing[0]?.payment_status;
+      const currentOrderScreenshot = orderRows[0]?.screenshot_url;
+      const currentPaymentScreenshot = existing[0]?.screenshot_path;
+
+      // Rule: If already PAID in MySQL, permanently disable upload
+      if (currentOrderStatus === 'PAID' || currentPaymentStatus === 'PAID') {
+        await connection.rollback();
+        return {
+          success: false,
+          alreadyPaid: true,
+          error: 'Payment for this order has already been confirmed as PAID. No additional proof required.',
+        };
+      }
+
+      // Rule: If active screenshot proof exists, block duplicate upload UNLESS order was REJECTED by admin
+      const hasProof = Boolean(currentOrderScreenshot || currentPaymentScreenshot);
+      const isRejected = currentOrderStatus === 'REJECTED' || currentPaymentStatus === 'REJECTED';
+
+      if (hasProof && !isRejected) {
+        await connection.rollback();
+        return {
+          success: false,
+          alreadySubmitted: true,
+          error: 'Payment proof has already been submitted for this order. Please wait for admin verification.',
+        };
+      }
+
+      // Update orders table
+      await connection.query(
+        `UPDATE orders
+         SET payment_status = 'PENDING_VERIFICATION',
+             customer_id = COALESCE(NULLIF(customer_id, 'guest'), ?),
+             screenshot_url = ?,
+             screenshot_data = COALESCE(?, screenshot_data)
+         WHERE order_id = ?`,
+        [validCustomerId, screenshotUrl, data.screenshotData || null, actualOrderId]
+      );
+    } else {
+      // Order didn't exist in orders table yet: create it first!
+      await connection.query(
+        `INSERT INTO orders (
+           order_id, customer_id, customer_name, delivery_address,
+           subtotal, discount, total, status, payment_method, payment_status,
+           screenshot_url, screenshot_data
+         )
+         VALUES (?, ?, ?, 'Address on file', ?, 0.00, ?, 'Pending', 'UPI', 'PENDING_VERIFICATION', ?, ?)`,
+        [
+          actualOrderId,
+          validCustomerId,
+          data.customerName || 'Customer',
+          orderTotal,
+          orderTotal,
+          screenshotUrl,
+          data.screenshotData || null,
+        ]
+      );
     }
-
-    // Rule: If active screenshot proof exists, block duplicate upload UNLESS order was REJECTED by admin
-    const hasProof = Boolean(currentOrderScreenshot || currentPaymentScreenshot);
-    const isRejected = currentOrderStatus === 'REJECTED' || currentPaymentStatus === 'REJECTED';
-
-    if (hasProof && !isRejected) {
-      await connection.rollback();
-      return {
-        success: false,
-        alreadySubmitted: true,
-        error: 'Payment proof has already been submitted for this order. Please wait for admin verification.',
-      };
-    }
-
-    // 3. Update orders table
-    await connection.query(
-      `UPDATE orders
-       SET payment_status = 'PENDING_VERIFICATION',
-           screenshot_url = ?,
-           screenshot_data = COALESCE(?, screenshot_data)
-       WHERE order_id IN (?, ?)`,
-      [screenshotUrl, data.screenshotData || null, data.orderId, altId]
-    );
 
     // 4. Update payments table if existing, or create if not yet existing
     if (existing.length > 0) {
       await connection.query(
         `UPDATE payments
          SET payment_status = 'PENDING_VERIFICATION',
+             customer_id = ?,
+             order_id = ?,
              screenshot_path = ?,
              screenshot_mime = ?,
              screenshot_size = ?,
              screenshot_data = COALESCE(?, screenshot_data),
              screenshot_uploaded_at = NOW(),
              amount = CASE WHEN (amount IS NULL OR amount = 0) AND ? > 0 THEN ? ELSE amount END
-         WHERE order_id IN (?, ?)`,
-        [data.screenshotPath, data.mimeType, data.fileSize, data.screenshotData || null, orderTotal, orderTotal, data.orderId, altId]
+         WHERE payment_id = ?`,
+        [
+          validCustomerId,
+          actualOrderId,
+          data.screenshotPath,
+          data.mimeType,
+          data.fileSize,
+          data.screenshotData || null,
+          orderTotal,
+          orderTotal,
+          existing[0].payment_id,
+        ]
       );
     } else {
       const paymentId = `PAY-${cleanOrderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
@@ -2767,7 +3050,16 @@ export async function savePaymentScreenshotInDb(data: {
            amount, screenshot_path, screenshot_mime, screenshot_size, screenshot_data, screenshot_uploaded_at
          )
          VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', ?, ?, ?, ?, ?, NOW())`,
-        [paymentId, data.orderId, data.customerId || 'guest', orderTotal, data.screenshotPath, data.mimeType, data.fileSize, data.screenshotData || null]
+        [
+          paymentId,
+          actualOrderId,
+          validCustomerId,
+          orderTotal,
+          data.screenshotPath,
+          data.mimeType,
+          data.fileSize,
+          data.screenshotData || null,
+        ]
       );
     }
 
@@ -2775,7 +3067,7 @@ export async function savePaymentScreenshotInDb(data: {
     return { success: true };
   } catch (err: any) {
     await connection.rollback();
-    console.error('[MySQL] Error saving payment screenshot in DB:', err?.message);
+    console.error('[MySQL Payment Proof] Error saving payment screenshot in DB:', err?.message);
     return { success: false, error: err?.message || 'Database update failed.' };
   } finally {
     connection.release();

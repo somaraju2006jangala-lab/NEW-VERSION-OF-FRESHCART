@@ -684,9 +684,12 @@ apiRouter.delete(['/api/cart', '/cart'], async (req: Request, res: Response) => 
 apiRouter.post('/api/orders', async (req: Request, res: Response) => {
   try {
     const orderData = req.body;
-    if (!orderData?.id || !orderData?.customerId) {
-      sendJson(res, 400, { success: false, error: 'Order id and customerId are required.' });
+    if (!orderData?.id) {
+      sendJson(res, 400, { success: false, error: 'Order id is required.' });
       return;
+    }
+    if (!orderData.customerId) {
+      orderData.customerId = 'guest';
     }
 
     const dbCheck = checkDatabaseAvailability();
@@ -1346,7 +1349,18 @@ apiRouter.post(
  */
 apiRouter.post(['/api/payments/initiate-upi', '/payments/initiate-upi'], async (req: Request, res: Response) => {
   try {
-    const { orderId, customerId, amount, upiId, merchantName, transactionRef } = req.body || {};
+    const {
+      orderId,
+      customerId,
+      amount,
+      upiId,
+      merchantName,
+      transactionRef,
+      customerName,
+      customerEmail,
+      customerPhone,
+      deliveryAddress,
+    } = req.body || {};
 
     const trimmedOrderId = typeof orderId === 'string' ? orderId.trim() : '';
     const trimmedTransactionRef = typeof transactionRef === 'string' ? transactionRef.trim() : '';
@@ -1404,9 +1418,14 @@ apiRouter.post(['/api/payments/initiate-upi', '/payments/initiate-upi'], async (
       paymentMethod: 'UPI',
       transactionRef: trimmedTransactionRef,
       paymentStatus: 'INITIATED',
+      customerName: typeof customerName === 'string' ? customerName : undefined,
+      customerEmail: typeof customerEmail === 'string' ? customerEmail : undefined,
+      customerPhone: typeof customerPhone === 'string' ? customerPhone : undefined,
+      deliveryAddress: typeof deliveryAddress === 'string' ? deliveryAddress : undefined,
     });
 
     if (!saved) {
+      console.error(`[API /payments/initiate-upi] Failed to record payment attempt for orderId: ${trimmedOrderId}`);
       sendJson(res, 500, { success: false, error: 'Failed to record payment attempt.' });
       return;
     }
@@ -1636,11 +1655,15 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
       // Save in MySQL database and update payment status to PENDING_VERIFICATION
       const saved = await savePaymentScreenshotInDb({
         orderId: trimmedOrderId,
-        customerId: order?.customerId || payment?.customerId || auth.customerId,
+        customerId: order?.customerId || payment?.customerId || auth.customerId || 'guest',
         screenshotPath: filePathOnDisk,
         mimeType: finalMime,
         fileSize: fileBuffer.length,
         screenshotData: dataUriPayload,
+        customerName: order?.customerName,
+        email: order?.customerEmail,
+        mobile: order?.customerPhone,
+        total: order?.total || payment?.amount,
       });
 
       if (!saved.success) {

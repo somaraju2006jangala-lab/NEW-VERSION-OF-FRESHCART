@@ -234,20 +234,53 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             setIsQrGenerating(false);
           });
 
-        // Automatically register payment attempt in database when customer selects UPI
+        // Automatically register draft order and payment attempt in database when customer selects UPI
         if (!paymentAttemptCreated && rawUpiId) {
-          initiateUpiPayment({
-            orderId: rawOrderId,
+          const customerPhone = currentUser?.phone?.trim() || '';
+          const draftOrder: CustomerOrder = {
+            id: formattedOrderId,
             customerId: currentUser?.id || 'guest_user',
-            amount: total,
-            upiId: rawUpiId,
-            merchantName: effectiveMerchantName,
-            transactionRef: transactionRef,
-          }).then((res) => {
-            if (res.success) {
-              setPaymentAttemptCreated(true);
-            }
-          });
+            customerName: currentUser?.name || 'Guest Customer',
+            customerEmail: currentUser?.email,
+            customerPhone: customerPhone || undefined,
+            deliveryAddress: address,
+            deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
+            estimatedDeliveryTime: 'Express Cold-Chain Delivery',
+            items: [...items],
+            subtotal,
+            discount,
+            total,
+            couponCode: appliedCoupon || undefined,
+            status: 'Pending',
+            createdAt: new Date().toISOString(),
+            paymentMethod: 'UPI',
+            paymentStatus: 'INITIATED',
+          };
+
+          // Save order to MySQL first, then initiate payment using the exact generated formattedOrderId
+          fetch('/api/orders', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+            },
+            body: JSON.stringify(draftOrder),
+          })
+            .catch(() => {})
+            .finally(() => {
+              initiateUpiPayment({
+                orderId: formattedOrderId,
+                customerId: currentUser?.id || 'guest_user',
+                amount: total,
+                upiId: rawUpiId,
+                merchantName: effectiveMerchantName,
+                transactionRef: transactionRef,
+              }).then((res) => {
+                if (res.success) {
+                  setPaymentAttemptCreated(true);
+                }
+              });
+            });
         }
       } else {
         setQrCodeDataUrl('');
@@ -260,8 +293,17 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     paymentMethod,
     upiUri,
     isUpiValid,
-    rawOrderId,
+    formattedOrderId,
     currentUser?.id,
+    currentUser?.name,
+    currentUser?.email,
+    currentUser?.phone,
+    currentUser?.token,
+    address,
+    items,
+    subtotal,
+    discount,
+    appliedCoupon,
     total,
     rawUpiId,
     effectiveMerchantName,
@@ -280,9 +322,40 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setIsInitiatingMobileUpi(true);
 
     try {
-      // 1. Create/store payment attempt in backend BEFORE opening UPI intent
+      const customerPhone = currentUser?.phone?.trim() || '';
+      const draftOrder: CustomerOrder = {
+        id: formattedOrderId,
+        customerId: currentUser?.id || 'guest_user',
+        customerName: currentUser?.name || 'Guest Customer',
+        customerEmail: currentUser?.email,
+        customerPhone: customerPhone || undefined,
+        deliveryAddress: address,
+        deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
+        estimatedDeliveryTime: 'Express Cold-Chain Delivery',
+        items: [...items],
+        subtotal,
+        discount,
+        total,
+        couponCode: appliedCoupon || undefined,
+        status: 'Pending',
+        createdAt: new Date().toISOString(),
+        paymentMethod: 'UPI',
+        paymentStatus: 'INITIATED',
+      };
+
+      // 1. Create and save order in orders table FIRST
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+        },
+        body: JSON.stringify(draftOrder),
+      }).catch(() => {});
+
+      // 2. Create/store payment attempt in backend BEFORE opening UPI intent, using formattedOrderId
       const res = await initiateUpiPayment({
-        orderId: rawOrderId,
+        orderId: formattedOrderId,
         customerId: currentUser?.id || 'guest_user',
         amount: total,
         upiId: upiSettings.upiId,
@@ -299,7 +372,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       setPaymentAttemptCreated(true);
       setUpiActionTriggered(true);
 
-      // 2. Normal user-triggered navigation to standard upi://pay scheme
+      // 3. Normal user-triggered navigation to standard upi://pay scheme
       window.location.href = upiUri;
     } catch (err: any) {
       setUpiError('Payment connection error. Please try again or use Cash on Delivery.');
@@ -371,18 +444,6 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setScreenshotSuccess(null);
 
     try {
-      // Ensure payment attempt and draft order exist in database
-      if (rawUpiId) {
-        await initiateUpiPayment({
-          orderId: rawOrderId,
-          customerId: currentUser?.id || 'guest_user',
-          amount: total,
-          upiId: rawUpiId,
-          merchantName: effectiveMerchantName,
-          transactionRef: transactionRef,
-        });
-      }
-
       const customerPhone = currentUser?.phone?.trim() || '';
       const draftOrder: CustomerOrder = {
         id: formattedOrderId,
@@ -404,6 +465,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         paymentStatus: 'PENDING_VERIFICATION',
       };
 
+      // 1. Create and successfully save draft order in orders table FIRST
       await fetch('/api/orders', {
         method: 'POST',
         headers: {
@@ -413,9 +475,21 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         body: JSON.stringify(draftOrder),
       }).catch(() => {});
 
-      // Upload screenshot to backend
+      // 2. Ensure payment attempt exists in database using the exact generated formattedOrderId
+      if (rawUpiId) {
+        await initiateUpiPayment({
+          orderId: formattedOrderId,
+          customerId: currentUser?.id || 'guest_user',
+          amount: total,
+          upiId: rawUpiId,
+          merchantName: effectiveMerchantName,
+          transactionRef: transactionRef,
+        });
+      }
+
+      // 3. Upload screenshot to backend using the exact generated formattedOrderId
       const res = await uploadPaymentScreenshot(
-        rawOrderId,
+        formattedOrderId,
         screenshotFile,
         currentUser?.token
       );
@@ -427,14 +501,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         updateOrderPaymentStatus(formattedOrderId, 'PENDING_VERIFICATION', {
           screenshotUrl: res.screenshotUrl,
         });
-        updateOrderPaymentStatus(rawOrderId, 'PENDING_VERIFICATION', {
-          screenshotUrl: res.screenshotUrl,
-        });
       } else {
         setScreenshotUploadStatus('error');
         setScreenshotError(res.error || 'Failed to upload screenshot. Please try again.');
         if (res.alreadySubmitted) {
-          setUploadedScreenshotUrl(`/api/payments/screenshot/${encodeURIComponent(rawOrderId)}`);
+          const cleanId = formattedOrderId.replace(/^#/, '');
+          setUploadedScreenshotUrl(`/api/payments/screenshot/${encodeURIComponent(cleanId)}`);
           setScreenshotUploadStatus('success');
           setScreenshotSuccess('Payment proof submitted successfully. Please wait for admin verification.');
         }
