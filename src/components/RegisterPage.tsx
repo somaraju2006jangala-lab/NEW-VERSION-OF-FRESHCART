@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { isPhoneRegistered } from '../services/authService';
 import { validateIndianMobileNumber } from '../services/registrationOtpService';
 import { BRAND_LOGO_URL } from '../data/products';
 import {
@@ -92,12 +91,6 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       return;
     }
 
-    if (isPhoneRegistered(phone)) {
-      setPhoneError('This mobile number is already registered. Please use another number or log in.');
-      setErrorMessage('This mobile number is already registered. Please use another number or log in.');
-      return;
-    }
-
     if (password.length < 6) {
       setErrorMessage('Password must be at least 6 characters long.');
       return;
@@ -124,7 +117,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       if (res.success) {
         onRegisterSuccess();
       } else {
-        setErrorMessage(res.error || 'Failed to create customer account. Please try again.');
+        const errorText = res.error || 'Failed to create customer account. Please try again.';
+        setErrorMessage(errorText);
+        if (errorText.toLowerCase().includes('mobile') || errorText.toLowerCase().includes('number') || errorText.toLowerCase().includes('phone')) {
+          setPhoneError(errorText);
+        }
       }
     } catch {
       setErrorMessage('An unexpected error occurred during account creation.');

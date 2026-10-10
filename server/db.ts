@@ -3,6 +3,15 @@ import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import dotenv from 'dotenv';
+
+// Ensure .env and .env.local are loaded into process.env before database configuration is parsed
+try {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+} catch {
+  // ignore
+}
 
 let pool: Pool | null = null;
 let isConnected = false;
@@ -1189,7 +1198,9 @@ export async function seedInitialDataIfDbEmpty(): Promise<void> {
 // -----------------------------------------------------------------------------
 
 /**
- * Finds a customer by customer_id, email, or mobile number.
+ * Finds a customer by customer_id, email, or mobile number in the shared persistent database.
+ * Supports flexible phone format lookups (10 digits, +91, with/without spaces) and case-insensitive email/ID.
+ * Prioritizes records with active password hashes over empty checkout stubs.
  */
 export async function findCustomerInDb(identifier: string): Promise<any | null> {
   if (!identifier) return null;
@@ -1197,14 +1208,35 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
   const clean = identifier.trim();
   const cleanEmail = clean.toLowerCase();
 
+  // Extract digits for phone lookups
+  const digitsOnly = clean.replace(/\D/g, '');
+  const last10Digits = digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly;
+  const p1 = clean;
+  const p2 = last10Digits ? `+91${last10Digits}` : clean;
+  const p3 = last10Digits ? `+91 ${last10Digits}` : clean;
+  const p4 = last10Digits || clean;
+  const p5 = last10Digits ? `0${last10Digits}` : clean;
+
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, customer_id as id_str, customer_id, full_name as name, email, mobile as phone, address,
               password_hash as passwordHash, loyalty_tier as loyaltyTier, created_at as createdAt
        FROM customers
-       WHERE customer_id = ? OR email = ? OR mobile = ?
+       WHERE customer_id = ? 
+          OR LOWER(customer_id) = ? 
+          OR LOWER(email) = ? 
+          OR mobile = ? 
+          OR mobile = ? 
+          OR mobile = ? 
+          OR mobile = ? 
+          OR mobile = ?
+       ORDER BY
+         CASE WHEN customer_id = ? THEN 0 ELSE 1 END,
+         CASE WHEN LOWER(email) = ? THEN 0 ELSE 1 END,
+         CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN 0 ELSE 1 END,
+         id ASC
        LIMIT 1`,
-      [clean, cleanEmail, clean]
+      [clean, cleanEmail, cleanEmail, p1, p2, p3, p4, p5, clean, cleanEmail]
     );
 
     if (rows.length === 0) return null;
@@ -1221,6 +1253,7 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
 
     return {
       id: customer.customer_id,
+      customer_id: customer.customer_id,
       name: customer.name,
       email: customer.email,
       phone: customer.phone,
@@ -1239,6 +1272,7 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
 /**
  * Ensures that a customer record exists in MySQL before inserting foreign-key dependent rows (e.g. orders, payments).
  * Resolves by customer_id, then by email/mobile if already registered, and creates a record if none exists.
+ * Normalizes mobile number to standard +91XXXXXXXXXX format to prevent duplicate customer records.
  * Returns the guaranteed valid, existing customer_id.
  */
 export async function ensureCustomerExists(
@@ -1256,8 +1290,18 @@ export async function ensureCustomerExists(
     (customerData.customerName || '').trim() ||
     (targetId === 'guest' || targetId === 'guest_user' ? 'Guest Customer' : 'Customer');
   const email = (customerData.email || '').trim().toLowerCase() || null;
-  const mobile = (customerData.mobile || '').trim() || null;
+  const rawMobile = (customerData.mobile || '').trim() || null;
   const address = (customerData.address || '').trim() || null;
+
+  let mobile: string | null = rawMobile;
+  let normalized10: string | null = null;
+  if (rawMobile) {
+    const digits = rawMobile.replace(/\D/g, '');
+    if (digits.length >= 10) {
+      normalized10 = digits.slice(-10);
+      mobile = `+91${normalized10}`;
+    }
+  }
 
   try {
     // 1. Direct check by customer_id
@@ -1269,14 +1313,17 @@ export async function ensureCustomerExists(
       return byId[0].customer_id;
     }
 
-    // 2. If targetId not found, check if a registered customer exists with the given email or mobile
-    if (email || mobile) {
+    // 2. If targetId not found, check if a registered customer exists with the given email or mobile variants
+    if (email || mobile || normalized10) {
       const [byContact] = await connOrPool.query<RowDataPacket[]>(
         `SELECT customer_id FROM customers 
-         WHERE (? IS NOT NULL AND email = ?) 
-            OR (? IS NOT NULL AND mobile = ?) 
+         WHERE (? IS NOT NULL AND LOWER(email) = ?) 
+            OR (? IS NOT NULL AND (mobile = ? OR mobile = ? OR mobile = ?))
+         ORDER BY
+           CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN 0 ELSE 1 END,
+           id ASC
          LIMIT 1`,
-        [email, email, mobile, mobile]
+        [email, email, mobile, mobile, rawMobile, normalized10]
       );
       if (byContact.length > 0 && byContact[0].customer_id) {
         return byContact[0].customer_id;
@@ -1307,8 +1354,11 @@ export async function ensureCustomerExists(
     if (err?.code === 'ER_DUP_ENTRY') {
       try {
         const [existing] = await connOrPool.query<RowDataPacket[]>(
-          'SELECT customer_id FROM customers WHERE email = ? OR mobile = ? LIMIT 1',
-          [email, mobile]
+          `SELECT customer_id FROM customers 
+           WHERE (? IS NOT NULL AND LOWER(email) = ?) 
+              OR (? IS NOT NULL AND (mobile = ? OR mobile = ? OR mobile = ?)) 
+           LIMIT 1`,
+          [email, email, mobile, mobile, rawMobile, normalized10]
         );
         if (existing.length > 0 && existing[0].customer_id) {
           return existing[0].customer_id;
@@ -1335,16 +1385,24 @@ export async function ensureCustomerExists(
 
 /**
  * Upserts a customer into MySQL database.
+ * Normalizes phone numbers to standard E.164 format.
  */
 export async function upsertCustomerInDb(customerData: any): Promise<boolean> {
   const customerId = customerData?.customerId || customerData?.customer_id || customerData?.id;
   if (!customerId) return false;
   const fullName = customerData.name || customerData.full_name || 'Customer';
   const email = (customerData.email || '').trim().toLowerCase();
-  const mobile = (customerData.phone || customerData.mobile || '').trim();
+  let mobile = (customerData.phone || customerData.mobile || '').trim();
   const address = customerData.address || '';
   const passwordHash = customerData.passwordHash || customerData.password_hash || '';
   const loyaltyTier = customerData.loyaltyTier || customerData.loyalty_tier || 'Fresh Member';
+
+  if (mobile) {
+    const digits = mobile.replace(/\D/g, '');
+    if (digits.length === 10) {
+      mobile = `+91${digits}`;
+    }
+  }
 
   const pool = getPool();
   try {

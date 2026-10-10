@@ -162,7 +162,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               htmlFor="customer-email"
               className="block text-[12px] font-semibold text-[#0b1c30]"
             >
-              User ID / Email Address
+              Email, User ID, or Mobile Number
             </label>
             <div className="relative flex items-center">
               <Mail className="absolute left-3.5 w-4 h-4 text-[#6e7b6c] pointer-events-none" />
@@ -175,8 +175,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   setIdentifier(e.target.value);
                   if (errorMessage) setErrorMessage(null);
                 }}
-                placeholder="customer@freshcart.com"
-                autoComplete="email"
+                placeholder="customer@freshcart.com or mobile / user ID"
+                autoComplete="username"
                 className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/35 backdrop-blur-xs border border-white/55 text-[13px] text-[#0b1c30] placeholder:text-[#565e74]/70 focus:outline-hidden focus:bg-white/60 focus:ring-2 focus:ring-[#006b2c] focus:border-white/80 transition-all shadow-2xs"
               />
             </div>

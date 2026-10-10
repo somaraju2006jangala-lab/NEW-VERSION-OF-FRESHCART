@@ -489,15 +489,30 @@ export function generateClientAuthToken(customer: Partial<Customer>): string {
  * NOTE: When connecting a real backend, replace this logic with:
  * const response = await fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
  */
+/**
+ * Authenticates a customer by email, User ID, or mobile number and password using the shared persistent database.
+ * Confirms authentication against the MySQL/TiDB database across all devices.
+ */
 export async function loginCustomer(
   identifier: string,
   plainPassword: string
 ): Promise<{ success: boolean; customer?: Customer; error?: string }> {
-  await initializeAuthStore();
+  const trimmedIdentifier = identifier.trim();
 
-  const trimmedIdentifier = identifier.trim().toLowerCase();
+  if (!trimmedIdentifier) {
+    return {
+      success: false,
+      error: 'Please enter your email address, User ID, or mobile number.',
+    };
+  }
+  if (!plainPassword) {
+    return {
+      success: false,
+      error: 'Please enter your password.',
+    };
+  }
 
-  // 1. Authenticate with backend MySQL database
+  // 1. Authenticate with backend shared MySQL/TiDB database
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
@@ -505,87 +520,59 @@ export async function loginCustomer(
       body: JSON.stringify({ identifier: trimmedIdentifier, password: plainPassword }),
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.success && data?.customer) {
-        const token = data.token || generateClientAuthToken(data.customer);
-        const sessionUser: Customer = {
-          ...data.customer,
-          passwordHash: '',
-          passwordSalt: '',
-          token,
-        };
+    const data = await res.json().catch(() => null);
 
-        localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
+    if (res.ok && data?.success && data?.customer) {
+      const token = data.token || generateClientAuthToken(data.customer);
+      const sessionUser: Customer = {
+        ...data.customer,
+        passwordHash: '',
+        passwordSalt: '',
+        token,
+      };
 
-        // Synchronize into local stored customers cache
-        const customers = getStoredCustomers();
-        const existingIdx = customers.findIndex(
-          (c) => c.email.toLowerCase() === trimmedIdentifier || c.id === data.customer.id
-        );
-        if (existingIdx >= 0) {
-          customers[existingIdx] = { ...customers[existingIdx], ...sessionUser };
-        } else {
-          customers.push(sessionUser);
-        }
-        saveStoredCustomers(customers);
+      // Persist active session on this device
+      localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
 
-        return {
-          success: true,
-          customer: sessionUser,
-        };
-      }
-    } else if (res.status === 401 || res.status === 404) {
-      const data = await res.json().catch(() => null);
-      if (data?.error) {
-        return { success: false, error: data.error };
-      }
+      return {
+        success: true,
+        customer: sessionUser,
+      };
     }
-  } catch {
-    // If backend request fails (offline mode), proceed to local fallback
-  }
 
-  // 2. Offline / local fallback authentication
-  const customers = getStoredCustomers();
-  const customer = customers.find(
-    (c) => c.email.toLowerCase() === trimmedIdentifier || c.id.toLowerCase() === trimmedIdentifier
-  );
+    if (res.status === 401) {
+      return {
+        success: false,
+        error: data?.error || 'Incorrect password entered. Please try again or click "Forgot Password?".',
+      };
+    }
 
-  if (!customer) {
+    if (res.status === 404) {
+      return {
+        success: false,
+        error:
+          data?.error ||
+          'No customer account found with this email, User ID, or mobile number. Please check your spelling or register.',
+      };
+    }
+
+    if (data?.error) {
+      return {
+        success: false,
+        error: data.error,
+      };
+    }
+
     return {
       success: false,
-      error: 'No customer account found with this email or User ID. Please check your spelling or create an account.',
+      error: `Login failed (Status ${res.status}). Database service is unavailable. Please try again.`,
     };
-  }
-
-  const computedHash = await hashPassword(plainPassword, customer.passwordSalt);
-  const isMatch =
-    computedHash === customer.passwordHash ||
-    plainPassword === 'password123' ||
-    plainPassword === DEMO_CUSTOMER_PASSWORD;
-
-  if (!isMatch) {
+  } catch (err: any) {
     return {
       success: false,
-      error: 'Incorrect password entered. Please try again or click "Forgot Password?".',
+      error: 'Unable to connect to the authentication server. Please check your network connection and server status.',
     };
   }
-
-  // Create sanitized session (do not store hash/salt in session)
-  const token = generateClientAuthToken(customer);
-  const sessionUser: Customer = {
-    ...customer,
-    passwordHash: '',
-    passwordSalt: '',
-    token,
-  };
-
-  localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
-
-  return {
-    success: true,
-    customer: sessionUser,
-  };
 }
 
 export interface RegisterPayload {
@@ -611,18 +598,15 @@ export function isPhoneRegistered(rawPhone: string): boolean {
 }
 
 /**
- * Registers a new customer.
+ * Registers a new customer directly into the shared MySQL/TiDB database.
  * - Validates required fields and Indian mobile number format.
- * - Enforces duplicate mobile number prevention.
- * - Verifies mobile number verification state with the backend (preventing client-side tampering).
- * - Stores mobile number normalized strictly to E.164 format: +91XXXXXXXXXX.
- * - Hashes password using SHA-256 + cryptographic salt before persisting.
+ * - Confirms persistent database insert before reporting success.
+ * - Never stores or logs plain-text passwords or hashes locally.
+ * - Does not report success when database operation fails.
  */
 export async function registerCustomer(
   payload: RegisterPayload
 ): Promise<{ success: boolean; customer?: Customer; error?: string }> {
-  await initializeAuthStore();
-
   const trimmedEmail = payload.email.trim().toLowerCase();
   const trimmedName = payload.name.trim();
 
@@ -646,7 +630,7 @@ export async function registerCustomer(
   }
   const normalizedPhone = phoneValidation.normalized;
 
-  // 2. Register via backend MySQL database
+  // 2. Register via persistent shared MySQL database
   try {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
@@ -661,6 +645,7 @@ export async function registerCustomer(
     });
 
     const data = await res.json().catch(() => null);
+
     if (res.ok && data?.success && data?.customer) {
       const token = data.token || generateClientAuthToken(data.customer);
       const sessionUser: Customer = {
@@ -670,104 +655,39 @@ export async function registerCustomer(
         token,
       };
 
+      // Store authenticated session for current device
       localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
-
-      const customers = getStoredCustomers();
-      customers.push(sessionUser);
-      saveStoredCustomers(customers);
 
       return {
         success: true,
         customer: sessionUser,
       };
-    } else if (res.status === 409 && data?.error) {
+    }
+
+    if (res.status === 409) {
+      return {
+        success: false,
+        error: data?.error || 'An account with this email or mobile number already exists. Please log in.',
+      };
+    }
+
+    if (data?.error) {
       return {
         success: false,
         error: data.error,
       };
     }
-  } catch {
-    // If backend is unreachable, fall back to local registration
-  }
 
-  // 3. Offline / local fallback registration
-  const customers = getStoredCustomers();
-  const emailAlreadyExists = customers.some(
-    (c) => c.email.toLowerCase() === trimmedEmail
-  );
-
-  if (emailAlreadyExists) {
     return {
       success: false,
-      error: 'An account with this email already exists. Please log in or use another email.',
+      error: `Registration failed (Status ${res.status}). Database operation could not be confirmed.`,
     };
-  }
-
-  const phoneAlreadyExists = customers.some((c) => {
-    if (!c.phone) return false;
-    const existingVal = validateIndianMobileNumber(c.phone);
-    return (existingVal.isValid && existingVal.normalized === normalizedPhone) || c.phone === normalizedPhone;
-  });
-
-  if (phoneAlreadyExists) {
+  } catch (err: any) {
     return {
       success: false,
-      error: 'This mobile number is already registered. Please use another number or log in.',
+      error: 'Unable to connect to the registration server. Please verify your network connection and server status.',
     };
   }
-
-  const salt = generateSalt();
-  const hash = await hashPassword(payload.password, salt);
-
-  const newId = `cust-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-  const defaultAddress: CustomerAddress = {
-    id: `addr-${Date.now()}`,
-    label: 'Primary Delivery',
-    street: payload.address || 'Address on file',
-    city: 'Bengaluru',
-    state: 'KA',
-    zip: '560001',
-    isDefault: true,
-  };
-
-  const newCustomer: Customer = {
-    id: newId,
-    name: trimmedName,
-    email: trimmedEmail,
-    phone: normalizedPhone, // E.164 normalized: +919876543210
-    address: payload.address || '',
-    savedAddresses: [defaultAddress],
-    passwordSalt: salt,
-    passwordHash: hash,
-    createdAt: new Date().toISOString(),
-    avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(trimmedName)}&backgroundColor=006b2c,00873a`,
-    loyaltyTier: 'Fresh Member (Welcome 10% Off Next Order)',
-  };
-
-  customers.push(newCustomer);
-  saveStoredCustomers(customers);
-
-  // Synchronize to backend MySQL database
-  fetch('/api/customers', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(newCustomer),
-  }).catch(() => {});
-
-  // Auto-login new registered customer
-  const token = generateClientAuthToken(newCustomer);
-  const sessionUser: Customer = {
-    ...newCustomer,
-    passwordHash: '',
-    passwordSalt: '',
-    token,
-  };
-  localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
-
-  return {
-    success: true,
-    customer: sessionUser,
-  };
 }
 
 /**

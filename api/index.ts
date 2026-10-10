@@ -1,3 +1,13 @@
+import dotenv from 'dotenv';
+import path from 'path';
+
+try {
+  dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+} catch {
+  // ignore
+}
+
 import { apiApp } from '../server/apiRouter.ts';
 import { connectMySql } from '../server/db.ts';
 
