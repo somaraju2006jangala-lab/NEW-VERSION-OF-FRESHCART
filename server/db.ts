@@ -2307,7 +2307,8 @@ export async function findOrderInDb(orderId: string): Promise<any | null> {
               delivery_time_slot as deliveryTimeSlot, subtotal, discount, total,
               coupon_code as couponCode, status, payment_id as paymentId,
               payment_method as paymentMethod, payment_status as paymentStatus,
-              screenshot_url as screenshotUrl, verified_at as verifiedAt, verified_by as verifiedBy,
+              screenshot_url as screenshotUrl, screenshot_data as screenshotData,
+              verified_at as verifiedAt, verified_by as verifiedBy,
               created_at as createdAt
        FROM orders
        WHERE order_id IN (?, ?)

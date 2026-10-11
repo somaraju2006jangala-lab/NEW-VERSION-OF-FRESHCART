@@ -160,6 +160,12 @@ export async function extractAdminAuth(req: Request): Promise<{
     token = authHeader.trim().slice(7).trim();
   } else if (req.query?.adminToken && typeof req.query.adminToken === 'string') {
     token = req.query.adminToken.trim();
+  } else if (req.query?.token && typeof req.query.token === 'string') {
+    const candidate = req.query.token.trim();
+    const testAdmin = verifyAdminToken(candidate);
+    if (testAdmin.valid && testAdmin.decoded) {
+      token = candidate;
+    }
   }
 
   if (token) {
@@ -2656,9 +2662,26 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
       return;
     }
 
-    const auth = extractAuthCustomer(req);
-    if (!auth.authenticated) {
-      sendJson(res, 401, { success: false, error: 'Authentication required to access payment screenshot.' });
+    // 1. Check Administrator Authorization first
+    const adminAuth = await extractAdminAuth(req);
+    const isAdmin = adminAuth.authenticated && !!adminAuth.admin;
+
+    // 2. Check Customer Authorization if not an authorized admin
+    let isCustomer = false;
+    let customerAuthId = '';
+    if (!isAdmin) {
+      const custAuth = extractAuthCustomer(req);
+      if (custAuth.authenticated) {
+        isCustomer = true;
+        customerAuthId = custAuth.customerId;
+      }
+    }
+
+    if (!isAdmin && !isCustomer) {
+      sendJson(res, 401, {
+        success: false,
+        error: 'Authentication required to access payment screenshot.',
+      });
       return;
     }
 
@@ -2673,8 +2696,8 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
     // Access control: only customer who owns the order and authorized admins can access
     const orderOwner = order?.customerId || payment?.customerId;
     const isOwner =
-      auth.isAdmin ||
-      auth.customerId === orderOwner ||
+      isAdmin ||
+      customerAuthId === orderOwner ||
       orderOwner === 'guest' ||
       orderOwner === 'guest_user';
 
@@ -2688,7 +2711,7 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
 
     // Once payment is confirmed as PAID in MySQL and proof was purged, return 404
     const isPaid = order?.paymentStatus === 'PAID' || payment?.paymentStatus === 'PAID';
-    if (isPaid && !payment?.screenshotPath) {
+    if (isPaid && !payment?.screenshotPath && !payment?.screenshotData && !(order as any)?.screenshotData) {
       sendJson(res, 404, {
         success: false,
         error: 'Payment screenshot not found or has been securely removed following verification.',
@@ -2729,10 +2752,11 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
       }
     }
 
-    // 3. Persistent Fallback: Restore from MySQL screenshot_data if disk file was wiped
+    // 3. Persistent Authoritative Fallback: Restore from MySQL screenshot_data if disk file was wiped/purged
     if (!fileBuffer) {
       const rawData =
         payment?.screenshotData ||
+        payment?.orderScreenshotData ||
         (order as any)?.screenshotData ||
         (order as any)?.screenshot_data;
       if (rawData && typeof rawData === 'string' && rawData.trim()) {
@@ -2751,7 +2775,8 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
               if (!fs.existsSync(SCREENSHOTS_DIR)) {
                 fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
               }
-              const restoredName = `proof_${rawOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_')}_restored${mime === 'image/png' ? '.png' : '.jpg'}`;
+              const cleanId = rawOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+              const restoredName = `proof_${cleanId}_restored${mime === 'image/png' ? '.png' : '.jpg'}`;
               fs.writeFileSync(path.join(SCREENSHOTS_DIR, restoredName), fileBuffer);
             } catch {}
           }
@@ -2762,6 +2787,7 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
     if (!fileBuffer || fileBuffer.length === 0) {
       sendJson(res, 404, {
         success: false,
+        unavailable: true,
         error: 'Payment screenshot not found or has been securely removed following verification.',
       });
       return;

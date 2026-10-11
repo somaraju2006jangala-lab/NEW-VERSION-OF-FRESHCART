@@ -72,6 +72,7 @@ import {
 } from '../services/paymentService';
 import {
   AuthorizedAdmin,
+  getStoredAdminToken,
   fetchAuthorizedAdmins,
   createAuthorizedAdmin,
   toggleAdminStatus,
@@ -80,6 +81,15 @@ import {
   fetchAdminCustomerAccounts,
   updateCustomerAccountStatus,
 } from '../services/adminService';
+
+export function getAdminScreenshotUrl(base?: string, orderId?: string): string {
+  const cleanId = String(orderId || '').replace(/^#/, '');
+  const url = base || `/api/payments/screenshot/${encodeURIComponent(cleanId)}`;
+  const token = getStoredAdminToken();
+  if (!token) return `${url}${url.includes('?') ? '&' : '?'}admin=true`;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}adminToken=${encodeURIComponent(token)}`;
+}
 
 
 export interface ParsedHistoryPeriod {
@@ -3495,7 +3505,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           const isPaid = item.paymentStatus === 'PAID';
                           const isRejected = item.paymentStatus === 'REJECTED';
                           const hasProof = !!(item.screenshotUrl || item.screenshotPath);
-                          const adminImgSrc = `${item.screenshotUrl || `/api/payments/screenshot/${item.orderId}`}?admin=true`;
+                          const adminImgSrc = getAdminScreenshotUrl(item.screenshotUrl, item.orderId);
 
                           return (
                             <tr key={item.id || item.orderId} className="hover:bg-white/[0.03] transition-colors">
@@ -4859,7 +4869,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
                 {/* Open Full Image in New Tab */}
                 <a
-                  href={`${viewingScreenshotItem.screenshotUrl || `/api/payments/screenshot/${viewingScreenshotItem.orderId.replace(/^#/, '')}`}?admin=true`}
+                  href={getAdminScreenshotUrl(viewingScreenshotItem.screenshotUrl, viewingScreenshotItem.orderId)}
                   target="_blank"
                   rel="noopener noreferrer"
                   title="Open image in new tab at original resolution"
@@ -4905,7 +4915,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               {/* High-res Image preview with Zoom & Pan */}
               <div className="p-3 bg-black/60 rounded-xl border border-white/10 flex items-center justify-center min-h-[300px] max-h-[58vh] overflow-auto">
                 <img
-                  src={`${viewingScreenshotItem.screenshotUrl || `/api/payments/screenshot/${viewingScreenshotItem.orderId.replace(/^#/, '')}`}?admin=true`}
+                  src={getAdminScreenshotUrl(viewingScreenshotItem.screenshotUrl, viewingScreenshotItem.orderId)}
                   alt={`Payment Screenshot for Order #${viewingScreenshotItem.orderId.replace(/^#/, '')}`}
                   style={{
                     transform: `scale(${screenshotZoom})`,
@@ -4921,8 +4931,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     const parent = target.parentElement;
                     if (parent && !parent.querySelector('.img-error-placeholder')) {
                       const div = document.createElement('div');
-                      div.className = 'img-error-placeholder py-12 text-center text-slate-400 text-xs';
-                      div.innerText = 'Screenshot could not be loaded or has been purged.';
+                      div.className = 'img-error-placeholder py-8 px-4 text-center space-y-2';
+                      div.innerHTML = `
+                        <div class="inline-flex p-3 rounded-full bg-rose-500/10 text-rose-400 mb-1">
+                          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                        </div>
+                        <p class="font-bold text-slate-200 text-sm">Payment Proof Unavailable</p>
+                        <p class="text-xs text-slate-400 max-w-md mx-auto">The payment screenshot proof could not be loaded or is unavailable in persistent storage. You can reject this verification with a note requesting the customer to upload a replacement proof in their customer dashboard.</p>
+                      `;
                       parent.appendChild(div);
                     }
                   }}
