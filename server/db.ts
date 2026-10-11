@@ -2603,6 +2603,106 @@ export async function deleteOrderInDb(orderId: string): Promise<boolean> {
   return result.success;
 }
 
+/**
+ * Bulk deletes orders from MySQL with financial audit archival (Admin action only).
+ * Strictly restricted to PAID (Verified & Paid) or REJECTED orders.
+ * NEVER deletes PENDING or other status orders.
+ */
+export async function bulkDeleteOrdersWithAuditArchiveInDb(params: {
+  statusFilter: 'PAID' | 'REJECTED';
+  orderIds?: string[];
+  deleteAll?: boolean;
+  adminUsername: string;
+}): Promise<{
+  success: boolean;
+  deletedCount: number;
+  deletedOrderIds: string[];
+  error?: string;
+  screenshotPathsToDelete?: string[];
+}> {
+  if (params.statusFilter !== 'PAID' && params.statusFilter !== 'REJECTED') {
+    return {
+      success: false,
+      deletedCount: 0,
+      deletedOrderIds: [],
+      screenshotPathsToDelete: [],
+      error: 'Invalid status filter for bulk deletion. Only PAID or REJECTED records can be deleted.',
+    };
+  }
+
+  try {
+    let targetOrderIds: string[] = [];
+
+    if (params.deleteAll) {
+      // Find all order IDs matching this status in the verification queue
+      const queue = await getAllUpiPaymentsForVerification();
+      targetOrderIds = queue
+        .filter((p) => p.paymentStatus === params.statusFilter)
+        .map((p) => String(p.orderId).replace(/^#/, ''));
+    } else if (params.orderIds && params.orderIds.length > 0) {
+      const requestedIds = new Set(
+        params.orderIds.map((id) => String(id).trim().replace(/^#/, '')).filter(Boolean)
+      );
+      // Fetch queue to ensure only orders that actually match statusFilter are targeted
+      const queue = await getAllUpiPaymentsForVerification();
+      targetOrderIds = queue
+        .filter((p) => {
+          const cleanId = String(p.orderId).replace(/^#/, '');
+          return requestedIds.has(cleanId) && p.paymentStatus === params.statusFilter;
+        })
+        .map((p) => String(p.orderId).replace(/^#/, ''));
+    }
+
+    targetOrderIds = Array.from(new Set(targetOrderIds));
+
+    if (targetOrderIds.length === 0) {
+      return {
+        success: true,
+        deletedCount: 0,
+        deletedOrderIds: [],
+        screenshotPathsToDelete: [],
+      };
+    }
+
+    const deletedOrderIds: string[] = [];
+    const allScreenshotsToDelete: string[] = [];
+
+    for (const orderId of targetOrderIds) {
+      try {
+        const res = await deleteOrderWithAuditArchiveInDb({
+          orderId,
+          adminUsername: params.adminUsername,
+        });
+        if (res.success) {
+          deletedOrderIds.push(orderId);
+          if (res.screenshotPathsToDelete && res.screenshotPathsToDelete.length > 0) {
+            allScreenshotsToDelete.push(...res.screenshotPathsToDelete);
+          }
+        }
+      } catch (err: any) {
+        console.error(`[MySQL] Error during bulk deletion of order #${orderId}:`, err?.message);
+      }
+    }
+
+    return {
+      success: true,
+      deletedCount: deletedOrderIds.length,
+      deletedOrderIds,
+      screenshotPathsToDelete: allScreenshotsToDelete,
+    };
+  } catch (err: any) {
+    console.error(`[MySQL] Error in bulkDeleteOrdersWithAuditArchiveInDb:`, err?.message);
+    return {
+      success: false,
+      deletedCount: 0,
+      deletedOrderIds: [],
+      screenshotPathsToDelete: [],
+      error: err?.message || 'Database error during bulk deletion.',
+    };
+  }
+}
+
+
 // -----------------------------------------------------------------------------
 // OTP OPERATIONS
 // -----------------------------------------------------------------------------

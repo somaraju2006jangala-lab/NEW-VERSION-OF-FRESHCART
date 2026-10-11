@@ -69,6 +69,7 @@ import {
   buildUpiUri,
   adminVerifyPayment,
   adminDeleteVerificationOrder,
+  adminBulkDeleteVerificationOrders,
   fetchPaymentVerificationQueue,
   PaymentVerificationItem,
 } from '../services/paymentService';
@@ -900,12 +901,39 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [isDeletingVerificationOrder, setIsDeletingVerificationOrder] = useState(false);
   const [queueFeedback, setQueueFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
+  // Bulk Deletion State for Verified & Paid and Rejected sections
+  const [selectedPaidOrderIds, setSelectedPaidOrderIds] = useState<Set<string>>(new Set());
+  const [selectedRejectedOrderIds, setSelectedRejectedOrderIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{
+    type: 'SELECTED' | 'ALL';
+    section: 'PAID' | 'REJECTED';
+    sectionName: string;
+    count: number;
+    orderIds?: string[];
+  } | null>(null);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
   const loadVerificationQueue = React.useCallback(async () => {
     setIsLoadingQueue(true);
     try {
       const res = await fetchPaymentVerificationQueue();
       if (res.success && res.payments) {
         setVerificationQueue(res.payments);
+        const availableIds = new Set(res.payments.map((p) => p.orderId.replace(/^#/, '')));
+        setSelectedPaidOrderIds((prev) => {
+          const next = new Set<string>();
+          for (const id of prev) {
+            if (availableIds.has(id)) next.add(id);
+          }
+          return next;
+        });
+        setSelectedRejectedOrderIds((prev) => {
+          const next = new Set<string>();
+          for (const id of prev) {
+            if (availableIds.has(id)) next.add(id);
+          }
+          return next;
+        });
       }
     } catch (err) {
       console.error('Failed to load verification queue:', err);
@@ -1010,10 +1038,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         setVerificationQueue((prev) =>
           prev.filter((q) => q.orderId.replace(/^#/, '') !== cleanId)
         );
+        setSelectedPaidOrderIds((prev) => {
+          const next = new Set(prev);
+          next.delete(cleanId);
+          return next;
+        });
+        setSelectedRejectedOrderIds((prev) => {
+          const next = new Set(prev);
+          next.delete(cleanId);
+          return next;
+        });
         setDeleteConfirmVerificationOrder(null);
         setQueueFeedback({
           type: 'success',
-          message: res.message || `Order #${cleanId} deleted successfully and archived.`,
+          message: res.message || `Order #${cleanId} deleted successfully.`,
         });
         await loadVerificationQueue();
       } else {
@@ -1031,6 +1069,61 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       setDeleteConfirmVerificationOrder(null);
     } finally {
       setIsDeletingVerificationOrder(false);
+    }
+  };
+
+  const handleExecuteBulkDelete = async () => {
+    if (!bulkDeleteConfirm || isBulkDeleting) return;
+    setIsBulkDeleting(true);
+    try {
+      const res = await adminBulkDeleteVerificationOrders({
+        statusFilter: bulkDeleteConfirm.section,
+        orderIds: bulkDeleteConfirm.type === 'SELECTED' ? bulkDeleteConfirm.orderIds : undefined,
+        deleteAll: bulkDeleteConfirm.type === 'ALL',
+      });
+
+      if (res.success) {
+        const deletedIds = res.deletedOrderIds || bulkDeleteConfirm.orderIds || [];
+        const deletedSet = new Set(deletedIds.map((id) => id.replace(/^#/, '')));
+
+        setVerificationQueue((prev) =>
+          prev.filter((item) => {
+            if (bulkDeleteConfirm.type === 'ALL') {
+              return item.paymentStatus !== bulkDeleteConfirm.section;
+            }
+            return !deletedSet.has(item.orderId.replace(/^#/, ''));
+          })
+        );
+
+        if (bulkDeleteConfirm.section === 'PAID') {
+          setSelectedPaidOrderIds(new Set());
+        } else {
+          setSelectedRejectedOrderIds(new Set());
+        }
+
+        setBulkDeleteConfirm(null);
+        const count = res.deletedCount ?? bulkDeleteConfirm.count;
+        setQueueFeedback({
+          type: 'success',
+          message: res.message || `Successfully deleted ${count} ${bulkDeleteConfirm.sectionName} record${count === 1 ? '' : 's'}.`,
+        });
+
+        await loadVerificationQueue();
+      } else {
+        setQueueFeedback({
+          type: 'error',
+          message: res.error || 'Failed to delete records.',
+        });
+        setBulkDeleteConfirm(null);
+      }
+    } catch (err: any) {
+      setQueueFeedback({
+        type: 'error',
+        message: err?.message || 'Error occurred during deletion.',
+      });
+      setBulkDeleteConfirm(null);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -3803,6 +3896,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   return true;
                 });
 
+                const isBulkEligible = queueFilter === 'paid' || queueFilter === 'rejected';
+                const currentSelectedSet = queueFilter === 'paid' ? selectedPaidOrderIds : selectedRejectedOrderIds;
+                const sectionItems = filtered;
+                const sectionTotal = sectionItems.length;
+                const selectedCount = currentSelectedSet.size;
+                const isAllSelected = sectionTotal > 0 && selectedCount === sectionTotal;
+                const isSomeSelected = selectedCount > 0 && selectedCount < sectionTotal;
+
                 if (isLoadingQueue && verificationQueue.length === 0) {
                   return (
                     <div className="py-16 text-center text-slate-400 space-y-2">
@@ -3829,35 +3930,171 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 }
 
                 return (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-white/10 bg-black/40 text-slate-400 font-semibold tracking-wider uppercase text-[11px]">
-                          <th className="py-3.5 px-4">Order ID</th>
-                          <th className="py-3.5 px-4">Customer Details</th>
-                          <th className="py-3.5 px-4">Amount</th>
-                          <th className="py-3.5 px-4">Payment Method</th>
-                          <th className="py-3.5 px-4">Status</th>
-                          <th className="py-3.5 px-4">Payment Proof</th>
-                          <th className="py-3.5 px-4">Uploaded / Audit</th>
-                          <th className="py-3.5 px-4 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5 text-slate-200">
-                        {filtered.map((item) => {
-                          const isPending =
-                            item.paymentStatus === 'PENDING_VERIFICATION' ||
-                            (item.paymentStatus as string) === 'PENDING';
-                          const isPaid = item.paymentStatus === 'PAID';
-                          const isRejected = item.paymentStatus === 'REJECTED';
-                          const hasProof = !!(item.screenshotUrl || item.screenshotPath);
-                          const adminImgSrc = getAdminScreenshotUrl(item.screenshotUrl, item.orderId);
+                  <div>
+                    {/* Bulk Action Controls for Verified & Paid and Rejected sections */}
+                    {isBulkEligible && sectionTotal > 0 && (
+                      <div className="p-3 sm:p-3.5 px-4 bg-black/40 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-200 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              id={`admin-select-all-${queueFilter}-toolbar-checkbox`}
+                              checked={isAllSelected}
+                              ref={(input) => {
+                                if (input) input.indeterminate = isSomeSelected;
+                              }}
+                              onChange={() => {
+                                if (isAllSelected) {
+                                  if (queueFilter === 'paid') setSelectedPaidOrderIds(new Set());
+                                  else setSelectedRejectedOrderIds(new Set());
+                                } else {
+                                  const all = new Set(sectionItems.map((i) => i.orderId.replace(/^#/, '')));
+                                  if (queueFilter === 'paid') setSelectedPaidOrderIds(all);
+                                  else setSelectedRejectedOrderIds(all);
+                                }
+                              }}
+                              className="w-4 h-4 rounded border-white/20 bg-black/60 text-[#006b2c] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#10b981]"
+                            />
+                            <span>Select All</span>
+                          </label>
 
-                          return (
-                            <tr key={item.id || item.orderId} className="hover:bg-white/[0.03] transition-colors">
-                              <td className="py-3 px-4 font-mono font-bold text-white whitespace-nowrap">
-                                #{item.orderId.replace(/^#/, '')}
-                              </td>
+                          {selectedCount > 0 && (
+                            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              {selectedCount} of {sectionTotal} selected
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {/* Delete Selected Button */}
+                          <button
+                            type="button"
+                            id={`admin-delete-selected-${queueFilter}-btn`}
+                            disabled={selectedCount === 0 || isBulkDeleting}
+                            onClick={() => {
+                              if (selectedCount === 0) return;
+                              const sectionName = queueFilter === 'paid' ? 'Verified & Paid' : 'Rejected';
+                              setBulkDeleteConfirm({
+                                type: 'SELECTED',
+                                section: queueFilter === 'paid' ? 'PAID' : 'REJECTED',
+                                sectionName,
+                                count: selectedCount,
+                                orderIds: Array.from(currentSelectedSet),
+                              });
+                            }}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-rose-950/60 hover:bg-rose-900/80 text-rose-200 hover:text-white border border-rose-500/40 flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+                            title={selectedCount === 0 ? 'Select records using checkboxes to delete' : `Delete ${selectedCount} selected records`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                            <span>Delete Selected ({selectedCount})</span>
+                          </button>
+
+                          {/* Delete All Button */}
+                          <button
+                            type="button"
+                            id={`admin-delete-all-${queueFilter}-btn`}
+                            disabled={sectionTotal === 0 || isBulkDeleting}
+                            onClick={() => {
+                              const sectionName = queueFilter === 'paid' ? 'Verified & Paid' : 'Rejected';
+                              setBulkDeleteConfirm({
+                                type: 'ALL',
+                                section: queueFilter === 'paid' ? 'PAID' : 'REJECTED',
+                                sectionName,
+                                count: sectionTotal,
+                              });
+                            }}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-red-600/20 hover:bg-red-600/35 text-red-300 hover:text-red-100 border border-red-500/50 flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-xs"
+                            title={`Delete all ${sectionTotal} records in the ${queueFilter === 'paid' ? 'Verified & Paid' : 'Rejected'} section`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                            <span>Delete All ({sectionTotal})</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-black/40 text-slate-400 font-semibold tracking-wider uppercase text-[11px]">
+                            {isBulkEligible && (
+                              <th className="py-3.5 px-3 w-10 text-center">
+                                <input
+                                  type="checkbox"
+                                  id={`admin-table-header-select-all-${queueFilter}`}
+                                  checked={isAllSelected}
+                                  ref={(input) => {
+                                    if (input) input.indeterminate = isSomeSelected;
+                                  }}
+                                  onChange={() => {
+                                    if (isAllSelected) {
+                                      if (queueFilter === 'paid') setSelectedPaidOrderIds(new Set());
+                                      else setSelectedRejectedOrderIds(new Set());
+                                    } else {
+                                      const all = new Set(sectionItems.map((i) => i.orderId.replace(/^#/, '')));
+                                      if (queueFilter === 'paid') setSelectedPaidOrderIds(all);
+                                      else setSelectedRejectedOrderIds(all);
+                                    }
+                                  }}
+                                  className="w-4 h-4 rounded border-white/20 bg-black/60 text-[#006b2c] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#10b981]"
+                                  title="Select All"
+                                />
+                              </th>
+                            )}
+                            <th className="py-3.5 px-4">Order ID</th>
+                            <th className="py-3.5 px-4">Customer Details</th>
+                            <th className="py-3.5 px-4">Amount</th>
+                            <th className="py-3.5 px-4">Payment Method</th>
+                            <th className="py-3.5 px-4">Status</th>
+                            <th className="py-3.5 px-4">Payment Proof</th>
+                            <th className="py-3.5 px-4">Uploaded / Audit</th>
+                            <th className="py-3.5 px-4 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-slate-200">
+                          {filtered.map((item) => {
+                            const isPending =
+                              item.paymentStatus === 'PENDING_VERIFICATION' ||
+                              (item.paymentStatus as string) === 'PENDING';
+                            const isPaid = item.paymentStatus === 'PAID';
+                            const isRejected = item.paymentStatus === 'REJECTED';
+                            const hasProof = !!(item.screenshotUrl || item.screenshotPath);
+                            const adminImgSrc = getAdminScreenshotUrl(item.screenshotUrl, item.orderId);
+                            const cleanId = item.orderId.replace(/^#/, '');
+                            const isSelected = currentSelectedSet.has(cleanId);
+
+                            return (
+                              <tr key={item.id || item.orderId} className={`hover:bg-white/[0.03] transition-colors ${isSelected ? 'bg-emerald-950/20' : ''}`}>
+                                {isBulkEligible && (
+                                  <td className="py-3 px-3 text-center">
+                                    <input
+                                      type="checkbox"
+                                      id={`select-order-row-${cleanId}`}
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        if (queueFilter === 'paid') {
+                                          setSelectedPaidOrderIds((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(cleanId)) next.delete(cleanId);
+                                            else next.add(cleanId);
+                                            return next;
+                                          });
+                                        } else {
+                                          setSelectedRejectedOrderIds((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(cleanId)) next.delete(cleanId);
+                                            else next.add(cleanId);
+                                            return next;
+                                          });
+                                        }
+                                      }}
+                                      className="w-4 h-4 rounded border-white/20 bg-black/60 text-[#006b2c] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#10b981]"
+                                    />
+                                  </td>
+                                )}
+                                <td className="py-3 px-4 font-mono font-bold text-white whitespace-nowrap">
+                                  #{cleanId}
+                                </td>
                               <td className="py-3 px-4">
                                 <div className="font-semibold text-white">{item.customerName || 'Customer'}</div>
                                 <div className="text-[11px] text-slate-400">
@@ -4036,6 +4273,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 );
               })()}
@@ -5476,6 +5714,88 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <>
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Confirm Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
+          <div className="bg-[#0b1c30] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-white/15 p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="w-10 h-10 rounded-full bg-rose-950/60 border border-rose-500/40 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-[17px] font-bold text-white font-display">
+                  {bulkDeleteConfirm.type === 'ALL'
+                    ? `Delete All ${bulkDeleteConfirm.sectionName} Records`
+                    : `Delete Selected ${bulkDeleteConfirm.sectionName} Records`}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Section: <strong className="text-white">{bulkDeleteConfirm.sectionName}</strong> • {bulkDeleteConfirm.count} record{bulkDeleteConfirm.count === 1 ? '' : 's'} selected
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300 space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Section Name:</span>
+                <span className="font-semibold text-white">{bulkDeleteConfirm.sectionName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Records to Delete:</span>
+                <span className="font-bold text-rose-400">
+                  {bulkDeleteConfirm.count} record{bulkDeleteConfirm.count === 1 ? '' : 's'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Scope:</span>
+                <span className="font-semibold text-amber-300">
+                  {bulkDeleteConfirm.type === 'ALL' ? 'All records in this section' : 'Selected records only'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {bulkDeleteConfirm.type === 'ALL'
+                ? `Are you sure you want to delete ALL ${bulkDeleteConfirm.count} record(s) from the ${bulkDeleteConfirm.sectionName} section? This will remove these records from the active queue and active database. All financial and audit history will be safely preserved in the audit archive. Records in other sections will remain untouched.`
+                : `Are you sure you want to delete ${bulkDeleteConfirm.count} selected record(s) from the ${bulkDeleteConfirm.sectionName} section? All financial and audit history will be safely preserved in the audit archive.`}
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setBulkDeleteConfirm(null)}
+                disabled={isBulkDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-bulk-delete-btn"
+                onClick={handleExecuteBulkDelete}
+                disabled={isBulkDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isBulkDeleting ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>
+                      {bulkDeleteConfirm.type === 'ALL'
+                        ? `Delete All (${bulkDeleteConfirm.count})`
+                        : `Confirm Delete (${bulkDeleteConfirm.count})`}
+                    </span>
                   </>
                 )}
               </button>

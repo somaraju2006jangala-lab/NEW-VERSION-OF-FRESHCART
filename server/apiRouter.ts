@@ -42,6 +42,7 @@ import {
   updateOrderStatusInDb,
   deleteOrderInDb,
   deleteOrderWithAuditArchiveInDb,
+  bulkDeleteOrdersWithAuditArchiveInDb,
   getCouponsFromDb,
   findCouponByCodeInDb,
   createCouponInDb,
@@ -3069,7 +3070,7 @@ apiRouter.delete(
 
       sendJson(res, 200, {
         success: true,
-        message: `Order #${orderId.replace(/^#/, '')} and associated records safely deleted and archived.`,
+        message: `Order #${orderId.replace(/^#/, '')} deleted successfully.`,
       });
     } catch (err: any) {
       sendJson(res, 500, { success: false, error: err?.message || 'Server error deleting order.' });
@@ -3130,10 +3131,103 @@ apiRouter.post(
 
       sendJson(res, 200, {
         success: true,
-        message: `Order #${orderId.replace(/^#/, '')} and associated records safely deleted and archived.`,
+        message: `Order #${orderId.replace(/^#/, '')} deleted successfully.`,
       });
     } catch (err: any) {
       sendJson(res, 500, { success: false, error: err?.message || 'Server error deleting order.' });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/payments/bulk-delete
+ * Admin Payment Verification endpoint:
+ * Safely deletes multiple orders from the payment verification queue (PAID or REJECTED only),
+ * ensuring child records, audit archives, and screenshot files are handled securely.
+ */
+apiRouter.post(
+  ['/api/admin/payments/bulk-delete', '/admin/payments/bulk-delete'],
+  async (req: Request, res: Response) => {
+    try {
+      const auth = await extractAdminAuth(req);
+      if (!auth.authenticated) {
+        sendJson(res, auth.statusCode || 403, {
+          success: false,
+          error: auth.error || 'Access denied: Admin access required.',
+        });
+        return;
+      }
+
+      const { statusFilter, orderIds, deleteAll } = req.body || {};
+
+      if (statusFilter !== 'PAID' && statusFilter !== 'REJECTED') {
+        sendJson(res, 400, {
+          success: false,
+          error: 'statusFilter must be either "PAID" or "REJECTED".',
+        });
+        return;
+      }
+
+      if (!deleteAll && (!Array.isArray(orderIds) || orderIds.length === 0)) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'orderIds array or deleteAll flag is required.',
+        });
+        return;
+      }
+
+      const adminName = auth.admin?.full_name || auth.admin?.admin_id || 'Admin';
+      const result = await bulkDeleteOrdersWithAuditArchiveInDb({
+        statusFilter,
+        orderIds: Array.isArray(orderIds) ? orderIds : undefined,
+        deleteAll: !!deleteAll,
+        adminUsername: adminName,
+      });
+
+      if (!result.success) {
+        sendJson(res, 500, {
+          success: false,
+          error: result.error || 'Failed to bulk delete orders.',
+        });
+        return;
+      }
+
+      // Cleanup screenshot files from disk
+      if (result.screenshotPathsToDelete && result.screenshotPathsToDelete.length > 0) {
+        for (const filePath of result.screenshotPathsToDelete) {
+          if (filePath && fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch {}
+          }
+        }
+      }
+
+      if (fs.existsSync(SCREENSHOTS_DIR) && result.deletedOrderIds && result.deletedOrderIds.length > 0) {
+        try {
+          const files = fs.readdirSync(SCREENSHOTS_DIR);
+          for (const orderId of result.deletedOrderIds) {
+            const cleanId = orderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+            for (const f of files) {
+              if (f.startsWith(`proof_${cleanId}_`)) {
+                try { fs.unlinkSync(path.join(SCREENSHOTS_DIR, f)); } catch {}
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const sectionLabel = statusFilter === 'PAID' ? 'Verified & Paid' : 'Rejected';
+      const count = result.deletedCount;
+      sendJson(res, 200, {
+        success: true,
+        deletedCount: count,
+        deletedOrderIds: result.deletedOrderIds,
+        message: `Successfully deleted ${count} ${sectionLabel} record${count === 1 ? '' : 's'}.`,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, {
+        success: false,
+        error: err?.message || 'Server error during bulk deletion.',
+      });
     }
   }
 );

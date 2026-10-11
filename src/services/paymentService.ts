@@ -477,7 +477,7 @@ export async function adminDeleteVerificationOrder(
 
       return {
         success: true,
-        message: data.message || `Order #${cleanId} deleted successfully and archived.`,
+        message: data.message || `Order #${cleanId} deleted successfully.`,
       };
     }
 
@@ -492,4 +492,81 @@ export async function adminDeleteVerificationOrder(
     };
   }
 }
+
+/**
+ * Admin: bulk deletes verified-and-paid or rejected orders from payment verification queue,
+ * safely archiving financial snapshots and unlinking associated proofs.
+ */
+export async function adminBulkDeleteVerificationOrders(params: {
+  statusFilter: 'PAID' | 'REJECTED';
+  orderIds?: string[];
+  deleteAll?: boolean;
+  token?: string;
+}): Promise<{
+  success: boolean;
+  deletedCount?: number;
+  deletedOrderIds?: string[];
+  error?: string;
+  message?: string;
+}> {
+  try {
+    const adminToken = params.token || getStoredAdminToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-admin-role': 'admin',
+    };
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
+      headers['x-admin-token'] = adminToken;
+    }
+
+    const res = await fetch('/api/admin/payments/bulk-delete', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        statusFilter: params.statusFilter,
+        orderIds: params.orderIds,
+        deleteAll: params.deleteAll,
+      }),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (res.ok && data?.success) {
+      // Synchronize removal to localStorage
+      try {
+        const raw = localStorage.getItem('freshcart_customer_orders');
+        if (raw && data.deletedOrderIds && data.deletedOrderIds.length > 0) {
+          const orders = JSON.parse(raw);
+          const deletedSet = new Set(data.deletedOrderIds.map((id: string) => String(id).replace(/^#/, '')));
+          const updated = orders.filter((o: any) => {
+            const oId = String(o.id || o.orderId || '').replace(/^#/, '');
+            return !deletedSet.has(oId);
+          });
+          localStorage.setItem('freshcart_customer_orders', JSON.stringify(updated));
+        }
+      } catch {}
+
+      const sectionLabel = params.statusFilter === 'PAID' ? 'Verified & Paid' : 'Rejected';
+      const count = data.deletedCount ?? data.deletedOrderIds?.length ?? 0;
+      return {
+        success: true,
+        deletedCount: count,
+        deletedOrderIds: data.deletedOrderIds || [],
+        message: data.message || `Successfully deleted ${count} ${sectionLabel} record${count === 1 ? '' : 's'}.`,
+      };
+    }
+
+    return {
+      success: false,
+      error: data?.error || 'Failed to delete records.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error during bulk deletion.',
+    };
+  }
+}
+
 
