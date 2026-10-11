@@ -3359,9 +3359,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <CheckCircle className="w-5 h-5 text-[#10b981]" />
                     <span>Payment Verification</span>
                   </h3>
-                  <p className="text-[12px] text-[#94a3b8] mt-0.5">
-                    Review and verify customer UPI payment screenshots. Verified orders are confirmed in MySQL, triggering delivery OTP dispatch.
-                  </p>
                 </div>
                 <button
                   type="button"
