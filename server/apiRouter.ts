@@ -41,6 +41,7 @@ import {
   findOrdersForCustomerInDb,
   updateOrderStatusInDb,
   deleteOrderInDb,
+  deleteOrderWithAuditArchiveInDb,
   getCouponsFromDb,
   findCouponByCodeInDb,
   createCouponInDb,
@@ -1100,23 +1101,48 @@ apiRouter.put('/api/orders/:id/status', async (req: Request, res: Response) => {
  */
 apiRouter.delete('/api/orders/:id', async (req: Request, res: Response) => {
   try {
-    const auth = extractAuthCustomer(req);
-    // Explicit customer check: customers must not be able to delete orders
-    if (!auth.isAdmin && auth.authenticated && !req.headers['x-admin-request']) {
+    const adminAuth = await extractAdminAuth(req);
+    if (!adminAuth.authenticated) {
       sendJson(res, 403, {
         success: false,
-        error: 'Customers are not permitted to delete orders.',
+        error: 'Access denied: Only authorized administrators are permitted to delete orders.',
       });
       return;
     }
 
     const orderId = decodeURIComponent(req.params.id);
-    const deleted = await deleteOrderInDb(orderId);
-    if (!deleted) {
-      sendJson(res, 500, { success: false, error: 'Failed to delete order.' });
+    const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
+    const result = await deleteOrderWithAuditArchiveInDb({
+      orderId,
+      adminUsername: adminName,
+    });
+
+    if (!result.success) {
+      sendJson(res, 500, { success: false, error: result.error || 'Failed to delete order.' });
       return;
     }
-    sendJson(res, 200, { success: true, message: 'Order deleted successfully.' });
+
+    if (result.screenshotPathsToDelete && result.screenshotPathsToDelete.length > 0) {
+      for (const filePath of result.screenshotPathsToDelete) {
+        if (filePath && fs.existsSync(filePath)) {
+          try { fs.unlinkSync(filePath); } catch {}
+        }
+      }
+    }
+
+    const cleanIdForCleanup = orderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (fs.existsSync(SCREENSHOTS_DIR)) {
+      try {
+        const files = fs.readdirSync(SCREENSHOTS_DIR);
+        for (const f of files) {
+          if (f.startsWith(`proof_${cleanIdForCleanup}_`)) {
+            try { fs.unlinkSync(path.join(SCREENSHOTS_DIR, f)); } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    sendJson(res, 200, { success: true, message: 'Order and associated records safely deleted.' });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Server error deleting order.' });
   }
@@ -2982,6 +3008,135 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
     });
   }
 });
+
+/**
+ * DELETE /api/admin/payments/order/:orderId
+ * POST /api/admin/payments/delete-order
+ * Admin Payment Verification endpoint:
+ * Safely deletes a verified or rejected order from the payment verification queue,
+ * cleans up associated payment records and proof files on disk, and archives financial audit history.
+ */
+apiRouter.delete(
+  ['/api/admin/payments/order/:orderId', '/admin/payments/order/:orderId'],
+  async (req: Request, res: Response) => {
+    try {
+      const auth = await extractAdminAuth(req);
+      if (!auth.authenticated) {
+        sendJson(res, auth.statusCode || 403, {
+          success: false,
+          error: auth.error || 'Access denied: Admin access required.',
+        });
+        return;
+      }
+
+      const orderId = decodeURIComponent(req.params.orderId || req.body?.orderId || '');
+      if (!orderId.trim()) {
+        sendJson(res, 400, { success: false, error: 'orderId is required.' });
+        return;
+      }
+
+      const adminName = auth.admin?.full_name || auth.admin?.admin_id || 'Admin';
+      const result = await deleteOrderWithAuditArchiveInDb({
+        orderId,
+        adminUsername: adminName,
+      });
+
+      if (!result.success) {
+        sendJson(res, 500, { success: false, error: result.error || 'Failed to delete order.' });
+        return;
+      }
+
+      // Cleanup screenshot files from disk
+      if (result.screenshotPathsToDelete && result.screenshotPathsToDelete.length > 0) {
+        for (const filePath of result.screenshotPathsToDelete) {
+          if (filePath && fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch {}
+          }
+        }
+      }
+
+      const cleanIdForCleanup = orderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (fs.existsSync(SCREENSHOTS_DIR)) {
+        try {
+          const files = fs.readdirSync(SCREENSHOTS_DIR);
+          for (const f of files) {
+            if (f.startsWith(`proof_${cleanIdForCleanup}_`)) {
+              try { fs.unlinkSync(path.join(SCREENSHOTS_DIR, f)); } catch {}
+            }
+          }
+        } catch {}
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        message: `Order #${orderId.replace(/^#/, '')} and associated records safely deleted and archived.`,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Server error deleting order.' });
+    }
+  }
+);
+
+apiRouter.post(
+  ['/api/admin/payments/delete-order', '/admin/payments/delete-order'],
+  async (req: Request, res: Response) => {
+    try {
+      const auth = await extractAdminAuth(req);
+      if (!auth.authenticated) {
+        sendJson(res, auth.statusCode || 403, {
+          success: false,
+          error: auth.error || 'Access denied: Admin access required.',
+        });
+        return;
+      }
+
+      const orderId = typeof req.body?.orderId === 'string' ? req.body.orderId.trim() : '';
+      if (!orderId) {
+        sendJson(res, 400, { success: false, error: 'orderId is required.' });
+        return;
+      }
+
+      const adminName = auth.admin?.full_name || auth.admin?.admin_id || 'Admin';
+      const result = await deleteOrderWithAuditArchiveInDb({
+        orderId,
+        adminUsername: adminName,
+      });
+
+      if (!result.success) {
+        sendJson(res, 500, { success: false, error: result.error || 'Failed to delete order.' });
+        return;
+      }
+
+      // Cleanup screenshot files from disk
+      if (result.screenshotPathsToDelete && result.screenshotPathsToDelete.length > 0) {
+        for (const filePath of result.screenshotPathsToDelete) {
+          if (filePath && fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch {}
+          }
+        }
+      }
+
+      const cleanIdForCleanup = orderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (fs.existsSync(SCREENSHOTS_DIR)) {
+        try {
+          const files = fs.readdirSync(SCREENSHOTS_DIR);
+          for (const f of files) {
+            if (f.startsWith(`proof_${cleanIdForCleanup}_`)) {
+              try { fs.unlinkSync(path.join(SCREENSHOTS_DIR, f)); } catch {}
+            }
+          }
+        } catch {}
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        message: `Order #${orderId.replace(/^#/, '')} and associated records safely deleted and archived.`,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Server error deleting order.' });
+    }
+  }
+);
 
 export const apiApp = express();
 apiApp.use(express.json({ limit: '25mb' }));

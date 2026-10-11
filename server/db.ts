@@ -776,6 +776,31 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_admins_email (email),
       INDEX idx_admins_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    `CREATE TABLE IF NOT EXISTS payment_audit_archive (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id VARCHAR(64) NOT NULL,
+      customer_id VARCHAR(64) NULL,
+      customer_name VARCHAR(255) NULL,
+      email VARCHAR(255) NULL,
+      mobile VARCHAR(32) NULL,
+      amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+      payment_method VARCHAR(32) NOT NULL DEFAULT 'UPI',
+      payment_status VARCHAR(64) NOT NULL,
+      transaction_ref VARCHAR(128) NULL,
+      upi_id VARCHAR(256) NULL,
+      verified_at TIMESTAMP NULL,
+      verified_by VARCHAR(100) NULL,
+      verification_notes TEXT NULL,
+      archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      archived_by VARCHAR(100) NOT NULL DEFAULT 'Admin',
+      reason VARCHAR(255) NOT NULL DEFAULT 'Order deleted by admin from payment verification',
+      order_snapshot JSON NULL,
+      payment_snapshot JSON NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_paa_order_id (order_id),
+      INDEX idx_paa_payment_status (payment_status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
   ];
 
   for (const sql of tableStatements) {
@@ -2427,19 +2452,155 @@ export async function updateOrderStatusInDb(
 }
 
 /**
+ * Deletes an order from MySQL with financial audit archival (Admin action only).
+ * Ensures child records (order_items, otp_records, payments) are deleted cleanly
+ * while preserving complete financial and audit records in payment_audit_archive.
+ */
+export async function deleteOrderWithAuditArchiveInDb(params: {
+  orderId: string;
+  adminUsername: string;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  screenshotPathsToDelete?: string[];
+  archived?: boolean;
+}> {
+  const pool = getPool();
+  const rawId = params.orderId.trim();
+  const cleanId = rawId.replace(/^#/, '');
+  const altId = `#${cleanId}`;
+
+  const connection = await pool.getConnection();
+  try {
+    // Ensure audit archive table exists
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS payment_audit_archive (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id VARCHAR(64) NOT NULL,
+        customer_id VARCHAR(64) NULL,
+        customer_name VARCHAR(255) NULL,
+        email VARCHAR(255) NULL,
+        mobile VARCHAR(32) NULL,
+        amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        payment_method VARCHAR(32) NOT NULL DEFAULT 'UPI',
+        payment_status VARCHAR(64) NOT NULL,
+        transaction_ref VARCHAR(128) NULL,
+        upi_id VARCHAR(256) NULL,
+        verified_at TIMESTAMP NULL,
+        verified_by VARCHAR(100) NULL,
+        verification_notes TEXT NULL,
+        archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        archived_by VARCHAR(100) NOT NULL DEFAULT 'Admin',
+        reason VARCHAR(255) NOT NULL DEFAULT 'Order deleted by admin from payment verification',
+        order_snapshot JSON NULL,
+        payment_snapshot JSON NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_paa_order_id (order_id),
+        INDEX idx_paa_payment_status (payment_status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await connection.beginTransaction();
+
+    const [orders] = await connection.query<RowDataPacket[]>(
+      `SELECT * FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      [cleanId, altId]
+    );
+
+    const [payments] = await connection.query<RowDataPacket[]>(
+      `SELECT * FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
+      [cleanId, altId]
+    );
+
+    const [orderItems] = await connection.query<RowDataPacket[]>(
+      `SELECT * FROM order_items WHERE order_id IN (?, ?)`,
+      [cleanId, altId]
+    );
+
+    const existingOrder = orders[0] || null;
+    const existingPayment = payments[0] || null;
+
+    if (!existingOrder && !existingPayment) {
+      await connection.rollback();
+      return { success: false, error: `Order #${cleanId} not found in database.` };
+    }
+
+    const screenshotPathsToDelete: string[] = [];
+    for (const p of payments) {
+      if (p.screenshot_path) {
+        screenshotPathsToDelete.push(p.screenshot_path);
+      }
+    }
+
+    const paymentStatus = existingPayment?.payment_status || existingOrder?.payment_status || 'PENDING';
+    const amount = Number(existingPayment?.amount || existingOrder?.total || 0);
+
+    const archiveReason =
+      paymentStatus === 'PAID'
+        ? 'Verified & Paid order deleted by admin'
+        : paymentStatus === 'REJECTED'
+        ? 'Rejected order deleted by admin'
+        : 'Order deleted by admin';
+
+    const orderSnapshot = existingOrder ? { ...existingOrder, items: orderItems } : null;
+    const paymentSnapshot = existingPayment ? { ...existingPayment } : null;
+
+    await connection.query(
+      `INSERT INTO payment_audit_archive (
+        order_id, customer_id, customer_name, email, mobile,
+        amount, payment_method, payment_status, transaction_ref,
+        upi_id, verified_at, verified_by, verification_notes,
+        archived_by, reason, order_snapshot, payment_snapshot
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        cleanId,
+        existingPayment?.customer_id || existingOrder?.customer_id || null,
+        existingOrder?.customer_name || 'Customer',
+        existingOrder?.email || null,
+        existingOrder?.mobile || null,
+        amount,
+        existingPayment?.payment_method || existingOrder?.payment_method || 'UPI',
+        paymentStatus,
+        existingPayment?.transaction_ref || null,
+        existingPayment?.upi_id || null,
+        existingPayment?.verified_at || existingOrder?.verified_at || null,
+        existingPayment?.verified_by || existingOrder?.verified_by || null,
+        existingPayment?.verification_notes || null,
+        params.adminUsername || 'Admin',
+        archiveReason,
+        orderSnapshot ? JSON.stringify(orderSnapshot) : null,
+        paymentSnapshot ? JSON.stringify(paymentSnapshot) : null,
+      ]
+    );
+
+    // Delete dependent records first to honor constraints and avoid orphan records
+    await connection.query(`DELETE FROM order_items WHERE order_id IN (?, ?)`, [cleanId, altId]);
+    await connection.query(`DELETE FROM otp_records WHERE order_id IN (?, ?)`, [cleanId, altId]);
+    await connection.query(`DELETE FROM payments WHERE order_id IN (?, ?)`, [cleanId, altId]);
+    await connection.query(`DELETE FROM orders WHERE order_id IN (?, ?)`, [cleanId, altId]);
+
+    await connection.commit();
+
+    return {
+      success: true,
+      archived: true,
+      screenshotPathsToDelete,
+    };
+  } catch (err: any) {
+    await connection.rollback();
+    console.error(`[MySQL] Error deleting order #${cleanId} with audit archive:`, err?.message);
+    return { success: false, error: err?.message || 'Database error during deletion.' };
+  } finally {
+    connection.release();
+  }
+}
+
+/**
  * Deletes an order from MySQL (Admin action only).
  */
 export async function deleteOrderInDb(orderId: string): Promise<boolean> {
-  const pool = getPool();
-  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
-
-  try {
-    await pool.query('DELETE FROM orders WHERE order_id IN (?, ?)', [orderId, altId]);
-    return true;
-  } catch (err: any) {
-    console.error('[MySQL] Error deleting order:', err?.message);
-    return false;
-  }
+  const result = await deleteOrderWithAuditArchiveInDb({ orderId, adminUsername: 'Admin' });
+  return result.success;
 }
 
 // -----------------------------------------------------------------------------

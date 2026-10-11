@@ -66,6 +66,7 @@ import {
   isValidUpiId,
   buildUpiUri,
   adminVerifyPayment,
+  adminDeleteVerificationOrder,
   fetchPaymentVerificationQueue,
   PaymentVerificationItem,
 } from '../services/paymentService';
@@ -842,6 +843,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [rejectingItem, setRejectingItem] = useState<PaymentVerificationItem | null>(null);
   const [rejectReasonInput, setRejectReasonInput] = useState('');
   const [isVerifyingAction, setIsVerifyingAction] = useState(false);
+  const [deleteConfirmVerificationOrder, setDeleteConfirmVerificationOrder] = useState<PaymentVerificationItem | null>(null);
+  const [isDeletingVerificationOrder, setIsDeletingVerificationOrder] = useState(false);
   const [queueFeedback, setQueueFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const loadVerificationQueue = React.useCallback(async () => {
@@ -941,6 +944,40 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       });
     } finally {
       setIsVerifyingAction(false);
+    }
+  };
+
+  const handleDeleteVerificationOrder = async (item: PaymentVerificationItem) => {
+    if (!item) return;
+    setIsDeletingVerificationOrder(true);
+    try {
+      const cleanId = item.orderId.replace(/^#/, '');
+      const res = await adminDeleteVerificationOrder(cleanId);
+      if (res.success) {
+        setVerificationQueue((prev) =>
+          prev.filter((q) => q.orderId.replace(/^#/, '') !== cleanId)
+        );
+        setDeleteConfirmVerificationOrder(null);
+        setQueueFeedback({
+          type: 'success',
+          message: res.message || `Order #${cleanId} deleted successfully and archived.`,
+        });
+        await loadVerificationQueue();
+      } else {
+        setQueueFeedback({
+          type: 'error',
+          message: res.error || 'Failed to delete order.',
+        });
+        setDeleteConfirmVerificationOrder(null);
+      }
+    } catch (err: any) {
+      setQueueFeedback({
+        type: 'error',
+        message: err?.message || 'Error occurred while deleting order.',
+      });
+      setDeleteConfirmVerificationOrder(null);
+    } finally {
+      setIsDeletingVerificationOrder(false);
     }
   };
 
@@ -3640,6 +3677,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                       <span>Verified</span>
                                     </span>
                                   )}
+                                  {(isPaid || isRejected) && (
+                                    <button
+                                      type="button"
+                                      id={`admin-delete-order-btn-${item.orderId.replace(/^#/, '')}`}
+                                      onClick={() => setDeleteConfirmVerificationOrder(item)}
+                                      disabled={isVerifyingAction || isDeletingVerificationOrder}
+                                      className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 border border-rose-500/30 flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-50"
+                                      title={`Delete order #${item.orderId.replace(/^#/, '')}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                      <span>Delete</span>
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -5014,6 +5064,78 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   <>
                     <X className="w-3.5 h-3.5" />
                     <span>Confirm Rejection</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Verification Order Confirmation Modal */}
+      {deleteConfirmVerificationOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
+          <div className="bg-[#0b1c30] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-white/15 p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="w-10 h-10 rounded-full bg-rose-950/60 border border-rose-500/40 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-[17px] font-bold text-white font-display">
+                  Delete Order #{deleteConfirmVerificationOrder.orderId.replace(/^#/, '')}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  {deleteConfirmVerificationOrder.paymentStatus === 'PAID'
+                    ? 'Verified & Paid'
+                    : deleteConfirmVerificationOrder.paymentStatus === 'REJECTED'
+                    ? 'Rejected Payment'
+                    : deleteConfirmVerificationOrder.paymentStatus} • {formatINR(Number(deleteConfirmVerificationOrder.amount || deleteConfirmVerificationOrder.orderTotal || 0))}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-slate-300 space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Customer:</span>
+                <span className="font-semibold text-white">{deleteConfirmVerificationOrder.customerName || 'Customer'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Payment Status:</span>
+                <span className={deleteConfirmVerificationOrder.paymentStatus === 'PAID' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                  {deleteConfirmVerificationOrder.paymentStatus}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Are you sure you want to delete <strong>Order #{deleteConfirmVerificationOrder.orderId.replace(/^#/, '')}</strong>? This will remove the order from the payment verification queue and active database. All financial and audit history will be safely preserved in the audit archive.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmVerificationOrder(null)}
+                disabled={isDeletingVerificationOrder}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-delete-verification-order-btn"
+                onClick={() => handleDeleteVerificationOrder(deleteConfirmVerificationOrder)}
+                disabled={isDeletingVerificationOrder}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {isDeletingVerificationOrder ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Delete</span>
                   </>
                 )}
               </button>

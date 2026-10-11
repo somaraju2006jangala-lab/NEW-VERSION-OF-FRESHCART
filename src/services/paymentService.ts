@@ -434,3 +434,62 @@ export async function fetchPaymentVerificationQueue(
   }
 }
 
+/**
+ * Admin: deletes a verified-and-paid or rejected order and its associated payment records safely,
+ * archiving audit history.
+ */
+export async function adminDeleteVerificationOrder(
+  orderId: string,
+  token?: string
+): Promise<{ success: boolean; error?: string; message?: string }> {
+  try {
+    const adminToken = token || getStoredAdminToken();
+    const cleanId = orderId.replace(/^#/, '');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-admin-role': 'admin',
+    };
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
+      headers['x-admin-token'] = adminToken;
+    }
+
+    const res = await fetch(`/api/admin/payments/order/${encodeURIComponent(cleanId)}`, {
+      method: 'DELETE',
+      headers,
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (res.ok && data?.success) {
+      // Synchronize removal to localStorage
+      try {
+        const raw = localStorage.getItem('freshcart_customer_orders');
+        if (raw) {
+          const orders = JSON.parse(raw);
+          const updated = orders.filter((o: any) => {
+            const oId = String(o.id || o.orderId || '').replace(/^#/, '');
+            return oId !== cleanId;
+          });
+          localStorage.setItem('freshcart_customer_orders', JSON.stringify(updated));
+        }
+      } catch {}
+
+      return {
+        success: true,
+        message: data.message || `Order #${cleanId} deleted successfully and archived.`,
+      };
+    }
+
+    return {
+      success: false,
+      error: data?.error || 'Failed to delete order.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error deleting order.',
+    };
+  }
+}
+
