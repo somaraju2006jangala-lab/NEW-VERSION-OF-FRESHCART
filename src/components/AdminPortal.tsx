@@ -4001,9 +4001,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <Users className="w-5 h-5 text-[#006b2c]" />
                     <span>Customer Accounts</span>
                   </h3>
-                  <p className="text-[12px] text-[#64748b] mt-0.5">
-                    Live accounts registered through the FreshCart Customer Portal in MySQL. Passwords are protected with one-way salted bcrypt algorithms and are cryptographically inaccessible to all administrators.
-                  </p>
                 </div>
 
                 <div className="flex items-center gap-2">
