@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ViewType } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -45,6 +45,29 @@ export const Header: React.FC<HeaderProps> = ({
   const { currentUser, logout } = useAuth();
   const { t } = useLanguage();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowUserMenu(false);
+      }
+    };
+
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showUserMenu]);
 
   const getViewBadgeLabel = () => {
     switch (currentView) {
@@ -91,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="fixed top-0 left-0 w-full z-40 bg-transparent border-b border-white/10 transition-all">
+    <header className="fixed top-0 left-0 w-full z-50 bg-transparent border-b border-white/10 transition-all">
       <div className="w-full px-4 sm:px-6 lg:px-8 py-2.5 flex flex-col justify-between">
         {/* Top Tier */}
         <div className="flex items-center justify-between gap-3 sm:gap-6">
@@ -228,10 +251,12 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* Customer Account / Sign In / Register */}
             {currentUser ? (
-              <div className="relative">
+              <div className="relative" ref={userMenuRef}>
                 <button
                   type="button"
                   id="customer-profile-menu-btn"
+                  aria-haspopup="true"
+                  aria-expanded={showUserMenu}
                   onClick={() => setShowUserMenu(!showUserMenu)}
                   className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-xl bg-white/35 hover:bg-white/60 backdrop-blur-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs border border-white/50 hover:border-white/80 cursor-pointer"
                 >
@@ -251,43 +276,103 @@ export const Header: React.FC<HeaderProps> = ({
                       {t('myDashboard')}
                     </span>
                   </div>
-                  <ChevronDown className="w-3.5 h-3.5 text-[#565e74]" />
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 text-[#565e74] transition-transform duration-200 ${
+                      showUserMenu ? 'rotate-180 text-[#006b2c]' : ''
+                    }`}
+                  />
                 </button>
 
                 {showUserMenu && (
-                  <div className="absolute right-0 top-full mt-2 w-56 bg-white/45 backdrop-blur-xl rounded-2xl shadow-xl border border-white/60 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
-                    <div className="px-3 py-2 border-b border-white/40 mb-1">
-                      <p className="text-[13px] font-bold text-[#0b1c30] truncate">{currentUser.name}</p>
-                      <p className="text-[11px] text-[#565e74] truncate">{currentUser.email}</p>
+                  <div
+                    id="customer-profile-dropdown-menu"
+                    data-dropdown-menu="true"
+                    className="freshcart-dropdown-menu absolute right-0 top-full mt-2 w-64 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]"
+                    style={{
+                      backgroundColor: 'rgba(3, 7, 12, 0.96)',
+                      WebkitBackdropFilter: 'blur(16px)',
+                      backdropFilter: 'blur(16px)',
+                    }}
+                  >
+                    <div className="px-3 py-2.5 border-b freshcart-dropdown-divider mb-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-[#10b981] px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          {currentUser.loyaltyTier || 'Verified Customer'}
+                        </span>
+                      </div>
+                      <p className="text-[13px] font-bold text-white truncate">{currentUser.name}</p>
+                      <p className="text-[11px] text-[#94a3b8] truncate">{currentUser.email}</p>
                     </div>
 
-                    <button
-                      type="button"
-                      id="menu-dashboard-link"
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        onToggleView('dashboard');
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-[12px] font-semibold text-[#0b1c30] hover:bg-white/60 hover:text-[#006b2c] flex items-center gap-2.5 transition-all duration-200 hover:translate-x-0.5 cursor-pointer"
-                    >
-                      <User className="w-4 h-4 text-[#006b2c]" />
-                      <span>{t('navCustomerPortal')}</span>
-                    </button>
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        id="menu-dashboard-link"
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onToggleView('dashboard');
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-[12px] flex items-center justify-between transition-all duration-150 cursor-pointer ${
+                          currentView === 'dashboard'
+                            ? 'freshcart-dropdown-item-active'
+                            : 'freshcart-dropdown-item'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <User
+                            className={`w-4 h-4 ${
+                              currentView === 'dashboard' ? 'text-[#10b981]' : 'text-[#34d399]'
+                            }`}
+                          />
+                          <span
+                            className={
+                              currentView === 'dashboard'
+                                ? 'text-[#10b981] font-semibold'
+                                : 'text-slate-100'
+                            }
+                          >
+                            {t('navCustomerPortal')}
+                          </span>
+                        </div>
+                        {currentView === 'dashboard' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_6px_#10b981]" />
+                        )}
+                      </button>
 
-                    <button
-                      type="button"
-                      id="menu-orders-link"
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        onToggleView('dashboard');
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-xl text-[12px] font-semibold text-[#0b1c30] hover:bg-white/60 hover:text-[#006b2c] flex items-center gap-2.5 transition-all duration-200 hover:translate-x-0.5 cursor-pointer"
-                    >
-                      <Truck className="w-4 h-4 text-[#006b2c]" />
-                      <span>{t('myOrdersTracking')}</span>
-                    </button>
+                      <button
+                        type="button"
+                        id="menu-orders-link"
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onToggleView('dashboard');
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-[12px] freshcart-dropdown-item flex items-center justify-between transition-all duration-150 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Truck className="w-4 h-4 text-[#34d399]" />
+                          <span className="text-slate-100">{t('myOrdersTracking')}</span>
+                        </div>
+                      </button>
 
-                    <div className="border-t border-white/40 mt-1 pt-1">
+                      {currentView !== 'storefront' && (
+                        <button
+                          type="button"
+                          id="menu-storefront-link"
+                          onClick={() => {
+                            setShowUserMenu(false);
+                            onToggleView('storefront');
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-xl text-[12px] freshcart-dropdown-item flex items-center justify-between transition-all duration-150 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <Store className="w-4 h-4 text-[#34d399]" />
+                            <span className="text-slate-100">{t('navRetailStorefront')}</span>
+                          </div>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="border-t freshcart-dropdown-divider mt-1.5 pt-1.5">
                       <button
                         type="button"
                         id="header-logout-btn"
@@ -296,9 +381,9 @@ export const Header: React.FC<HeaderProps> = ({
                           logout();
                           onToggleView('login');
                         }}
-                        className="w-full text-left px-3 py-2 rounded-xl text-[12px] font-semibold text-[#b91c1c] hover:bg-[#fef2f2]/60 flex items-center gap-2.5 transition-colors cursor-pointer"
+                        className="w-full text-left px-3 py-2 rounded-xl text-[12px] font-semibold freshcart-dropdown-item-danger flex items-center gap-2.5 cursor-pointer"
                       >
-                        <LogOut className="w-4 h-4" />
+                        <LogOut className="w-4 h-4 text-[#f87171]" />
                         <span>{t('logOut')}</span>
                       </button>
                     </div>

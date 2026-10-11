@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { CartItem, Product, CustomerAddress, CustomerOrder } from '../types';
@@ -11,6 +11,7 @@ import {
   ShoppingCart,
   LogOut,
   ChevronRight,
+  ChevronDown,
   Sparkles,
   CheckCircle2,
   Truck,
@@ -69,6 +70,40 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   };
 
   const [activeTab, setActiveTab] = useState<'orders' | 'history' | 'profile' | 'addresses' | 'cart'>('orders');
+  const [showDashboardMenu, setShowDashboardMenu] = useState(false);
+  const dashboardMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dashboardMenuRef.current && !dashboardMenuRef.current.contains(event.target as Node)) {
+        setShowDashboardMenu(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowDashboardMenu(false);
+      }
+    };
+    if (showDashboardMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showDashboardMenu]);
+
+  const getActiveTabLabel = () => {
+    switch (activeTab) {
+      case 'orders': return t('tabMyOrders');
+      case 'history': return t('tabOrderHistory');
+      case 'cart': return t('tabCartOverview');
+      case 'profile': return t('tabProfileSettings');
+      case 'addresses': return t('tabSavedAddresses');
+      default: return 'Dashboard';
+    }
+  };
 
   // Profile edit state
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -411,11 +446,164 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Dashboard Views Dropdown Menu */}
+          <div className="relative" ref={dashboardMenuRef}>
+            <button
+              type="button"
+              id="customer-dashboard-dropdown-btn"
+              aria-haspopup="true"
+              aria-expanded={showDashboardMenu}
+              onClick={() => setShowDashboardMenu(!showDashboardMenu)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/20 bg-black/40 hover:bg-black/60 text-white text-[12px] font-semibold transition-all shadow-sm cursor-pointer hover:border-emerald-500/40"
+              title="Dashboard Views Menu"
+            >
+              <Truck className="w-3.5 h-3.5 text-[#10b981]" />
+              <span className="max-w-[130px] truncate">{getActiveTabLabel()}</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-[#94a3b8] transition-transform duration-200 ${
+                  showDashboardMenu ? 'rotate-180 text-[#10b981]' : ''
+                }`}
+              />
+            </button>
+
+            {showDashboardMenu && (
+              <div
+                id="customer-dashboard-dropdown-menu"
+                data-dropdown-menu="true"
+                className="freshcart-dropdown-menu absolute right-0 top-full mt-2 w-64 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]"
+                style={{
+                  backgroundColor: 'rgba(3, 7, 12, 0.96)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                  backdropFilter: 'blur(16px)',
+                }}
+              >
+                <div className="px-3 py-2 border-b freshcart-dropdown-divider mb-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">Customer Portal Menu</p>
+                  <p className="text-[13px] font-bold text-white truncate">{currentUser.name}</p>
+                </div>
+
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    id="dropdown-tab-orders"
+                    onClick={() => {
+                      setActiveTab('orders');
+                      setShowDashboardMenu(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                      activeTab === 'orders' ? 'freshcart-dropdown-item-active' : 'freshcart-dropdown-item text-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Truck className={`w-4 h-4 ${activeTab === 'orders' ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                      <span>{t('tabMyOrders')}</span>
+                    </div>
+                    {activeOrders.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-[#10b981]/20 text-[#10b981] border border-[#10b981]/30 text-[10px] font-bold">
+                        {activeOrders.length}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    id="dropdown-tab-history"
+                    onClick={() => {
+                      setActiveTab('history');
+                      setShowDashboardMenu(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                      activeTab === 'history' ? 'freshcart-dropdown-item-active' : 'freshcart-dropdown-item text-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Clock className={`w-4 h-4 ${activeTab === 'history' ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                      <span>{t('tabOrderHistory')}</span>
+                    </div>
+                    <span className="text-[11px] text-[#94a3b8]">{pastOrders.length}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="dropdown-tab-cart"
+                    onClick={() => {
+                      setActiveTab('cart');
+                      setShowDashboardMenu(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                      activeTab === 'cart' ? 'freshcart-dropdown-item-active' : 'freshcart-dropdown-item text-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <ShoppingCart className={`w-4 h-4 ${activeTab === 'cart' ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                      <span>{t('tabCartOverview')}</span>
+                    </div>
+                    {cartItemCount > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-[#10b981] border border-emerald-500/30 text-[10px] font-bold">
+                        {cartItemCount}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    id="dropdown-tab-profile"
+                    onClick={() => {
+                      setActiveTab('profile');
+                      setShowDashboardMenu(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                      activeTab === 'profile' ? 'freshcart-dropdown-item-active' : 'freshcart-dropdown-item text-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <User className={`w-4 h-4 ${activeTab === 'profile' ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                      <span>{t('tabProfileSettings')}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    id="dropdown-tab-addresses"
+                    onClick={() => {
+                      setActiveTab('addresses');
+                      setShowDashboardMenu(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                      activeTab === 'addresses' ? 'freshcart-dropdown-item-active' : 'freshcart-dropdown-item text-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <MapPin className={`w-4 h-4 ${activeTab === 'addresses' ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                      <span>{t('tabSavedAddresses')}</span>
+                    </div>
+                    <span className="text-[11px] text-[#94a3b8]">{(currentUser.savedAddresses || []).length}</span>
+                  </button>
+                </div>
+
+                <div className="border-t freshcart-dropdown-divider mt-1.5 pt-1.5">
+                  <button
+                    type="button"
+                    id="dashboard-dropdown-logout-btn"
+                    onClick={() => {
+                      setShowDashboardMenu(false);
+                      onLogout();
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-[12px] font-semibold freshcart-dropdown-item-danger flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <LogOut className="w-4 h-4 text-[#f87171]" />
+                    <span>{t('logOut')}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             id="dashboard-logout-btn"
             onClick={onLogout}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[#fecaca] bg-white text-[#b91c1c] hover:bg-[#fef2f2] text-[12px] font-semibold transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[#fecaca]/30 bg-red-500/10 text-[#f87171] hover:bg-red-500/20 text-[12px] font-semibold transition-colors cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>{t('logOut')}</span>

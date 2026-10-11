@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Product, InventoryLog, Coupon, CustomerOrder, DeliveryChargeRule } from '../types';
 import { USER_AVATAR_URL } from '../data/products';
 import { formatINR } from '../utils/currency';
@@ -55,6 +55,8 @@ import {
   ShieldAlert,
   User,
   Phone,
+  ChevronDown,
+  Store,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { verifyOrderOtp, maskMobileNumber } from '../services/otpClientService';
@@ -267,6 +269,57 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [activeTab, setActiveTab] = useState<
     'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins' | 'customers'
   >('inventory');
+
+  const [showAdminProfileMenu, setShowAdminProfileMenu] = useState(false);
+  const adminProfileMenuRef = useRef<HTMLDivElement>(null);
+
+  const [showAdminTabMenu, setShowAdminTabMenu] = useState(false);
+  const adminTabMenuRef = useRef<HTMLDivElement>(null);
+
+  const [showOrderStatusDropdown, setShowOrderStatusDropdown] = useState(false);
+  const orderStatusDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (adminProfileMenuRef.current && !adminProfileMenuRef.current.contains(event.target as Node)) {
+        setShowAdminProfileMenu(false);
+      }
+      if (adminTabMenuRef.current && !adminTabMenuRef.current.contains(event.target as Node)) {
+        setShowAdminTabMenu(false);
+      }
+      if (orderStatusDropdownRef.current && !orderStatusDropdownRef.current.contains(event.target as Node)) {
+        setShowOrderStatusDropdown(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowAdminProfileMenu(false);
+        setShowAdminTabMenu(false);
+        setShowOrderStatusDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const getAdminTabLabel = (tab: typeof activeTab) => {
+    switch (tab) {
+      case 'inventory': return t('tabLiveInventory') || 'Live Inventory';
+      case 'logs': return t('tabCdcLogs') || 'CDC Logs';
+      case 'coupons': return t('tabCoupons') || 'Coupons';
+      case 'orders': return t('tabCustomerOrders') || 'Customer Orders';
+      case 'settings': return t('tabSettings') || 'Delivery Charges';
+      case 'payment-settings': return 'UPI Settings';
+      case 'payment-verification': return 'Payment Verification';
+      case 'admins': return 'Authorized Admins';
+      case 'customers': return 'Customer Accounts';
+      default: return 'Admin Dashboard';
+    }
+  };
 
   // Customer Accounts Management State
   const [customerAccounts, setCustomerAccounts] = useState<AdminCustomerAccount[]>([]);
@@ -1231,39 +1284,175 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <span>Delivery Charges: <strong className="text-[#7ffc97]">{activeDeliveryCharge > 0 ? formatINR(activeDeliveryCharge) : 'FREE'}</strong></span>
             </button>
 
-            <div className="flex items-center gap-2 pl-2">
-              <img
-                src={USER_AVATAR_URL}
-                alt={currentAdmin?.fullName || 'Admin User'}
-                className="w-8 h-8 rounded-full object-cover border border-[#475569]"
-              />
-              <div className="hidden sm:block text-left">
-                <p className="text-[12px] font-semibold leading-tight">{currentAdmin?.fullName || 'Sarah L.'}</p>
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-sm leading-tight ${
-                      currentAdmin?.role === 'owner'
-                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                    }`}
-                  >
-                    {currentAdmin?.role === 'owner' ? 'Project Owner' : t('opsManager')}
-                  </span>
+            {/* Admin Profile Dropdown Menu */}
+            <div className="relative pl-2" ref={adminProfileMenuRef}>
+              <button
+                type="button"
+                id="admin-profile-menu-btn"
+                aria-haspopup="true"
+                aria-expanded={showAdminProfileMenu}
+                onClick={() => setShowAdminProfileMenu(!showAdminProfileMenu)}
+                className="flex items-center gap-2 px-2 py-1 rounded-xl bg-black/40 hover:bg-black/60 border border-white/10 hover:border-emerald-500/40 transition-all cursor-pointer shadow-xs"
+              >
+                <div className="relative">
+                  <img
+                    src={USER_AVATAR_URL}
+                    alt={currentAdmin?.fullName || 'Admin User'}
+                    className="w-8 h-8 rounded-full object-cover border border-[#475569]"
+                  />
+                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#10b981] ring-1 ring-black" />
                 </div>
-              </div>
-              {onAdminLogout && (
-                <button
-                  type="button"
-                  id="admin-logout-btn"
-                  onClick={onAdminLogout}
-                  className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer border border-rose-500/30 shadow-2xs"
-                  title="Sign out of Admin Portal"
+                <div className="hidden sm:block text-left">
+                  <p className="text-[12px] font-semibold leading-tight text-white">{currentAdmin?.fullName || 'Sarah L.'}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span
+                      className={`text-[9px] font-bold px-1.5 py-0.2 rounded-sm leading-tight ${
+                        currentAdmin?.role === 'owner'
+                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      }`}
+                    >
+                      {currentAdmin?.role === 'owner' ? 'Project Owner' : t('opsManager')}
+                    </span>
+                  </div>
+                </div>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-[#94a3b8] transition-transform duration-200 ${
+                    showAdminProfileMenu ? 'rotate-180 text-[#10b981]' : ''
+                  }`}
+                />
+              </button>
+
+              {showAdminProfileMenu && (
+                <div
+                  id="admin-profile-dropdown-menu"
+                  data-dropdown-menu="true"
+                  className="freshcart-dropdown-menu absolute right-0 top-full mt-2 w-72 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]"
+                  style={{
+                    backgroundColor: 'rgba(3, 7, 12, 0.96)',
+                    WebkitBackdropFilter: 'blur(16px)',
+                    backdropFilter: 'blur(16px)',
+                  }}
                 >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span className="hidden md:inline">Sign Out</span>
-                </button>
+                  <div className="px-3 py-2.5 border-b freshcart-dropdown-divider mb-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          currentAdmin?.role === 'owner'
+                            ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                            : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                        }`}
+                      >
+                        {currentAdmin?.role === 'owner' ? 'Project Owner' : 'Operations Manager'}
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-mono">Online</span>
+                    </div>
+                    <p className="text-[13px] font-bold text-white truncate">{currentAdmin?.fullName || 'Sarah L.'}</p>
+                    <p className="text-[11px] text-[#94a3b8] truncate">{currentAdmin?.email || 'admin@freshcart.ops'}</p>
+                  </div>
+
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">
+                    Admin Dashboard Views
+                  </div>
+
+                  <div className="space-y-0.5 max-h-64 overflow-y-auto">
+                    {[
+                      { id: 'inventory', label: t('tabLiveInventory') || 'Live Inventory', icon: Package },
+                      { id: 'orders', label: t('tabCustomerOrders') || 'Customer Orders', icon: ShoppingBag },
+                      { id: 'payment-verification', label: 'Payment Verification', icon: CheckCircle, badge: pendingVerificationCount },
+                      { id: 'coupons', label: t('tabCoupons') || 'Coupons', icon: Tag },
+                      { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
+                      { id: 'payment-settings', label: 'UPI Settings', icon: CreditCard },
+                      { id: 'admins', label: 'Authorized Admins', icon: ShieldCheck },
+                      { id: 'customers', label: 'Customer Accounts', icon: Users },
+                      { id: 'logs', label: t('tabCdcLogs') || 'CDC Logs', icon: History },
+                    ].map((item) => {
+                      const isActive = activeTab === item.id;
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          id={`admin-menu-${item.id}`}
+                          onClick={() => {
+                            if (item.id === 'payment-verification') loadVerificationQueue();
+                            if (item.id === 'admins') loadAdmins();
+                            if (item.id === 'customers') loadCustomerAccounts();
+                            if (item.id === 'orders') setSelectedOtpOrderId(null);
+                            setActiveTab(item.id as any);
+                            setShowAdminProfileMenu(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                            isActive
+                              ? 'freshcart-dropdown-item-active'
+                              : 'freshcart-dropdown-item text-slate-100'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <Icon className={`w-4 h-4 ${isActive ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                            <span className={isActive ? 'font-semibold text-[#10b981]' : 'text-slate-100'}>{item.label}</span>
+                          </div>
+                          {item.badge ? (
+                            <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                              {item.badge}
+                            </span>
+                          ) : isActive ? (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_6px_#10b981]" />
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {onBackToStorefront && (
+                    <div className="border-t freshcart-dropdown-divider mt-1.5 pt-1.5">
+                      <button
+                        type="button"
+                        id="admin-menu-storefront-btn"
+                        onClick={() => {
+                          setShowAdminProfileMenu(false);
+                          onBackToStorefront();
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-[12px] freshcart-dropdown-item flex items-center gap-2.5 cursor-pointer text-slate-100"
+                      >
+                        <Store className="w-4 h-4 text-[#34d399]" />
+                        <span>{t('navRetailStorefront')}</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {onAdminLogout && (
+                    <div className="border-t freshcart-dropdown-divider mt-1 pt-1">
+                      <button
+                        type="button"
+                        id="admin-menu-logout-btn"
+                        onClick={() => {
+                          setShowAdminProfileMenu(false);
+                          onAdminLogout();
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-[12px] font-semibold freshcart-dropdown-item-danger flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <LogOut className="w-4 h-4 text-[#f87171]" />
+                        <span>Sign Out of Ops</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
+
+            {onAdminLogout && (
+              <button
+                type="button"
+                id="admin-logout-btn"
+                onClick={onAdminLogout}
+                className="ml-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-[11px] font-semibold transition-colors cursor-pointer border border-rose-500/30 shadow-2xs"
+                title="Sign out of Admin Portal"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Sign Out</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1316,8 +1505,95 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </div>
 
         {/* Tab Selection */}
-        <div className="flex border-b border-[#e2e8f0] gap-4">
-          <button
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#e2e8f0] pb-2 gap-3">
+          {/* Quick Dashboard Views Dropdown Menu */}
+          <div className="relative shrink-0" ref={adminTabMenuRef}>
+            <button
+              type="button"
+              id="admin-dashboard-views-dropdown-btn"
+              aria-haspopup="true"
+              aria-expanded={showAdminTabMenu}
+              onClick={() => setShowAdminTabMenu(!showAdminTabMenu)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/20 bg-black/40 hover:bg-black/60 text-white text-[12px] font-semibold transition-all shadow-sm cursor-pointer hover:border-emerald-500/40"
+              title="Select Dashboard View"
+            >
+              <Package className="w-3.5 h-3.5 text-[#10b981]" />
+              <span className="truncate max-w-[150px]">View: <strong>{getAdminTabLabel(activeTab)}</strong></span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-[#94a3b8] transition-transform duration-200 ${
+                  showAdminTabMenu ? 'rotate-180 text-[#10b981]' : ''
+                }`}
+              />
+            </button>
+
+            {showAdminTabMenu && (
+              <div
+                id="admin-dashboard-views-dropdown-menu"
+                data-dropdown-menu="true"
+                className="freshcart-dropdown-menu absolute left-0 top-full mt-2 w-72 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]"
+                style={{
+                  backgroundColor: 'rgba(3, 7, 12, 0.96)',
+                  WebkitBackdropFilter: 'blur(16px)',
+                  backdropFilter: 'blur(16px)',
+                }}
+              >
+                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8] border-b freshcart-dropdown-divider mb-1">
+                  Select Dashboard View
+                </div>
+                <div className="space-y-0.5">
+                  {[
+                    { id: 'inventory', label: t('tabLiveInventory') || 'Live Inventory', icon: Package },
+                    { id: 'orders', label: t('tabCustomerOrders') || 'Customer Orders', icon: ShoppingBag },
+                    { id: 'payment-verification', label: 'Payment Verification', icon: CheckCircle, badge: pendingVerificationCount },
+                    { id: 'coupons', label: t('tabCoupons') || 'Coupons', icon: Tag },
+                    { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
+                    { id: 'payment-settings', label: 'UPI Settings', icon: CreditCard },
+                    { id: 'admins', label: 'Authorized Admins', icon: ShieldCheck },
+                    { id: 'customers', label: 'Customer Accounts', icon: Users },
+                    { id: 'logs', label: t('tabCdcLogs') || 'CDC Logs', icon: History },
+                  ].map((item) => {
+                    const isActive = activeTab === item.id;
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        id={`admin-tab-view-${item.id}`}
+                        onClick={() => {
+                          if (item.id === 'payment-verification') loadVerificationQueue();
+                          if (item.id === 'admins') loadAdmins();
+                          if (item.id === 'customers') loadCustomerAccounts();
+                          if (item.id === 'orders') setSelectedOtpOrderId(null);
+                          setActiveTab(item.id as any);
+                          setShowAdminTabMenu(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
+                          isActive
+                            ? 'freshcart-dropdown-item-active'
+                            : 'freshcart-dropdown-item text-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
+                          <span className={isActive ? 'font-semibold text-[#10b981]' : 'text-slate-100'}>{item.label}</span>
+                        </div>
+                        {item.badge ? (
+                          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                            {item.badge}
+                          </span>
+                        ) : isActive ? (
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_6px_#10b981]" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-4 overflow-x-auto pb-1">
+            <button
             type="button"
             onClick={() => setActiveTab('inventory')}
             className={`pb-3 text-[13px] font-semibold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
@@ -1463,6 +1739,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </span>
             )}
           </button>
+          </div>
         </div>
 
         {/* Tab 1: Inventory Table */}
@@ -1485,17 +1762,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <select
                   value={filterCategory}
                   onChange={(e) => setFilterCategory(e.target.value)}
-                  className="px-3 py-1.5 text-[12px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden"
+                  className="freshcart-select px-3 py-1.5 text-[12px] border border-white/15 rounded-lg text-white focus:outline-hidden cursor-pointer"
+                  style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)' }}
                 >
-                  <option value="all">{t('allAisles')}</option>
-                  <option value="produce">{t('catProduce')}</option>
-                  <option value="dairy">{t('catDairy')}</option>
-                  <option value="bakery">{t('catBakery')}</option>
-                  <option value="beverages">{t('catBeverages')}</option>
-                  <option value="snacks">{t('catSnacks')}</option>
-                  <option value="grains">{t('catGrains')}</option>
+                  <option value="all" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('allAisles')}</option>
+                  <option value="produce" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('catProduce')}</option>
+                  <option value="dairy" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('catDairy')}</option>
+                  <option value="bakery" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('catBakery')}</option>
+                  <option value="beverages" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('catBeverages')}</option>
+                  <option value="snacks" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('catSnacks')}</option>
+                  <option value="grains" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('catGrains')}</option>
                   {customCategories.map((c) => (
-                    <option key={c} value={c}>
+                    <option key={c} value={c} style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>
                       {c}
                     </option>
                   ))}
@@ -1504,12 +1782,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <select
                   value={filterStockStatus}
                   onChange={(e) => setFilterStockStatus(e.target.value)}
-                  className="px-3 py-1.5 text-[12px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden"
+                  className="freshcart-select px-3 py-1.5 text-[12px] border border-white/15 rounded-lg text-white focus:outline-hidden cursor-pointer"
+                  style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)' }}
                 >
-                  <option value="all">{t('allStockStatuses')}</option>
-                  <option value="healthy">{t('inStockOption')}</option>
-                  <option value="low">{t('lowStockOption')}</option>
-                  <option value="out">{t('outOfStockOption')}</option>
+                  <option value="all" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('allStockStatuses')}</option>
+                  <option value="healthy" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('inStockOption')}</option>
+                  <option value="low" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('lowStockOption')}</option>
+                  <option value="out" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>{t('outOfStockOption')}</option>
                 </select>
 
                 <button
@@ -2326,12 +2605,75 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </div>
 
                   {/* 2. All Order Statuses dropdown horizontally CENTERED in available area */}
-                  <div className="justify-self-center">
+                  <div className="justify-self-center relative" ref={orderStatusDropdownRef}>
+                    <button
+                      type="button"
+                      id="admin-order-status-dropdown-btn"
+                      aria-haspopup="true"
+                      aria-expanded={showOrderStatusDropdown}
+                      onClick={() => setShowOrderStatusDropdown(!showOrderStatusDropdown)}
+                      className="w-[180px] h-8 px-2.5 py-1 border border-white/15 rounded-md text-[12px] bg-black/40 hover:bg-black/60 text-slate-200 focus:outline-hidden focus:ring-1.5 focus:ring-[#10b981]/40 focus:border-[#10b981] cursor-pointer flex items-center justify-between"
+                      style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)' }}
+                    >
+                      <span className="truncate">
+                        {orderStatusFilter === 'all'
+                          ? t('allOrderStatuses')
+                          : orderStatusFilter}
+                      </span>
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 text-[#94a3b8] transition-transform duration-200 ${
+                          showOrderStatusDropdown ? 'rotate-180 text-[#10b981]' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {showOrderStatusDropdown && (
+                      <div
+                        id="admin-order-status-dropdown-menu"
+                        data-dropdown-menu="true"
+                        className="freshcart-dropdown-menu absolute left-1/2 -translate-x-1/2 top-full mt-1.5 w-48 p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150"
+                        style={{
+                          backgroundColor: 'rgba(3, 7, 12, 0.96)',
+                          WebkitBackdropFilter: 'blur(16px)',
+                          backdropFilter: 'blur(16px)',
+                        }}
+                      >
+                        {[
+                          { value: 'all', label: t('allOrderStatuses') },
+                          { value: 'Picking', label: 'Picking' },
+                          { value: 'Delivered', label: 'Delivered' },
+                        ].map((opt) => {
+                          const isSel = orderStatusFilter === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              id={`admin-order-filter-${opt.value}`}
+                              onClick={() => {
+                                setOrderStatusFilter(opt.value);
+                                setShowOrderStatusDropdown(false);
+                              }}
+                              className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-[12px] transition-all cursor-pointer ${
+                                isSel
+                                  ? 'freshcart-dropdown-item-active'
+                                  : 'freshcart-dropdown-item text-slate-100'
+                              }`}
+                            >
+                              <span className={isSel ? 'text-[#10b981] font-semibold' : 'text-slate-100'}>{opt.label}</span>
+                              {isSel && <Check className="w-3.5 h-3.5 text-[#10b981]" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     <select
                       id="admin-order-status-filter"
                       value={orderStatusFilter}
                       onChange={(e) => setOrderStatusFilter(e.target.value)}
-                      className="w-[170px] h-8 px-2.5 py-1 border border-white/15 rounded-md text-[12px] bg-black/30 text-slate-200 focus:outline-hidden focus:ring-1.5 focus:ring-[#10b981]/40 focus:border-[#10b981] cursor-pointer"
+                      className="sr-only"
+                      tabIndex={-1}
+                      aria-hidden="true"
                     >
                       <option value="all">{t('allOrderStatuses')}</option>
                       <option value="Picking">Picking</option>
@@ -4149,11 +4491,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     id="admin-customer-status-filter"
                     value={customerStatusFilter}
                     onChange={(e) => setCustomerStatusFilter(e.target.value as any)}
-                    className="px-3 py-2.5 rounded-xl border border-[#cbd5e1] text-[13px] text-[#0b1c30] bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
+                    className="freshcart-select px-3 py-2.5 rounded-xl border border-white/15 text-[13px] text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
+                    style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)' }}
                   >
-                    <option value="all">All Account Statuses</option>
-                    <option value="Active">Active Accounts</option>
-                    <option value="Suspended">Suspended Accounts</option>
+                    <option value="all" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>All Account Statuses</option>
+                    <option value="Active" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>Active Accounts</option>
+                    <option value="Suspended" style={{ backgroundColor: 'rgba(3, 7, 12, 0.96)', color: '#ffffff' }}>Suspended Accounts</option>
                   </select>
 
                   <button

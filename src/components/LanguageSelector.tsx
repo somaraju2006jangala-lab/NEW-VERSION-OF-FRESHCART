@@ -78,40 +78,52 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
         <div
           role="listbox"
           id={`${idPrefix}-dropdown-menu`}
-          className="absolute right-0 mt-1.5 w-44 rounded-xl bg-white shadow-xl border border-[#e2e8f0] py-1.5 z-50 animate-in fade-in zoom-in-95 duration-100"
+          data-dropdown-menu="true"
+          className="freshcart-dropdown-menu absolute right-0 mt-2 w-48 rounded-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]"
+          style={{
+            backgroundColor: 'rgba(3, 7, 12, 0.96)',
+            WebkitBackdropFilter: 'blur(16px)',
+            backdropFilter: 'blur(16px)',
+          }}
         >
-          <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-[#64748b] border-b border-[#f1f5f9] mb-1">
+          <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8] border-b freshcart-dropdown-divider mb-1">
             Language / भाषा / భాష
           </div>
-          {languages.map((item) => {
-            const isSelected = item.code === language;
-            return (
-              <button
-                key={item.code}
-                role="option"
-                aria-selected={isSelected}
-                id={`${idPrefix}-option-${item.code}`}
-                type="button"
-                onClick={() => {
-                  setLanguage(item.code);
-                  setIsOpen(false);
-                }}
-                className={`w-full flex items-center justify-between px-3 py-2 text-[12px] transition-colors text-left cursor-pointer ${
-                  isSelected
-                    ? 'bg-[#eff4ff] text-[#006b2c] font-bold'
-                    : 'text-[#0b1c30] hover:bg-[#f8fafc]'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[13px]">{item.nativeName}</span>
-                  {item.code !== 'en' && (
-                    <span className="text-[10px] text-[#64748b]">({item.name})</span>
-                  )}
-                </div>
-                {isSelected && <Check className="w-3.5 h-3.5 text-[#006b2c] stroke-[2.5]" />}
-              </button>
-            );
-          })}
+          <div className="space-y-0.5">
+            {languages.map((item) => {
+              const isSelected = item.code === language;
+              return (
+                <button
+                  key={item.code}
+                  role="option"
+                  aria-selected={isSelected}
+                  id={`${idPrefix}-option-${item.code}`}
+                  type="button"
+                  onClick={() => {
+                    setLanguage(item.code);
+                    setIsOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-[12px] rounded-xl transition-all text-left cursor-pointer ${
+                    isSelected
+                      ? 'freshcart-dropdown-item-active'
+                      : 'freshcart-dropdown-item text-slate-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[13px] ${isSelected ? 'font-bold text-[#10b981]' : 'text-slate-100'}`}>
+                      {item.nativeName}
+                    </span>
+                    {item.code !== 'en' && (
+                      <span className={`text-[10px] ${isSelected ? 'text-[#34d399]/80' : 'text-[#94a3b8]'}`}>
+                        ({item.name})
+                      </span>
+                    )}
+                  </div>
+                  {isSelected && <Check className="w-3.5 h-3.5 text-[#10b981] stroke-[2.5]" />}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

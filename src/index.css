@@ -705,3 +705,98 @@ div[id$="-modal-panel"] {
   box-shadow: 0 6px 24px rgba(0, 201, 120, 0.45) !important;
 }
 
+/* ==========================================================================
+   SEMI-SOLID OPAQUE DASHBOARD DROPDOWN MENUS
+   - Semi-solid, opaque black background: rgba(3, 7, 12, 0.96)
+   - Background is sufficiently solid so that content behind the dropdown
+     is barely visible or not visible at all
+   - Subtle dark crystal border & soft shadow
+   - High contrast white text, muted gray secondary text, FreshCart green highlights
+   - Subtle dark green background and green border/text for active / selected items
+   - Red highlight for logout / danger actions
+   - Robust z-index & layering above cards, particles, navigation bars
+   ========================================================================== */
+
+.freshcart-dropdown-menu,
+[data-dropdown-menu="true"],
+.dropdown-menu-dark,
+[role="listbox"].freshcart-dropdown-menu,
+div[id$="-dropdown-menu"],
+div[id$="-profile-menu"] {
+  background-color: rgba(3, 7, 12, 0.96) !important;
+  background: rgba(3, 7, 12, 0.96) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 20px -4px rgba(0, 0, 0, 0.5) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  backdrop-filter: blur(16px) !important;
+  border-radius: 1rem !important;
+  z-index: 9999 !important;
+}
+
+.freshcart-dropdown-menu *,
+[data-dropdown-menu="true"] * {
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+
+.freshcart-dropdown-item {
+  background-color: transparent !important;
+  color: #f1f5f9 !important;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  border-radius: 0.75rem !important;
+}
+
+.freshcart-dropdown-item:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+}
+
+.freshcart-dropdown-item-active {
+  background-color: rgba(16, 185, 129, 0.16) !important;
+  border: 1px solid rgba(16, 185, 129, 0.45) !important;
+  color: #10b981 !important;
+  font-weight: 600 !important;
+}
+
+.freshcart-dropdown-item-active:hover {
+  background-color: rgba(16, 185, 129, 0.22) !important;
+  color: #34d399 !important;
+}
+
+.freshcart-dropdown-item-danger {
+  color: #f87171 !important;
+  background-color: transparent !important;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.freshcart-dropdown-item-danger:hover {
+  background-color: rgba(239, 68, 68, 0.14) !important;
+  color: #fca5a5 !important;
+}
+
+.freshcart-dropdown-divider {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* Native select & option elements styled with semi-solid dark theme */
+select.freshcart-select,
+select {
+  background-color: rgba(3, 7, 12, 0.96) !important;
+  color: #f1f5f9 !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-radius: 0.5rem !important;
+}
+
+select option {
+  background-color: #03070c !important;
+  color: #f1f5f9 !important;
+  padding: 8px 12px !important;
+}
+
+select option:checked,
+select option:hover {
+  background-color: rgba(16, 185, 129, 0.25) !important;
+  color: #10b981 !important;
+}
+
+
