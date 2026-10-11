@@ -917,11 +917,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const res = await adminVerifyPayment(item.orderId, 'REJECT', reason.trim());
       if (res.success) {
-        const cleanId = item.orderId.replace(/^#/, '');
-        setQueueFeedback({
-          type: 'success',
-          message: `Payment for Order #${cleanId} marked as REJECTED. Proof retained for audit. Customer may submit retry proof.`,
-        });
         updateOrderPaymentStatus(item.orderId, 'REJECTED', {
           verificationNotes: reason.trim(),
           verifiedAt: res.verifiedAt || new Date().toISOString(),
@@ -1276,9 +1271,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <span className="text-[28px] font-extrabold text-[#b45309] font-display tabular-nums">
                 {lowStockCount + outOfStockCount}
               </span>
-              <div className="text-[11px] text-[#64748b] font-medium mt-1">
-                {t('stockWarningDetail', { low: lowStockCount, out: outOfStockCount })}
-              </div>
             </div>
             <div className="w-12 h-12 rounded-xl bg-[#fee2e2] text-[#ef4444] flex items-center justify-center">
               <AlertTriangle className="w-6 h-6 text-[#ef4444]" />
@@ -5124,20 +5116,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <span className="text-right text-slate-200 max-w-[260px]">{selectedCustomerDetail.address}</span>
                   </div>
                 )}
-              </div>
-
-              {/* Password Protection Card */}
-              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 text-[12px] space-y-1.5">
-                <div className="flex items-center gap-1.5 font-bold text-emerald-300">
-                  <Lock className="w-4 h-4 text-emerald-400" />
-                  <span>Password Security Guarantee</span>
-                </div>
-                <p className="text-emerald-200/90 leading-relaxed text-[11px]">
-                  Customer passwords are cryptographically hashed using salted, one-way bcrypt. By cryptographic design, customer passwords <strong>cannot be viewed, retrieved, or decrypted</strong> by administrators or through backend APIs.
-                </p>
-                <p className="text-emerald-300/80 text-[11px]">
-                  If a customer forgets their password, they must use the secure customer password reset workflow.
-                </p>
               </div>
             </div>
 
