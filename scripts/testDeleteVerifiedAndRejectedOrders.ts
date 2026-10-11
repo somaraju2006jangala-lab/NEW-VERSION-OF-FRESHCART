@@ -108,7 +108,8 @@ async function runTests() {
   const adminToken = signAdminToken({
     adminId: activeAdmin.admin_id,
     email: activeAdmin.email,
-    role: activeAdmin.role || 'admin',
+    fullName: activeAdmin.full_name || 'Admin',
+    role: (activeAdmin.role as any) || 'admin',
     tokenVersion: activeAdmin.token_version || 1,
   });
 
@@ -237,18 +238,20 @@ async function runTests() {
   });
 
   // Save screenshot file
+  const testProofPath = path.resolve(process.cwd(), `test_proof_${rejectedOrderId}.png`);
+  fs.writeFileSync(testProofPath, Buffer.from(VALID_PNG_BASE64.split(',')[1], 'base64'));
+
   const saveProofRes = await savePaymentScreenshotInDb({
     orderId: rejectedOrderId,
     customerId: 'cust_test_del_123',
-    base64Data: VALID_PNG_BASE64,
+    screenshotPath: testProofPath,
+    mimeType: 'image/png',
+    fileSize: 100,
+    screenshotData: VALID_PNG_BASE64,
   });
   assert(saveProofRes.success, 'Failed to save screenshot proof');
-
-  // Verify screenshot exists on disk if path returned
-  if (saveProofRes.screenshotPath) {
-    assert(fs.existsSync(saveProofRes.screenshotPath), 'Screenshot proof file must exist on disk before deletion');
-    console.log(`✓ Proof file verified on disk: ${saveProofRes.screenshotPath}`);
-  }
+  assert(fs.existsSync(testProofPath), 'Screenshot proof file must exist on disk before deletion');
+  console.log(`✓ Proof file verified on disk: ${testProofPath}`);
 
   // Reject payment proof
   const rejectResult = await verifyUpiPaymentInDb({
@@ -290,10 +293,8 @@ async function runTests() {
   assert.strictEqual(rejPaymentRows.length, 0, 'Payment record must be deleted from payments table');
 
   // Verify screenshot was deleted from disk (no orphan files)
-  if (saveProofRes.screenshotPath) {
-    assert(!fs.existsSync(saveProofRes.screenshotPath), 'Screenshot proof file must be deleted from disk');
-    console.log(`✓ Proof file cleanly unlinked from disk (no orphan file).`);
-  }
+  assert(!fs.existsSync(testProofPath), 'Screenshot proof file must be deleted from disk');
+  console.log(`✓ Proof file cleanly unlinked from disk (no orphan file).`);
 
   // Verify page refresh from database queue query
   queue = await getAllUpiPaymentsForVerification();
