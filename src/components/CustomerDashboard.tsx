@@ -708,18 +708,18 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                       return (
                         <div
                           id={`upload-payment-screenshot-section-${order.id.replace('#', '')}`}
-                          className="p-4 sm:p-5 rounded-2xl bg-slate-50/80 border border-slate-200/90 shadow-2xs space-y-3.5 transition-all"
+                          className="p-4 sm:p-5 rounded-2xl bg-slate-900/90 border border-white/10 shadow-lg space-y-3.5 transition-all text-slate-200"
                         >
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-200">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-white/10">
                             <div className="flex items-center gap-2">
-                              <div className="w-7 h-7 rounded-lg bg-emerald-600/10 text-[#006b2c] flex items-center justify-center">
-                                <Upload className="w-4 h-4 text-[#006b2c]" />
+                              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center">
+                                <Upload className="w-4 h-4 text-emerald-400" />
                               </div>
                               <div>
-                                <h4 className="text-[13px] font-bold text-[#0b1c30]">
+                                <h4 className="text-[13px] font-bold text-white font-display">
                                   Upload Payment Screenshot
                                 </h4>
-                                <p className="text-[11px] text-[#565e74]">
+                                <p className="text-[11px] text-slate-400">
                                   UPI payment verification proof for order {order.id.startsWith('#') ? order.id : `#${order.id}`}
                                 </p>
                               </div>
@@ -729,19 +729,19 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                               <span
                                 className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
                                   isPendingVerification
-                                    ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                                     : isRejected
-                                    ? 'bg-rose-50 text-rose-800 border-rose-300'
-                                    : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                                 }`}
                               >
                                 <span
                                   className={`w-1.5 h-1.5 rounded-full ${
                                     isPendingVerification
-                                      ? 'bg-amber-500'
+                                      ? 'bg-amber-400'
                                       : isRejected
-                                      ? 'bg-rose-500'
-                                      : 'bg-emerald-500'
+                                      ? 'bg-rose-400'
+                                      : 'bg-emerald-400'
                                   }`}
                                 />
                                 {isPendingVerification
@@ -755,11 +755,11 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
                           {/* If status is REJECTED: Show warning & reason, and encourage retry */}
                           {isRejected && (
-                            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[12px] flex items-start gap-2.5">
-                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                            <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-[12px] flex items-start gap-2.5">
+                              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                               <div className="space-y-1">
-                                <p className="font-bold text-rose-900">Payment Proof Rejected by Admin</p>
-                                <p className="text-rose-700">
+                                <p className="font-bold text-rose-200">Payment Proof Rejected by Admin</p>
+                                <p className="text-rose-300/90">
                                   {order.verificationNotes || 'Your previous screenshot could not be verified. Please select and upload a valid screenshot of your successful UPI payment to retry verification.'}
                                 </p>
                               </div>
@@ -768,29 +768,31 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
                           {/* If status is PENDING_VERIFICATION: Display uploaded screenshot proof preview and lock upload controls */}
                           {isPendingVerification && (
-                            <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-200 text-[12px] space-y-3">
-                              <div className="flex items-center gap-2 text-amber-900 font-semibold">
-                                <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
+                            <div className="p-3.5 rounded-xl bg-slate-950/70 border border-white/10 text-[12px] space-y-3">
+                              <div className="flex items-center gap-2 text-amber-300 font-semibold">
+                                <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
                                 <span>Proof Uploaded — Awaiting Admin Verification</span>
                               </div>
-                              <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-2">
-                                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <div className="p-2.5 rounded-lg bg-emerald-950/50 border border-emerald-500/30 text-emerald-300 text-[11px] font-medium flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                                 <span>Payment proof submitted successfully. Please wait for admin verification.</span>
                               </div>
-                              <p className="text-amber-800/90 text-[11px]">
+                              <p className="text-slate-300 text-[11px] leading-relaxed">
                                 Your screenshot is under review by our admin team. Only one upload is permitted per order. Once confirmed in MySQL, your Order Handover OTP will be issued automatically.
                               </p>
                               {order.screenshotUrl && (
                                 <div className="pt-1 flex flex-col items-center">
-                                  <div className="text-[11px] font-semibold text-slate-600 mb-1.5 self-start flex items-center gap-1.5">
-                                    <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                  <div className="text-[11px] font-semibold text-slate-300 mb-1.5 self-start flex items-center gap-1.5">
+                                    <Eye className="w-3.5 h-3.5 text-slate-400" />
                                     <span>Current Uploaded Proof:</span>
                                   </div>
-                                  <img
-                                    src={`${order.screenshotUrl}${currentUser?.token ? `?token=${encodeURIComponent(currentUser.token)}` : ''}`}
-                                    alt="Current Uploaded Payment Proof"
-                                    className="max-h-48 max-w-full rounded-xl border border-slate-300 shadow-xs object-contain bg-white p-1"
-                                  />
+                                  <div className="p-2 bg-black/60 rounded-xl border border-white/10 shadow-md flex items-center justify-center max-w-full">
+                                    <img
+                                      src={`${order.screenshotUrl}${currentUser?.token ? `?token=${encodeURIComponent(currentUser.token)}` : ''}`}
+                                      alt="Current Uploaded Payment Proof"
+                                      className="max-h-48 max-w-full rounded-lg object-contain"
+                                    />
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -803,9 +805,9 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                 <div className="flex items-center gap-2">
                                   <label
                                     htmlFor={`screenshot-input-${order.id.replace('#', '')}`}
-                                    className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:border-emerald-500 hover:bg-emerald-50/30 text-slate-700 text-[12px] font-semibold flex items-center gap-2 cursor-pointer transition-colors shadow-2xs"
+                                    className="px-3.5 py-2 rounded-xl bg-slate-800/80 border border-white/15 hover:border-emerald-400 hover:bg-slate-800 text-slate-200 text-[12px] font-semibold flex items-center gap-2 cursor-pointer transition-colors shadow-sm"
                                   >
-                                    <ImageIcon className="w-4 h-4 text-[#006b2c]" />
+                                    <ImageIcon className="w-4 h-4 text-emerald-400" />
                                     <span>
                                       {fileSelected
                                         ? 'Change File'
@@ -822,7 +824,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                     disabled={isUploading}
                                     className="hidden"
                                   />
-                                  <span className="text-[11px] text-[#565e74]">
+                                  <span className="text-[11px] text-slate-400">
                                     JPG, JPEG, or PNG up to 10 MB
                                   </span>
                                 </div>
@@ -833,7 +835,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                       type="button"
                                       onClick={() => handleClearSelectedFile(order.id)}
                                       disabled={isUploading}
-                                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-slate-900 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50"
+                                      className="px-2.5 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50"
                                     >
                                       Cancel
                                     </button>
@@ -842,7 +844,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                       id={`upload-screenshot-btn-${order.id.replace('#', '')}`}
                                       onClick={() => handleSubmitScreenshot(order)}
                                       disabled={isUploading}
-                                      className="px-4 py-1.5 rounded-xl bg-[#006b2c] hover:bg-[#005221] text-white text-[12px] font-bold shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                                      className="px-4 py-1.5 rounded-xl bg-[#006b2c] hover:bg-[#00873a] text-white text-[12px] font-bold shadow-xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                                     >
                                       {isUploading ? (
                                         <>
@@ -864,20 +866,20 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
                               {/* Selected File Details & Preview */}
                               {fileSelected && previewUrl && (
-                                <div className="p-3 rounded-xl bg-white border border-slate-200 flex flex-col sm:flex-row items-center gap-3">
+                                <div className="p-3 rounded-xl bg-slate-950/70 border border-white/10 flex flex-col sm:flex-row items-center gap-3">
                                   <img
                                     src={previewUrl}
                                     alt="Selected Preview"
-                                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border border-slate-200 shadow-2xs shrink-0"
+                                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border border-white/15 bg-black/40 shadow-xs shrink-0"
                                   />
                                   <div className="flex-1 min-w-0 text-center sm:text-left">
-                                    <div className="text-[12px] font-bold text-slate-800 truncate">
+                                    <div className="text-[12px] font-bold text-white truncate">
                                       {fileSelected.name}
                                     </div>
-                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                    <div className="text-[11px] text-slate-400 mt-0.5">
                                       Size: {(fileSelected.size / (1024 * 1024)).toFixed(2)} MB · {fileSelected.type || 'image'}
                                     </div>
-                                    <div className="text-[11px] text-emerald-700 font-semibold mt-1">
+                                    <div className="text-[11px] text-emerald-400 font-semibold mt-1">
                                       Ready to upload. Click &ldquo;{isRejected ? 'Upload Replacement Proof' : 'Upload Screenshot'}&rdquo; to submit.
                                     </div>
                                   </div>
@@ -890,9 +892,9 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           {errorMsg && (
                             <div
                               id={`upload-error-${order.id.replace('#', '')}`}
-                              className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[12px] flex items-center gap-2 animate-in fade-in"
+                              className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-[12px] flex items-center gap-2 animate-in fade-in"
                             >
-                              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                               <span className="font-semibold">{errorMsg}</span>
                             </div>
                           )}
@@ -900,9 +902,9 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           {successMsg && (
                             <div
                               id={`upload-success-${order.id.replace('#', '')}`}
-                              className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[12px] flex items-center gap-2 animate-in fade-in"
+                              className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-[12px] flex items-center gap-2 animate-in fade-in"
                             >
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                               <span className="font-semibold">{successMsg}</span>
                             </div>
                           )}
