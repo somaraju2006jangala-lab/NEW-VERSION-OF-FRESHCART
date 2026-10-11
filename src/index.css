@@ -799,4 +799,73 @@ select option:hover {
   color: #10b981 !important;
 }
 
+/* ==========================================================================
+   SEMI-SOLID OPAQUE CUSTOMER PORTAL PRODUCT DETAILS POPUP & BACKDROP
+   - Near-black, semi-solid opaque background: rgba(3, 7, 12, 0.97) / #03070C
+   - Darken background page with black overlay: rgba(0, 0, 0, 0.78)
+   - Background cards & canvas particles behind popup must NOT show through modal
+   - Subtle dark border, rounded-3xl corners, soft deep shadow
+   ========================================================================== */
+
+.product-details-backdrop,
+#product-details-backdrop,
+div#product-details-backdrop {
+  background-color: rgba(0, 0, 0, 0.78) !important;
+  background: rgba(0, 0, 0, 0.78) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  backdrop-filter: blur(8px) !important;
+  z-index: 9999 !important;
+}
+
+.product-details-modal,
+#product-details-modal,
+div#product-details-modal,
+div[id="product-details-modal"],
+div.product-details-modal {
+  background-color: #03070c !important;
+  background: rgba(3, 7, 12, 0.97) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 25px 65px -12px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px -5px rgba(0, 0, 0, 0.8) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  backdrop-filter: blur(20px) !important;
+  opacity: 1 !important;
+  z-index: 10000 !important;
+}
+
+.product-details-modal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  pointer-events: none;
+}
+
+.product-details-card {
+  background-color: rgba(8, 13, 22, 0.85) !important;
+  background: rgba(8, 13, 22, 0.85) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+}
+
+.product-details-card:hover {
+  background-color: rgba(14, 22, 36, 0.95) !important;
+  background: rgba(14, 22, 36, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+.product-details-footer {
+  background-color: #020508 !important;
+  background: rgba(2, 5, 8, 0.95) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.10) !important;
+}
+
+.product-details-qty {
+  background-color: #080d16 !important;
+  background: rgba(8, 13, 22, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+
 
