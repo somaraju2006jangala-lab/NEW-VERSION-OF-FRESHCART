@@ -4292,9 +4292,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     <ShieldCheck className="w-5 h-5 text-[#006b2c]" />
                     <span>Authorized Administrator Management</span>
                   </h3>
-                  <p className="text-[12px] text-[#64748b] mt-0.5">
-                    Persistent MySQL authorization control. System access is strictly restricted to authorized administrator accounts. Maximum 5 active admin accounts.
-                  </p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -4338,46 +4335,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     </span>
                   )}
                 </div>
-              </div>
-
-              {/* 5-Admin Quota Progress Bar */}
-              <div className="bg-[#f8fafc] rounded-xl border border-[#e2e8f0] p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-[#0b1c30]">
-                      Active Administrator Quota:
-                    </span>
-                    <span className="text-[13px] font-black font-display tabular-nums text-[#006b2c]">
-                      {activeAdminsCount} / {maxAdminsLimit}
-                    </span>
-                    <span className="text-[11px] text-[#64748b]">
-                      ({maxAdminsLimit - activeAdminsCount} {maxAdminsLimit - activeAdminsCount === 1 ? 'slot' : 'slots'} available)
-                    </span>
-                  </div>
-
-                  {activeAdminsCount >= maxAdminsLimit && (
-                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3 text-amber-600" />
-                      <span>Quota Limit Reached (Max 5 Active)</span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="w-full bg-[#e2e8f0] rounded-full h-2.5 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      activeAdminsCount >= maxAdminsLimit
-                        ? 'bg-amber-500'
-                        : activeAdminsCount >= 4
-                        ? 'bg-emerald-500'
-                        : 'bg-[#006b2c]'
-                    }`}
-                    style={{ width: `${Math.min(100, (activeAdminsCount / maxAdminsLimit) * 100)}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-[#64748b] mt-2">
-                  System strictly allows up to 5 active admin accounts. Deactivate or remove existing accounts to free up active admin slots.
-                </p>
               </div>
 
               {/* Success Notification */}
