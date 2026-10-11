@@ -22,7 +22,6 @@ import {
   History,
   Edit2,
   Check,
-  TrendingUp,
   Trash2,
   X,
   Tag,
@@ -1254,7 +1253,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
         {/* KPI Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
             <div>
               <span className="text-[12px] text-[#64748b] font-medium block">
@@ -1263,10 +1262,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <span className="text-[28px] font-extrabold text-[#0f172a] font-display tabular-nums">
                 {totalSkus}
               </span>
-              <div className="text-[11px] text-[#16a34a] flex items-center gap-1 font-semibold mt-1">
-                <TrendingUp className="w-3.5 h-3.5" />
-                <span>{t('activeMongodbSync')}</span>
-              </div>
             </div>
             <div className="w-12 h-12 rounded-xl bg-[#eff4ff] text-[#006b2c] flex items-center justify-center">
               <Package className="w-6 h-6 text-[#006b2c]" />
@@ -1287,23 +1282,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
             <div className="w-12 h-12 rounded-xl bg-[#fee2e2] text-[#ef4444] flex items-center justify-center">
               <AlertTriangle className="w-6 h-6 text-[#ef4444]" />
-            </div>
-          </div>
-
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
-            <div>
-              <span className="text-[12px] text-[#64748b] font-medium block">
-                {t('activePickersRunners')}
-              </span>
-              <span className="text-[28px] font-extrabold text-[#0f172a] font-display tabular-nums">
-                12
-              </span>
-              <div className="text-[11px] text-[#16a34a] font-semibold mt-1">
-                {t('avgPackTime')}
-              </div>
-            </div>
-            <div className="w-12 h-12 rounded-xl bg-[#eff4ff] text-[#006b2c] flex items-center justify-center">
-              <Users className="w-6 h-6 text-[#006b2c]" />
             </div>
           </div>
         </div>
