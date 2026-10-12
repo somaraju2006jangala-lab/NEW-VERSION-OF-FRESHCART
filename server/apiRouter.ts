@@ -988,9 +988,12 @@ apiRouter.delete(['/api/cart', '/cart'], async (req: Request, res: Response) => 
 // ORDER ENDPOINTS
 // =============================================================================
 
+const activeOrderConfirmations = new Set<string>();
+
 /**
  * POST /api/orders
  * Creates or updates an order in MySQL.
+ * Enforces screenshot submission requirement before order confirmation for online UPI orders.
  */
 apiRouter.post('/api/orders', async (req: Request, res: Response) => {
   try {
@@ -1014,6 +1017,44 @@ apiRouter.post('/api/orders', async (req: Request, res: Response) => {
       return;
     }
 
+    // Backend enforcement: Online orders (UPI & Direct Payment) must have submitted payment proof before order confirmation
+    const isUpiOrder =
+      typeof orderData.paymentMethod === 'string' &&
+      (orderData.paymentMethod.toLowerCase().includes('upi') ||
+        orderData.paymentMethod.toLowerCase().includes('direct'));
+
+    const isConfirmAction =
+      orderData.confirmed === true ||
+      orderData.isConfirmed === true ||
+      orderData.status === 'CONFIRMED' ||
+      orderData.action === 'confirm';
+
+    if (isUpiOrder && isConfirmAction) {
+      const existingOrder = await findOrderInDb(orderData.id);
+      const existingPayment = await getPaymentRecordByOrderId(orderData.id);
+
+      const hasProofInDb = Boolean(
+        existingOrder?.screenshotUrl ||
+        existingPayment?.screenshotPath ||
+        (existingPayment as any)?.screenshot_path ||
+        existingPayment?.paymentStatus === 'PENDING_VERIFICATION' ||
+        (existingPayment as any)?.payment_status === 'PENDING_VERIFICATION'
+      );
+      const hasProofInPayload = Boolean(
+        orderData.screenshotUrl ||
+        orderData.screenshot ||
+        orderData.imageBase64
+      );
+
+      if (!hasProofInDb && !hasProofInPayload) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Payment screenshot proof is required before confirming an online order. Please upload and submit payment proof first.',
+        });
+        return;
+      }
+    }
+
     const saved = await upsertOrderInDb(orderData);
     if (!saved) {
       sendJson(res, 500, { success: false, error: 'Failed to save order to database.' });
@@ -1025,6 +1066,120 @@ apiRouter.post('/api/orders', async (req: Request, res: Response) => {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to save order.' });
   }
 });
+
+/**
+ * POST /api/orders/confirm or POST /api/orders/:id/confirm
+ * Confirms order placement after validating screenshot submission for online UPI orders.
+ * COD orders are confirmed without screenshot proof.
+ * Prevents duplicate orders and duplicate payment records.
+ */
+apiRouter.post(
+  ['/api/orders/confirm', '/api/orders/:id/confirm', '/orders/confirm', '/orders/:id/confirm'],
+  async (req: Request, res: Response) => {
+    try {
+      const rawId = req.params?.id || req.body?.orderId || req.body?.id;
+      const orderId = typeof rawId === 'string' ? rawId.trim() : '';
+
+      if (!orderId) {
+        sendJson(res, 400, { success: false, error: 'Order id is required to confirm order.' });
+        return;
+      }
+
+      if (activeOrderConfirmations.has(orderId)) {
+        sendJson(res, 429, {
+          success: false,
+          error: 'Order confirmation is already being processed for this order. Please wait.',
+        });
+        return;
+      }
+
+      activeOrderConfirmations.add(orderId);
+
+      try {
+        const dbCheck = checkDatabaseAvailability();
+        if (!dbCheck.available) {
+          sendJson(res, 503, {
+            success: false,
+            error: dbCheck.error,
+            code: dbCheck.code,
+          });
+          return;
+        }
+
+        let order = await findOrderInDb(orderId);
+        let payment = await getPaymentRecordByOrderId(orderId);
+
+        // If order record doesn't exist yet, save provided order data first
+        if (!order && req.body && (req.body.items || req.body.total)) {
+          await upsertOrderInDb(req.body);
+          order = await findOrderInDb(orderId);
+          payment = await getPaymentRecordByOrderId(orderId);
+        }
+
+        const paymentMethod =
+          order?.paymentMethod ||
+          payment?.paymentMethod ||
+          req.body?.paymentMethod ||
+          'COD';
+
+        const isUpi =
+          typeof paymentMethod === 'string' &&
+          (paymentMethod.toLowerCase().includes('upi') ||
+            paymentMethod.toLowerCase().includes('direct'));
+
+        if (isUpi) {
+          const hasProof = Boolean(
+            order?.screenshotUrl ||
+            payment?.screenshotPath ||
+            (payment as any)?.screenshot_path ||
+            payment?.paymentStatus === 'PENDING_VERIFICATION' ||
+            (payment as any)?.payment_status === 'PENDING_VERIFICATION' ||
+            req.body?.screenshotUrl ||
+            req.body?.screenshot
+          );
+
+          if (!hasProof) {
+            sendJson(res, 400, {
+              success: false,
+              error: 'Payment screenshot proof is required before confirming an online order. Please upload and submit payment proof first.',
+            });
+            return;
+          }
+        }
+
+        // Keep order and payment status consistent with admin verification workflow:
+        // Do not mark UPI as PAID! It remains PENDING_VERIFICATION for admin approval.
+        const confirmedOrderData = {
+          ...(order || {}),
+          ...(req.body || {}),
+          id: orderId,
+          status: isUpi ? 'Pending' : 'CONFIRMED',
+          paymentStatus: isUpi ? 'PENDING_VERIFICATION' : (order?.paymentStatus || 'Pending'),
+          confirmed: true,
+        };
+
+        const saved = await upsertOrderInDb(confirmedOrderData);
+        if (!saved) {
+          sendJson(res, 500, { success: false, error: 'Failed to update confirmed order in database.' });
+          return;
+        }
+
+        sendJson(res, 200, {
+          success: true,
+          message: isUpi
+            ? 'Payment proof submitted. Order is awaiting admin verification.'
+            : 'Order confirmed successfully.',
+          order: confirmedOrderData,
+        });
+      } finally {
+        activeOrderConfirmations.delete(orderId);
+      }
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Server error confirming order.' });
+    }
+  }
+);
+
 
 /**
  * GET /api/orders
@@ -2562,15 +2717,23 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
       return;
     }
 
-    // Check payment method: must be online UPI order
+    // Check payment method: must be online UPI or Direct Payment order
     const isUpi =
-      (order && (order.paymentMethod === 'UPI' || order.paymentMethod?.toLowerCase().includes('upi'))) ||
-      (payment && (payment.paymentMethod === 'UPI' || payment.paymentMethod?.toLowerCase().includes('upi'))) ||
+      (order &&
+        (order.paymentMethod === 'UPI' ||
+          order.paymentMethod?.toLowerCase().includes('upi') ||
+          order.paymentMethod === 'Direct Payment' ||
+          order.paymentMethod?.toLowerCase().includes('direct'))) ||
+      (payment &&
+        (payment.paymentMethod === 'UPI' ||
+          payment.paymentMethod?.toLowerCase().includes('upi') ||
+          payment.paymentMethod === 'Direct Payment' ||
+          payment.paymentMethod?.toLowerCase().includes('direct'))) ||
       (!order && !payment?.paymentMethod);
     if (!isUpi) {
       sendJson(res, 400, {
         success: false,
-        error: 'Screenshot proof upload is only available for online UPI orders.',
+        error: 'Screenshot proof upload is only available for online orders (UPI / Direct Payment).',
       });
       return;
     }

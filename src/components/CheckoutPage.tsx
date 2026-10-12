@@ -78,8 +78,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     currentUser?.address || '742 Evergreen Terrace, Apt 4B'
   );
   const [deliveryNote, setDeliveryNote] = useState('Leave with doorman in thermal tote');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'upi'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'direct' | 'cash'>('upi');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = React.useRef(false);
   const [showItemsList, setShowItemsList] = useState(false);
 
   // 1. Stable Order Number & Reference generated once per checkout session
@@ -104,6 +105,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const [paymentAttemptCreated, setPaymentAttemptCreated] = useState(false);
   const [upiActionTriggered, setUpiActionTriggered] = useState(false);
   const [upiError, setUpiError] = useState<string | null>(null);
+
+  // 3b. Direct Payment Deep Link & Chooser State
+  const [isOpeningDirectUpi, setIsOpeningDirectUpi] = useState(false);
+  const [directUpiFallbackMessage, setDirectUpiFallbackMessage] = useState<string | null>(null);
+  const [directUpiTriggered, setDirectUpiTriggered] = useState(false);
 
   // 4. UPI Payment Screenshot Upload State
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
@@ -198,7 +204,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       isValidUpiId(rawUpiId)
   );
 
-  // Generate dynamic, fully URL-encoded UPI URI
+  // Generate dynamic, fully URL-encoded UPI URI with merchant UPI ID, merchant name, payable amount, and order reference
   const upiUri = useMemo(() => {
     if (!isUpiValid || !rawUpiId) {
       return '';
@@ -207,10 +213,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       upiId: rawUpiId,
       merchantName: effectiveMerchantName,
       amount: total > 0 ? total : undefined,
+      transactionRef: transactionRef,
+      note: `FreshCart Order ${rawOrderId}`,
     });
-  }, [isUpiValid, rawUpiId, effectiveMerchantName, total]);
+  }, [isUpiValid, rawUpiId, effectiveMerchantName, total, transactionRef, rawOrderId]);
 
-  // Generate Desktop QR Code from the EXACT same UPI URI
+  // Generate Desktop QR Code from the EXACT same UPI URI (for Pay via UPI only)
   useEffect(() => {
     if (paymentMethod === 'upi') {
       if (upiUri && isUpiValid) {
@@ -233,61 +241,62 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             setQrCodeDataUrl('');
             setIsQrGenerating(false);
           });
-
-        // Automatically register draft order and payment attempt in database when customer selects UPI
-        if (!paymentAttemptCreated && rawUpiId) {
-          const customerPhone = currentUser?.phone?.trim() || '';
-          const draftOrder: CustomerOrder = {
-            id: formattedOrderId,
-            customerId: currentUser?.id || 'guest_user',
-            customerName: currentUser?.name || 'Guest Customer',
-            customerEmail: currentUser?.email,
-            customerPhone: customerPhone || undefined,
-            deliveryAddress: address,
-            deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
-            estimatedDeliveryTime: 'Express Cold-Chain Delivery',
-            items: [...items],
-            subtotal,
-            discount,
-            total,
-            couponCode: appliedCoupon || undefined,
-            status: 'Pending',
-            createdAt: new Date().toISOString(),
-            paymentMethod: 'UPI',
-            paymentStatus: 'INITIATED',
-          };
-
-          // Save order to MySQL first, then initiate payment using the exact generated formattedOrderId
-          fetch('/api/orders', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-            },
-            body: JSON.stringify(draftOrder),
-          })
-            .catch(() => {})
-            .finally(() => {
-              initiateUpiPayment({
-                orderId: formattedOrderId,
-                customerId: currentUser?.id || 'guest_user',
-                amount: total,
-                upiId: rawUpiId,
-                merchantName: effectiveMerchantName,
-                transactionRef: transactionRef,
-              }).then((res) => {
-                if (res.success) {
-                  setPaymentAttemptCreated(true);
-                }
-              });
-            });
-        }
       } else {
         setQrCodeDataUrl('');
         setIsQrGenerating(false);
       }
     } else {
       setQrCodeDataUrl('');
+      setIsQrGenerating(false);
+    }
+
+    // Automatically register draft order and payment attempt in database when customer selects online payment
+    if ((paymentMethod === 'upi' || paymentMethod === 'direct') && !paymentAttemptCreated && rawUpiId) {
+      const customerPhone = currentUser?.phone?.trim() || '';
+      const draftOrder: CustomerOrder = {
+        id: formattedOrderId,
+        customerId: currentUser?.id || 'guest_user',
+        customerName: currentUser?.name || 'Guest Customer',
+        customerEmail: currentUser?.email,
+        customerPhone: customerPhone || undefined,
+        deliveryAddress: address,
+        deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
+        estimatedDeliveryTime: 'Express Cold-Chain Delivery',
+        items: [...items],
+        subtotal,
+        discount,
+        total,
+        couponCode: appliedCoupon || undefined,
+        status: 'Pending',
+        createdAt: new Date().toISOString(),
+        paymentMethod: paymentMethod === 'direct' ? 'Direct Payment' : 'UPI',
+        paymentStatus: 'INITIATED',
+      };
+
+      // Save order to MySQL first, then initiate payment using the exact generated formattedOrderId
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+        },
+        body: JSON.stringify(draftOrder),
+      })
+        .catch(() => {})
+        .finally(() => {
+          initiateUpiPayment({
+            orderId: formattedOrderId,
+            customerId: currentUser?.id || 'guest_user',
+            amount: total,
+            upiId: rawUpiId,
+            merchantName: effectiveMerchantName,
+            transactionRef: transactionRef,
+          }).then((res) => {
+            if (res.success) {
+              setPaymentAttemptCreated(true);
+            }
+          });
+        });
     }
   }, [
     paymentMethod,
@@ -381,6 +390,168 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
   };
 
+  // Direct Payment UPI deep link handler (opens app chooser on mobile devices with actual order details)
+  const handleDirectPaymentDeepLink = async () => {
+    let currentSettings = upiSettings;
+    if (!currentSettings && isLoadingUpiSettings) {
+      try {
+        currentSettings = await fetchUpiSettings();
+        if (currentSettings) {
+          setUpiSettings(currentSettings);
+        }
+      } catch (err) {
+        console.error('[Direct Payment] Error fetching UPI settings:', err);
+      }
+    }
+
+    const currentRawUpiId = String(currentSettings?.upiId || currentSettings?.upi_id || rawUpiId || '').trim();
+    const currentMerchantName = String(
+      currentSettings?.merchantName || currentSettings?.merchant_name || effectiveMerchantName || 'FreshCart Store'
+    ).trim();
+
+    const isCurrentValid = Boolean(
+      currentSettings &&
+        currentSettings.enabled !== false &&
+        currentSettings.enabled !== (0 as any) &&
+        currentRawUpiId &&
+        isValidUpiId(currentRawUpiId)
+    );
+
+    if (!isCurrentValid || !currentRawUpiId) {
+      setDirectUpiFallbackMessage(
+        'Direct UPI payment is currently unavailable. Please choose another payment method.'
+      );
+      return;
+    }
+
+    setDirectUpiFallbackMessage(null);
+    setIsOpeningDirectUpi(true);
+
+    try {
+      const targetUpiUri =
+        upiUri ||
+        buildUpiUri({
+          upiId: currentRawUpiId,
+          merchantName: currentMerchantName,
+          amount: total > 0 ? total : undefined,
+          transactionRef: transactionRef,
+          note: `FreshCart Order ${rawOrderId}`,
+        });
+
+      const customerPhone = currentUser?.phone?.trim() || '';
+      const draftOrder: CustomerOrder = {
+        id: formattedOrderId,
+        customerId: currentUser?.id || 'guest_user',
+        customerName: currentUser?.name || 'Guest Customer',
+        customerEmail: currentUser?.email,
+        customerPhone: customerPhone || undefined,
+        deliveryAddress: address,
+        deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
+        estimatedDeliveryTime: 'Express Cold-Chain Delivery',
+        items: [...items],
+        subtotal,
+        discount,
+        total,
+        couponCode: appliedCoupon || undefined,
+        status: 'Pending',
+        createdAt: new Date().toISOString(),
+        paymentMethod: 'Direct Payment',
+        paymentStatus: 'INITIATED',
+      };
+
+      // 1. Dispatch draft order and payment attempt asynchronously with keepalive
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+        },
+        body: JSON.stringify(draftOrder),
+        keepalive: true,
+      }).catch(() => {});
+
+      initiateUpiPayment({
+        orderId: formattedOrderId,
+        customerId: currentUser?.id || 'guest_user',
+        amount: total,
+        upiId: currentRawUpiId,
+        merchantName: currentMerchantName,
+        transactionRef: transactionRef,
+      })
+        .then((res) => {
+          if (res.success) {
+            setPaymentAttemptCreated(true);
+          }
+        })
+        .catch(() => {});
+
+      // 2. Comprehensive device detection
+      const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+      const isIOS =
+        typeof navigator !== 'undefined' &&
+        (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+          (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent)));
+      const isMobile =
+        isAndroid ||
+        isIOS ||
+        (typeof navigator !== 'undefined' &&
+          /Mobi|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent));
+
+      if (!isMobile) {
+        setDirectUpiFallbackMessage(
+          'Unable to open UPI payment apps on this device. Please use a supported mobile device or choose another payment method.'
+        );
+        return;
+      }
+
+      // 3. On mobile devices, trigger compatible standard upi://pay deep link
+      let appOpened = false;
+      const onBlurOrHidden = () => {
+        appOpened = true;
+        setDirectUpiTriggered(true);
+      };
+
+      window.addEventListener('visibilitychange', onBlurOrHidden, { once: true });
+      window.addEventListener('blur', onBlurOrHidden, { once: true });
+      window.addEventListener('pagehide', onBlurOrHidden, { once: true });
+
+      // Trigger the compatible generic UPI URI (upi://pay) without hardcoding any single app.
+      // On Android, this prompts the OS app chooser with available UPI apps (Google Pay, PhonePe, Paytm, BHIM, etc.).
+      try {
+        const link = document.createElement('a');
+        link.href = targetUpiUri;
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => {
+          if (link.parentNode) link.parentNode.removeChild(link);
+        }, 300);
+      } catch {
+        window.location.href = targetUpiUri;
+      }
+
+      // 4. Graceful fallback timer: if page is still focused after 2.5s, show friendly fallback
+      setTimeout(() => {
+        window.removeEventListener('visibilitychange', onBlurOrHidden);
+        window.removeEventListener('blur', onBlurOrHidden);
+        window.removeEventListener('pagehide', onBlurOrHidden);
+
+        if (!appOpened && !document.hidden) {
+          setDirectUpiFallbackMessage(
+            'Unable to open a compatible UPI app on this device. Please ensure a UPI app is installed or choose another payment method.'
+          );
+        }
+      }, 2500);
+    } catch (err: any) {
+      console.error('[Direct Payment] Deep link error:', err);
+      setDirectUpiFallbackMessage(
+        'Unable to open UPI payment apps. Please choose another payment method.'
+      );
+    } finally {
+      setIsOpeningDirectUpi(false);
+    }
+  };
+
   // Handlers for payment screenshot proof
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     setScreenshotError(null);
@@ -437,6 +608,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       setScreenshotError('Please select a payment screenshot first.');
       return;
     }
+    if (isUploadingScreenshot) return;
 
     setIsUploadingScreenshot(true);
     setScreenshotUploadStatus('uploading');
@@ -461,8 +633,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         couponCode: appliedCoupon || undefined,
         status: 'Pending',
         createdAt: new Date().toISOString(),
-        paymentMethod: 'UPI',
-        paymentStatus: 'PENDING_VERIFICATION',
+        paymentMethod: paymentMethod === 'direct' ? 'Direct Payment' : 'UPI',
+        paymentStatus: 'INITIATED',
       };
 
       // 1. Create and successfully save draft order in orders table FIRST
@@ -497,21 +669,24 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       if (res.success && res.screenshotUrl) {
         setUploadedScreenshotUrl(res.screenshotUrl);
         setScreenshotUploadStatus('success');
-        setScreenshotSuccess('Payment proof submitted successfully. Please wait for admin verification.');
+        setScreenshotSuccess('Payment Proof Submitted — Awaiting Verification. Please wait for admin verification.');
         updateOrderPaymentStatus(formattedOrderId, 'PENDING_VERIFICATION', {
           screenshotUrl: res.screenshotUrl,
         });
       } else {
+        setUploadedScreenshotUrl(null);
         setScreenshotUploadStatus('error');
         setScreenshotError(res.error || 'Failed to upload screenshot. Please try again.');
         if (res.alreadySubmitted) {
           const cleanId = formattedOrderId.replace(/^#/, '');
-          setUploadedScreenshotUrl(`/api/payments/screenshot/${encodeURIComponent(cleanId)}`);
+          const proofUrl = `/api/payments/screenshot/${encodeURIComponent(cleanId)}`;
+          setUploadedScreenshotUrl(proofUrl);
           setScreenshotUploadStatus('success');
-          setScreenshotSuccess('Payment proof submitted successfully. Please wait for admin verification.');
+          setScreenshotSuccess('Payment Proof Submitted — Awaiting Verification. Please wait for admin verification.');
         }
       }
     } catch (err: any) {
+      setUploadedScreenshotUrl(null);
       setScreenshotUploadStatus('error');
       setScreenshotError(err.message || 'Network error while uploading screenshot. Please try again.');
     } finally {
@@ -522,63 +697,301 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const handlePlaceOrder = (e: React.FormEvent) => {
     e.preventDefault();
     if (items.length === 0) return;
+    if (isSubmitting || isSubmittingRef.current) return;
 
-    if (paymentMethod === 'upi' && !isUpiValid) {
-      setUpiError('UPI payment is currently unavailable. Please try another payment method.');
-      return;
+    const isOnlineProof = paymentMethod === 'upi' || paymentMethod === 'direct';
+
+    if (isOnlineProof) {
+      if (!isUpiValid) {
+        setUpiError('Online payment is currently unavailable. Please try another payment method.');
+        return;
+      }
+      if (!uploadedScreenshotUrl && screenshotUploadStatus !== 'success') {
+        setScreenshotError('Please upload and submit your payment screenshot proof before confirming your order.');
+        return;
+      }
     }
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
+
     setTimeout(async () => {
-      setIsSubmitting(false);
+      try {
+        const customerPhone = currentUser?.phone?.trim() || '';
+        const isOnline = paymentMethod === 'upi' || paymentMethod === 'direct';
+        const orderPaymentMethod =
+          paymentMethod === 'direct'
+            ? 'Direct Payment'
+            : paymentMethod === 'upi'
+            ? 'UPI'
+            : 'Cash on Delivery';
 
-      const customerPhone = currentUser?.phone?.trim() || '';
-      const isUpiOrder = paymentMethod === 'upi';
-      const orderPaymentMethod = isUpiOrder ? 'UPI' : 'Cash on Delivery';
-      // If proof was uploaded successfully, set PENDING_VERIFICATION; else PAYMENT_ATTEMPTED
-      const orderPaymentStatus = isUpiOrder
-        ? (uploadedScreenshotUrl ? 'PENDING_VERIFICATION' : 'PAYMENT_ATTEMPTED')
-        : 'Pending';
+        // Online order with proof stays PENDING_VERIFICATION until admin approval
+        const orderPaymentStatus = isOnline
+          ? 'PENDING_VERIFICATION'
+          : 'Pending';
 
-      // Save order to customer account history
-      const newCustomerOrder: CustomerOrder = {
-        id: formattedOrderId,
-        customerId: currentUser?.id || 'guest_user',
-        customerName: currentUser?.name || 'Guest Customer',
-        customerEmail: currentUser?.email,
-        customerPhone: customerPhone || undefined,
-        deliveryAddress: address,
-        deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
-        estimatedDeliveryTime: 'Express Cold-Chain Delivery',
-        items: [...items],
-        subtotal,
-        discount,
-        total,
-        couponCode: appliedCoupon || undefined,
-        status: isUpiOrder ? 'Pending' : 'CONFIRMED',
-        createdAt: new Date().toISOString(),
-        paymentMethod: orderPaymentMethod,
-        paymentStatus: orderPaymentStatus,
-        screenshotUrl: uploadedScreenshotUrl || undefined,
-      };
-      addOrder(newCustomerOrder);
+        // Save order to customer account history
+        const newCustomerOrder: CustomerOrder = {
+          id: formattedOrderId,
+          customerId: currentUser?.id || 'guest_user',
+          customerName: currentUser?.name || 'Guest Customer',
+          customerEmail: currentUser?.email,
+          customerPhone: customerPhone || undefined,
+          deliveryAddress: address,
+          deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
+          estimatedDeliveryTime: 'Express Cold-Chain Delivery',
+          items: [...items],
+          subtotal,
+          discount,
+          total,
+          couponCode: appliedCoupon || undefined,
+          status: isOnline ? 'Pending' : 'CONFIRMED',
+          createdAt: new Date().toISOString(),
+          paymentMethod: orderPaymentMethod,
+          paymentStatus: orderPaymentStatus,
+          screenshotUrl: uploadedScreenshotUrl || undefined,
+        };
 
-      // Save to MySQL backend
-      fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-        },
-        body: JSON.stringify(newCustomerOrder),
-      }).catch(() => {});
+        // Confirm order in backend
+        const confirmRes = await fetch('/api/orders/confirm', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+          },
+          body: JSON.stringify({
+            orderId: formattedOrderId,
+            ...newCustomerOrder,
+            confirmed: true,
+          }),
+        }).catch(() => null);
 
-      onOrderPlaced?.(items, newCustomerOrder);
-      setStep('success');
-      onClearCart();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Fallback to /api/orders if needed
+        if (!confirmRes || !confirmRes.ok) {
+          await fetch('/api/orders', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+            },
+            body: JSON.stringify({
+              ...newCustomerOrder,
+              confirmed: true,
+            }),
+          }).catch(() => {});
+        }
+
+        addOrder(newCustomerOrder);
+        onOrderPlaced?.(items, newCustomerOrder);
+        setStep('success');
+        onClearCart();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err: any) {
+        console.error('[Checkout] Error confirming order:', err);
+      } finally {
+        setIsSubmitting(false);
+        isSubmittingRef.current = false;
+      }
     }, 600);
   };
+
+  const renderScreenshotUploadSection = () => (
+    <div
+      id="checkout-upload-screenshot-section"
+      className="p-4 rounded-2xl bg-[#041426]/90 border border-cyan-500/30 space-y-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0 border border-cyan-500/30">
+            <Upload className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <span>Upload Payment Screenshot</span>
+              <span className="text-[10px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-full">
+                Proof of Payment
+              </span>
+            </h4>
+            <p className="text-xs text-slate-400">
+              {paymentMethod === 'direct'
+                ? 'Upload a screenshot of your direct transfer after completing payment in your UPI app.'
+                : 'Upload a screenshot of your successful UPI transfer after completing payment.'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Hidden native file input */}
+      <input
+        ref={fileInputRef}
+        id="checkout-screenshot-file-input"
+        type="file"
+        accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+
+      {/* Already Uploaded State */}
+      {uploadedScreenshotUrl ? (
+        <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-emerald-300 font-semibold text-xs">
+              <CheckCircle className="w-4 h-4 text-emerald-400" />
+              <span id="checkout-payment-proof-status" data-testid="checkout-payment-proof-status">
+                Payment Proof Submitted — Awaiting Verification
+              </span>
+            </div>
+            <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
+              Pending Verification
+            </span>
+          </div>
+
+          <p className="text-xs text-emerald-300/95 font-medium bg-emerald-950/60 border border-emerald-500/30 p-2.5 rounded-lg">
+            Payment Proof Submitted — Awaiting Verification. Please wait for admin verification.
+          </p>
+
+          <div className="flex items-center gap-3 bg-black/40 p-2.5 rounded-lg border border-white/10">
+            {screenshotPreview && (
+              <img
+                src={screenshotPreview}
+                alt="Payment Screenshot Preview"
+                className="w-14 h-14 object-cover rounded-md border border-white/20"
+              />
+            )}
+            <div className="flex-1 min-w-0 text-xs">
+              <p className="font-medium text-white truncate">
+                {screenshotFile ? screenshotFile.name : 'Payment Screenshot Proof'}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {screenshotFile ? `${(screenshotFile.size / (1024 * 1024)).toFixed(2)} MB • ` : ''}
+                Status: PENDING_VERIFICATION
+              </p>
+              <p className="text-[11px] text-emerald-400 font-medium mt-0.5">
+                ✓ Payment Proof Submitted — Awaiting Verification
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : screenshotFile ? (
+        /* File Selected, ready to upload */
+        <div className="space-y-3">
+          <div className="p-3 bg-slate-900/90 rounded-xl border border-white/10 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              {screenshotPreview && (
+                <img
+                  src={screenshotPreview}
+                  alt="Selected preview"
+                  className="w-14 h-14 object-cover rounded-lg border border-white/10 shrink-0"
+                />
+              )}
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-white truncate max-w-[200px] sm:max-w-xs">
+                  {screenshotFile.name}
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  {(screenshotFile.size / (1024 * 1024)).toFixed(2)} MB • {screenshotFile.type || 'image'}
+                </p>
+                <p className="text-[10px] text-amber-400 font-medium">Ready to submit proof</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleClearSelectedScreenshot}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-white/5 transition-all cursor-pointer"
+              title="Remove file"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Upload Button */}
+          <button
+            type="button"
+            id="checkout-upload-screenshot-btn"
+            data-testid="checkout-submit-payment-proof-btn"
+            disabled={isUploadingScreenshot}
+            onClick={handleUploadScreenshot}
+            className="w-full py-2.5 px-4 rounded-xl checkout-neon-btn text-white text-xs sm:text-sm font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isUploadingScreenshot ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Submitting Payment Proof...</span>
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" />
+                <span>Submit Payment Proof</span>
+              </>
+            )}
+          </button>
+        </div>
+      ) : (
+        /* Drop zone / File selector trigger */
+        <div
+          id="checkout-screenshot-dropzone"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const files = e.dataTransfer.files;
+            if (files && files.length > 0) {
+              const dummyEvent = {
+                target: { files: files },
+              } as unknown as React.ChangeEvent<HTMLInputElement>;
+              handleFileSelect(dummyEvent);
+            }
+          }}
+          className="border-2 border-dashed border-cyan-500/30 hover:border-cyan-400/60 rounded-xl p-5 text-center cursor-pointer transition-all bg-cyan-950/20 hover:bg-cyan-950/30 group"
+        >
+          <div className="w-10 h-10 rounded-full bg-cyan-500/10 text-cyan-400 flex items-center justify-center mx-auto mb-2 group-hover:scale-105 transition-transform">
+            <Upload className="w-5 h-5 text-cyan-400" />
+          </div>
+          <p className="text-xs font-semibold text-white">
+            Click or drag screenshot here to upload
+          </p>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Supports JPG, JPEG, PNG (max 10 MB)
+          </p>
+        </div>
+      )}
+
+      {/* Error Notification */}
+      {screenshotError && (
+        <div
+          id="checkout-screenshot-error"
+          className="p-3 bg-rose-950/50 border border-rose-500/40 rounded-xl text-rose-300 text-xs flex items-center gap-2"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <span>{screenshotError}</span>
+        </div>
+      )}
+
+      {/* Success Notification */}
+      {screenshotSuccess && !screenshotError && (
+        <div
+          id="checkout-screenshot-success"
+          className="p-3 bg-emerald-950/50 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs flex items-center gap-2"
+        >
+          <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+          <span>{screenshotSuccess}</span>
+        </div>
+      )}
+
+      <div className="text-[11px] text-slate-400 flex items-start gap-1.5 leading-relaxed bg-black/20 p-2.5 rounded-lg border border-white/5">
+        <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+        <span>
+          <strong>Note:</strong> Uploading proof sets status to <em>Pending Verification</em>.
+          An admin will inspect the transaction proof before marking the order as Paid and dispatching your OTP.
+        </span>
+      </div>
+    </div>
+  );
 
   return (
     <div id="checkout-page-container" className="w-full flex flex-col min-h-screen">
@@ -618,13 +1031,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 <CreditCard className="w-4 h-4 text-cyan-400 shrink-0" />
                 <span>Payment Details</span>
               </div>
-              {paymentMethod === 'upi' ? (
+              {paymentMethod === 'upi' || paymentMethod === 'direct' ? (
                 <div className="pl-6 space-y-3">
                   {uploadedScreenshotUrl ? (
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between flex-wrap gap-1">
                         <p className="text-amber-400 font-semibold text-xs sm:text-sm">
-                          UPI Payment (Status: PENDING_VERIFICATION)
+                          {paymentMethod === 'direct' ? 'Direct Payment' : 'UPI Payment'} (Status: PENDING_VERIFICATION)
                         </p>
                         <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
                           Pending Admin Approval
@@ -853,43 +1266,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               </div>
 
               {/* Payment Method Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
-                {/* Cash on Delivery Option */}
-                <div
-                  id="checkout-payment-cash-opt"
-                  data-testid="checkout-payment-cash-opt"
-                  onClick={() => setPaymentMethod('cash')}
-                  className={`p-4 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between ${
-                    paymentMethod === 'cash'
-                      ? 'checkout-card-selected'
-                      : 'checkout-subpanel hover:border-cyan-500/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div
-                        className={`w-5 h-5 rounded-full flex items-center justify-center ${
-                          paymentMethod === 'cash'
-                            ? 'bg-[#00d2aa] text-[#030d1a]'
-                            : 'border border-slate-600'
-                        }`}
-                      >
-                        {paymentMethod === 'cash' && (
-                          <div className="w-2 h-2 rounded-full bg-[#030d1a]" />
-                        )}
-                      </div>
-                      <span className="text-sm sm:text-base font-bold text-white">
-                        Cash on Delivery
-                      </span>
-                    </div>
-                    <Banknote className="w-5 h-5 text-cyan-400 shrink-0" />
-                  </div>
-                  <div className="mt-2.5">
-                    <p className="text-xs text-slate-400">Pay cash upon doorstep delivery</p>
-                  </div>
-                </div>
-
-                {/* Direct UPI Payment Option */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full max-w-4xl">
+                {/* 1. Pay via UPI Option */}
                 <div
                   id="checkout-payment-upi-opt"
                   data-testid="checkout-payment-upi-opt"
@@ -916,7 +1294,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div
-                        className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
                           paymentMethod === 'upi'
                             ? 'bg-[#00d2aa] text-[#030d1a]'
                             : 'border border-slate-600'
@@ -938,6 +1316,98 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     </p>
                   </div>
                 </div>
+
+                {/* 2. Direct Payment Option */}
+                <div
+                  id="checkout-payment-direct-opt"
+                  data-testid="checkout-payment-direct-opt"
+                  data-action="direct-payment"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setPaymentMethod('direct');
+                    if (!upiSettings) {
+                      setIsLoadingUpiSettings(true);
+                      fetchUpiSettings()
+                        .then((s) => setUpiSettings(s))
+                        .catch((err) => console.error('[Checkout Direct] Fetch error:', err))
+                        .finally(() => setIsLoadingUpiSettings(false));
+                    }
+                    handleDirectPaymentDeepLink();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setPaymentMethod('direct');
+                      handleDirectPaymentDeepLink();
+                    }
+                  }}
+                  className={`p-4 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    paymentMethod === 'direct'
+                      ? 'checkout-card-selected'
+                      : 'checkout-subpanel hover:border-cyan-500/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                          paymentMethod === 'direct'
+                            ? 'bg-[#00d2aa] text-[#030d1a]'
+                            : 'border border-slate-600'
+                        }`}
+                      >
+                        {paymentMethod === 'direct' && (
+                          <div className="w-2 h-2 rounded-full bg-[#030d1a]" />
+                        )}
+                      </div>
+                      <span className="text-sm sm:text-base font-bold text-white">
+                        Direct Payment
+                      </span>
+                    </div>
+                    <Smartphone className="w-5 h-5 text-cyan-400 shrink-0" />
+                  </div>
+                  <div className="mt-2.5">
+                    <p className="text-xs text-slate-400">
+                      Open installed UPI apps (GPay, PhonePe...)
+                    </p>
+                  </div>
+                </div>
+
+                {/* 3. Cash on Delivery (COD) Option */}
+                <div
+                  id="checkout-payment-cash-opt"
+                  data-testid="checkout-payment-cash-opt"
+                  onClick={() => setPaymentMethod('cash')}
+                  className={`p-4 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    paymentMethod === 'cash'
+                      ? 'checkout-card-selected'
+                      : 'checkout-subpanel hover:border-cyan-500/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                          paymentMethod === 'cash'
+                            ? 'bg-[#00d2aa] text-[#030d1a]'
+                            : 'border border-slate-600'
+                        }`}
+                      >
+                        {paymentMethod === 'cash' && (
+                          <div className="w-2 h-2 rounded-full bg-[#030d1a]" />
+                        )}
+                      </div>
+                      <span className="text-sm sm:text-base font-bold text-white whitespace-nowrap">
+                        Cash on Delivery (COD)
+                      </span>
+                    </div>
+                    <Banknote className="w-5 h-5 text-cyan-400 shrink-0" />
+                  </div>
+                  <div className="mt-2.5">
+                    <p className="text-xs text-slate-400">Pay cash upon doorstep delivery</p>
+                  </div>
+                </div>
               </div>
 
               {/* Cash on Delivery Details */}
@@ -950,6 +1420,121 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   <p className="text-slate-400">
                     Please keep exact cash ready upon delivery handover.
                   </p>
+                </div>
+              )}
+
+              {/* Direct Payment Details Panel */}
+              {paymentMethod === 'direct' && (
+                <div
+                  id="checkout-direct-details-panel"
+                  className="checkout-subpanel rounded-xl sm:rounded-2xl p-4 sm:p-6 space-y-5 max-w-xl"
+                >
+                  {!isLoadingUpiSettings && !isUpiValid ? (
+                    <div
+                      id="checkout-direct-unavailable-msg"
+                      className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs sm:text-sm flex items-center gap-2.5"
+                    >
+                      <AlertCircle className="w-5 h-5 shrink-0 text-amber-400" />
+                      <span>
+                        Direct UPI payment is currently unavailable. Please choose another payment method.
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Merchant & Amount Info Header */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-white/10 gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
+                              Payee Merchant
+                            </p>
+                            <span className="text-[10px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-full">
+                              Direct Payment
+                            </span>
+                          </div>
+                          <p className="text-sm font-bold text-white">
+                            {effectiveMerchantName}
+                          </p>
+                          <p className="text-xs text-slate-400 tabular-nums">
+                            {rawUpiId}
+                          </p>
+                        </div>
+                        <div className="sm:text-right">
+                          <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
+                            Amount to Pay
+                          </p>
+                          <p className="text-xl font-extrabold text-[#00e699] tabular-nums font-display">
+                            {formatINR(total)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Primary Action: Direct Payment Button to Open Installed UPI Apps */}
+                      <div className="flex flex-col items-center space-y-2">
+                        <button
+                          type="button"
+                          id="checkout-direct-open-apps-btn"
+                          data-testid="checkout-direct-open-apps-btn"
+                          data-action="direct-payment"
+                          disabled={isOpeningDirectUpi}
+                          onClick={handleDirectPaymentDeepLink}
+                          className="w-full py-3.5 px-6 rounded-xl checkout-neon-btn text-white text-sm font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                        >
+                          {isOpeningDirectUpi ? (
+                            <>
+                              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Opening UPI Apps Chooser...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Smartphone className="w-4 h-4" />
+                              <span>Direct Payment — Open UPI Apps ({formatINR(total)})</span>
+                              <ExternalLink className="w-3.5 h-3.5 ml-1" />
+                            </>
+                          )}
+                        </button>
+                        <p className="text-[11px] text-slate-400 text-center">
+                          Opens available UPI apps (Google Pay, PhonePe, Paytm, BHIM) on supported devices.
+                        </p>
+                      </div>
+
+                      {/* Fallback notice if device cannot open chooser or desktop */}
+                      {directUpiFallbackMessage && (
+                        <div
+                          id="checkout-direct-fallback-msg"
+                          className="p-3 bg-sky-950/40 rounded-xl border border-sky-500/30 text-sky-200 text-xs flex items-start gap-2.5 animate-fadeIn"
+                        >
+                          <AlertCircle className="w-4 h-4 shrink-0 text-sky-400 mt-0.5" />
+                          <span>{directUpiFallbackMessage}</span>
+                        </div>
+                      )}
+
+                      {/* Payment In Progress notice when triggered */}
+                      {directUpiTriggered && (
+                        <div
+                          id="checkout-direct-return-notice"
+                          className="p-3.5 bg-emerald-950/40 rounded-xl border border-emerald-500/30 text-emerald-200 text-xs space-y-1 animate-fadeIn"
+                        >
+                          <p className="font-semibold text-white flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Payment Initiated</span>
+                          </p>
+                          <p className="text-slate-300">
+                            Complete the payment in your chosen UPI app. When done, upload your payment screenshot below to confirm your order.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* UPLOAD PAYMENT SCREENSHOT SECTION */}
+                      {renderScreenshotUploadSection()}
+
+                      {/* Transaction Reference Footer */}
+                      <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Transaction Ref:</span>
+                        <span className="font-mono text-slate-300">{transactionRef}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -1073,196 +1658,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                         </div>
                       )}
 
-                      {/* ----------------- UPLOAD PAYMENT SCREENSHOT SECTION ----------------- */}
-                      <div
-                        id="checkout-upload-screenshot-section"
-                        className="p-4 rounded-2xl bg-[#041426]/90 border border-cyan-500/30 space-y-4"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0 border border-cyan-500/30">
-                              <Upload className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                                <span>Upload Payment Screenshot</span>
-                                <span className="text-[10px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-full">
-                                  Proof of Payment
-                                </span>
-                              </h4>
-                              <p className="text-xs text-slate-400">
-                                Upload a screenshot of your successful UPI transfer after completing payment.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Hidden native file input */}
-                        <input
-                          ref={fileInputRef}
-                          id="checkout-screenshot-file-input"
-                          type="file"
-                          accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                          className="hidden"
-                          onChange={handleFileSelect}
-                        />
-
-                        {/* Already Uploaded State */}
-                        {uploadedScreenshotUrl ? (
-                          <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2 text-emerald-300 font-semibold text-xs">
-                                <CheckCircle className="w-4 h-4 text-emerald-400" />
-                                <span>Payment Proof Submitted</span>
-                              </div>
-                              <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
-                                Pending Verification
-                              </span>
-                            </div>
-
-                            <p className="text-xs text-emerald-300/95 font-medium bg-emerald-950/60 border border-emerald-500/30 p-2.5 rounded-lg">
-                              Payment proof submitted successfully. Please wait for admin verification.
-                            </p>
-
-                            <div className="flex items-center gap-3 bg-black/40 p-2.5 rounded-lg border border-white/10">
-                              {screenshotPreview && (
-                                <img
-                                  src={screenshotPreview}
-                                  alt="Payment Screenshot Preview"
-                                  className="w-14 h-14 object-cover rounded-md border border-white/20"
-                                />
-                              )}
-                              <div className="flex-1 min-w-0 text-xs">
-                                <p className="font-medium text-white truncate">
-                                  {screenshotFile ? screenshotFile.name : 'Payment Screenshot Proof'}
-                                </p>
-                                <p className="text-[11px] text-slate-400">
-                                  {screenshotFile ? `${(screenshotFile.size / (1024 * 1024)).toFixed(2)} MB • ` : ''}
-                                  Status: PENDING_VERIFICATION
-                                </p>
-                                <p className="text-[11px] text-emerald-400 font-medium mt-0.5">
-                                  ✓ Upload complete — Only one upload allowed per order
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        ) : screenshotFile ? (
-                          /* File Selected, ready to upload */
-                          <div className="space-y-3">
-                            <div className="p-3 bg-slate-900/90 rounded-xl border border-white/10 flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-3 min-w-0">
-                                {screenshotPreview && (
-                                  <img
-                                    src={screenshotPreview}
-                                    alt="Selected preview"
-                                    className="w-14 h-14 object-cover rounded-lg border border-white/10 shrink-0"
-                                  />
-                                )}
-                                <div className="min-w-0">
-                                  <p className="text-xs font-semibold text-white truncate max-w-[200px] sm:max-w-xs">
-                                    {screenshotFile.name}
-                                  </p>
-                                  <p className="text-[11px] text-slate-400">
-                                    {(screenshotFile.size / (1024 * 1024)).toFixed(2)} MB • {screenshotFile.type || 'image'}
-                                  </p>
-                                  <p className="text-[10px] text-amber-400 font-medium">Ready to upload</p>
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={handleClearSelectedScreenshot}
-                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-white/5 transition-all cursor-pointer"
-                                title="Remove file"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-
-                            {/* Upload Button */}
-                            <button
-                              type="button"
-                              id="checkout-upload-screenshot-btn"
-                              disabled={isUploadingScreenshot}
-                              onClick={handleUploadScreenshot}
-                              className="w-full py-2.5 px-4 rounded-xl checkout-neon-btn text-white text-xs sm:text-sm font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-                            >
-                              {isUploadingScreenshot ? (
-                                <>
-                                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                  <span>Uploading Screenshot...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Upload className="w-4 h-4" />
-                                  <span>Confirm & Upload Screenshot</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        ) : (
-                          /* Drop zone / File selector trigger */
-                          <div
-                            id="checkout-screenshot-dropzone"
-                            onClick={() => fileInputRef.current?.click()}
-                            onDragOver={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              const files = e.dataTransfer.files;
-                              if (files && files.length > 0) {
-                                const dummyEvent = {
-                                  target: { files: files },
-                                } as unknown as React.ChangeEvent<HTMLInputElement>;
-                                handleFileSelect(dummyEvent);
-                              }
-                            }}
-                            className="border-2 border-dashed border-cyan-500/30 hover:border-cyan-400/60 rounded-xl p-5 text-center cursor-pointer transition-all bg-cyan-950/20 hover:bg-cyan-950/30 group"
-                          >
-                            <div className="w-10 h-10 rounded-full bg-cyan-500/10 text-cyan-400 flex items-center justify-center mx-auto mb-2 group-hover:scale-105 transition-transform">
-                              <Upload className="w-5 h-5 text-cyan-400" />
-                            </div>
-                            <p className="text-xs font-semibold text-white">
-                              Click or drag screenshot here to upload
-                            </p>
-                            <p className="text-[11px] text-slate-400 mt-0.5">
-                              Supports JPG, JPEG, PNG (max 10 MB)
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Error Notification */}
-                        {screenshotError && (
-                          <div
-                            id="checkout-screenshot-error"
-                            className="p-3 bg-rose-950/50 border border-rose-500/40 rounded-xl text-rose-300 text-xs flex items-center gap-2"
-                          >
-                            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                            <span>{screenshotError}</span>
-                          </div>
-                        )}
-
-                        {/* Success Notification */}
-                        {screenshotSuccess && !screenshotError && (
-                          <div
-                            id="checkout-screenshot-success"
-                            className="p-3 bg-emerald-950/50 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs flex items-center gap-2"
-                          >
-                            <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
-                            <span>{screenshotSuccess}</span>
-                          </div>
-                        )}
-
-                        <div className="text-[11px] text-slate-400 flex items-start gap-1.5 leading-relaxed bg-black/20 p-2.5 rounded-lg border border-white/5">
-                          <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
-                          <span>
-                            <strong>Note:</strong> Uploading proof sets status to <em>Pending Verification</em>.
-                            An admin will inspect the transaction proof before marking the order as Paid and dispatching your OTP.
-                          </span>
-                        </div>
-                      </div>
+                      {/* UPLOAD PAYMENT SCREENSHOT SECTION */}
+                      {renderScreenshotUploadSection()}
 
                       {/* Transaction Reference Footer */}
                       <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
@@ -1375,22 +1772,37 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   </div>
                 </div>
 
-                {/* Place Order Button */}
-                <div className="pt-2 flex justify-center">
+                {/* Place / Confirm Order Button */}
+                <div className="pt-2 flex flex-col items-center gap-3">
+                  {/* Clear message when online payment proof is required before confirmation */}
+                  {(paymentMethod === 'upi' || paymentMethod === 'direct') && !uploadedScreenshotUrl && (
+                    <div
+                      id="checkout-upi-proof-required-alert"
+                      data-testid="checkout-upi-proof-required-alert"
+                      className="w-full max-w-sm p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5 text-left animate-fadeIn"
+                    >
+                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                      <span>
+                        Please submit payment proof first before confirming your order.
+                      </span>
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     id="checkout-place-order-btn"
+                    data-testid="checkout-confirm-order-btn"
                     disabled={
                       items.length === 0 ||
                       isSubmitting ||
-                      (paymentMethod === 'upi' && !isUpiValid)
+                      ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
                     }
                     onClick={handlePlaceOrder}
                     className={`w-full max-w-sm py-3.5 px-6 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer ${
                       items.length === 0 ||
                       isSubmitting ||
-                      (paymentMethod === 'upi' && !isUpiValid)
-                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5'
+                      ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5 opacity-60'
                         : 'checkout-neon-btn text-white active:scale-[0.99]'
                     }`}
                   >
@@ -1401,11 +1813,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                       </>
                     ) : (
                       <>
-                        <span>
-                          {paymentMethod === 'upi'
-                            ? `Confirm UPI Order (${formatINR(total)}) →`
-                            : `Place Order (${formatINR(total)}) →`}
-                        </span>
+                        <span>Confirm Order ({formatINR(total)}) →</span>
                       </>
                     )}
                   </button>

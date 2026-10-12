@@ -3652,7 +3652,7 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
         (CASE WHEN p.order_id LIKE '#%' THEN SUBSTRING(p.order_id, 2) ELSE p.order_id END) =
         (CASE WHEN o.order_id LIKE '#%' THEN SUBSTRING(o.order_id, 2) ELSE o.order_id END)
       )
-      WHERE o.payment_method LIKE '%UPI%' OR p.payment_method = 'UPI' OR o.payment_status = 'PENDING_VERIFICATION' OR p.screenshot_path IS NOT NULL
+      WHERE o.payment_method LIKE '%UPI%' OR p.payment_method = 'UPI' OR o.payment_method LIKE '%Direct%' OR p.payment_method LIKE '%Direct%' OR o.payment_status = 'PENDING_VERIFICATION' OR p.screenshot_path IS NOT NULL
       UNION ALL
       SELECT
         CASE WHEN p2.order_id LIKE '#%' THEN SUBSTRING(p2.order_id, 2) ELSE p2.order_id END as orderId,

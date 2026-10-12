@@ -21,6 +21,7 @@ export function buildUpiUri(params: {
   merchantName: string;
   amount?: number | string;
   transactionRef?: string;
+  note?: string;
 }): string {
   const pa = encodeURIComponent((params.upiId || '').trim());
   const pn = encodeURIComponent((params.merchantName || '').trim());
@@ -37,6 +38,10 @@ export function buildUpiUri(params: {
 
   if (params.transactionRef && params.transactionRef.trim().length > 0) {
     uri += `&tr=${encodeURIComponent(params.transactionRef.trim())}`;
+  }
+
+  if (params.note && params.note.trim().length > 0) {
+    uri += `&tn=${encodeURIComponent(params.note.trim())}`;
   }
 
   return uri;
