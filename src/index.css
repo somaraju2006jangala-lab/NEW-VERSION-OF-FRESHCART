@@ -650,59 +650,122 @@ div[id$="-modal-panel"] {
    - High contrast, readable typography
    ========================================================================== */
 
+/* ==========================================================================
+   BLACK LIQUID-GLASS THEME (CHECKOUT)
+   - Deep obsidian/black backgrounds
+   - Semi-solid, opaque liquid-glass panels with soft reflections & controlled glossy highlights
+   - Subtle crystal borders and deep ambient shadows for depth
+   - High-contrast crisp white typography, muted slate secondary text
+   - Rich interactive buttons with hover, active, focus, and disabled states
+   ========================================================================== */
+
+.checkout-container {
+  background: radial-gradient(circle at 50% 0%, #0d121c 0%, #06080d 50%, #020305 100%) !important;
+  min-height: 100vh;
+}
+
 .checkout-panel {
-  background-color: rgba(6, 18, 36, 0.90) !important;
-  border: 1px solid rgba(14, 55, 95, 0.70) !important;
-  -webkit-backdrop-filter: blur(14px) !important;
-  backdrop-filter: blur(14px) !important;
-  box-shadow: 0 12px 36px -8px rgba(0, 0, 0, 0.65) !important;
+  background: linear-gradient(145deg, rgba(14, 18, 26, 0.95) 0%, rgba(7, 9, 14, 0.98) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  backdrop-filter: blur(20px) !important;
+  box-shadow: 
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.14),
+    0 24px 52px -12px rgba(0, 0, 0, 0.88),
+    0 0 1px 1px rgba(255, 255, 255, 0.04) !important;
+  position: relative;
+}
+
+.checkout-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 3%;
+  right: 3%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.24), transparent);
+  pointer-events: none;
 }
 
 .checkout-subpanel {
-  background-color: rgba(3, 13, 26, 0.92) !important;
-  border: 1px solid rgba(14, 48, 82, 0.75) !important;
+  background: linear-gradient(145deg, rgba(17, 22, 32, 0.92) 0%, rgba(9, 12, 18, 0.96) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.55) !important;
 }
 
 .checkout-input {
-  background-color: rgba(3, 13, 26, 0.92) !important;
-  border: 1px solid rgba(14, 48, 82, 0.75) !important;
+  background: rgba(8, 11, 17, 0.96) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
   color: #ffffff !important;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease !important;
 }
 
 .checkout-input:focus {
-  background-color: rgba(4, 18, 36, 0.96) !important;
-  border-color: rgba(0, 210, 170, 0.6) !important;
-  box-shadow: 0 0 0 2px rgba(0, 210, 170, 0.2) !important;
+  background: rgba(11, 15, 23, 0.98) !important;
+  border-color: #00d2aa !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0 2px rgba(0, 210, 170, 0.25) !important;
 }
 
 .checkout-card {
-  background-color: rgba(3, 13, 26, 0.85) !important;
-  border: 1px solid rgba(14, 48, 82, 0.75) !important;
-  transition: all 0.2s ease !important;
+  background: linear-gradient(145deg, rgba(15, 20, 29, 0.90) 0%, rgba(8, 11, 16, 0.95) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 18px rgba(0, 0, 0, 0.45) !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
 .checkout-card:hover {
   border-color: rgba(0, 210, 170, 0.45) !important;
-  background-color: rgba(4, 18, 35, 0.9) !important;
+  background: linear-gradient(145deg, rgba(19, 26, 38, 0.94) 0%, rgba(10, 14, 21, 0.98) 100%) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.12), 0 12px 30px rgba(0, 0, 0, 0.7) !important;
+  transform: translateY(-1px);
 }
 
 .checkout-card-selected {
-  background-color: rgba(4, 26, 40, 0.88) !important;
-  border: 2px solid #00d2aa !important;
-  box-shadow: 0 0 16px rgba(0, 210, 170, 0.2) !important;
+  background: linear-gradient(145deg, rgba(5, 34, 29, 0.94) 0%, rgba(3, 19, 16, 0.98) 100%) !important;
+  border: 1.5px solid #00d2aa !important;
+  box-shadow: 
+    inset 0 1px 2px rgba(0, 210, 170, 0.35),
+    0 0 24px rgba(0, 210, 170, 0.20),
+    0 14px 32px rgba(0, 0, 0, 0.75) !important;
 }
 
 .checkout-neon-btn {
-  background: #00c978 !important;
-  box-shadow: 0 4px 18px rgba(0, 201, 120, 0.35) !important;
-  transition: all 0.2s ease !important;
+  background: linear-gradient(135deg, #00e699 0%, #00b374 100%) !important;
+  color: #02140e !important;
+  box-shadow: 0 4px 20px rgba(0, 230, 153, 0.38), inset 0 1px 1px rgba(255, 255, 255, 0.45) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
-.checkout-neon-btn:hover {
-  background: #00b86e !important;
-  filter: brightness(1.08) !important;
-  box-shadow: 0 6px 24px rgba(0, 201, 120, 0.45) !important;
+.checkout-neon-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #00ffaa 0%, #00c982 100%) !important;
+  box-shadow: 0 6px 26px rgba(0, 230, 153, 0.52), inset 0 1px 1px rgba(255, 255, 255, 0.55) !important;
+  transform: translateY(-1px);
+}
+
+.checkout-neon-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+  box-shadow: 0 2px 10px rgba(0, 230, 153, 0.3) !important;
+}
+
+.checkout-secondary-btn {
+  background: linear-gradient(145deg, rgba(22, 28, 40, 0.92) 0%, rgba(11, 14, 21, 0.97) 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: #e2e8f0 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.45) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.checkout-secondary-btn:hover:not(:disabled) {
+  background: linear-gradient(145deg, rgba(29, 36, 52, 0.96) 0%, rgba(15, 19, 28, 0.99) 100%) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.14), 0 8px 20px rgba(0, 0, 0, 0.55) !important;
+}
+
+.checkout-secondary-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
 }
 
 /* ==========================================================================
