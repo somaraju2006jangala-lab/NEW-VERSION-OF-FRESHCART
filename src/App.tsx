@@ -769,6 +769,9 @@ function FreshCartStore() {
 
   return (
     <div className="min-h-screen flex flex-col bg-transparent text-[#f1f5f9] relative z-10">
+      {/* Moving Particles Animation ONLY on Sign In Page */}
+      {currentView === 'login' && <CursorReactiveBackground />}
+
       {/* Universal Header with View Navigation & Customer Authentication */}
       <Header
         currentView={currentView}
@@ -1096,8 +1099,6 @@ export default function App() {
     <LanguageProvider>
       <AuthProvider>
         <div className="min-h-screen bg-[#030305] text-[#f1f5f9] relative">
-          {/* Universal Global Full-Website White Particle Background */}
-          <CursorReactiveBackground />
           <FreshCartStore />
         </div>
       </AuthProvider>
