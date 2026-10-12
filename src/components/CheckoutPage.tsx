@@ -1277,13 +1277,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                         .catch((err) => console.error('[Checkout Direct] Fetch error:', err))
                         .finally(() => setIsLoadingUpiSettings(false));
                     }
-                    handleDirectPaymentDeepLink();
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       setPaymentMethod('direct');
-                      handleDirectPaymentDeepLink();
                     }
                   }}
                   className={`p-4 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between ${
@@ -1385,35 +1383,44 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     </div>
                   ) : (
                     <>
-                      {/* Merchant & Amount Info Header */}
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-white/10 gap-2">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
-                              Payee Merchant
+                      {/* Step 1: Direct Payment Instruction Screen Header */}
+                      <div className="p-4 bg-slate-900/60 rounded-xl border border-white/10 space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-white/10 gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
+                                Payee Merchant
+                              </p>
+                              <span className="text-[10px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-full">
+                                Direct Payment
+                              </span>
+                            </div>
+                            <p className="text-sm font-bold text-white">
+                              {effectiveMerchantName}
                             </p>
-                            <span className="text-[10px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-full">
-                              Direct Payment
-                            </span>
+                            <p className="text-xs text-slate-400 tabular-nums font-mono">
+                              {rawUpiId}
+                            </p>
                           </div>
-                          <p className="text-sm font-bold text-white">
-                            {effectiveMerchantName}
-                          </p>
-                          <p className="text-xs text-slate-400 tabular-nums">
-                            {rawUpiId}
-                          </p>
+                          <div className="sm:text-right">
+                            <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
+                              Payable Amount
+                            </p>
+                            <p className="text-xl font-extrabold text-[#00e699] tabular-nums font-display">
+                              {formatINR(total)}
+                            </p>
+                          </div>
                         </div>
-                        <div className="sm:text-right">
-                          <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
-                            Amount to Pay
-                          </p>
-                          <p className="text-xl font-extrabold text-[#00e699] tabular-nums font-display">
-                            {formatINR(total)}
-                          </p>
+
+                        {/* Order Reference */}
+                        <div className="flex items-center justify-between text-xs pt-0.5">
+                          <span className="text-slate-400 font-medium">Order Reference:</span>
+                          <span className="font-mono text-cyan-300 font-semibold">{transactionRef}</span>
                         </div>
                       </div>
 
-                      {/* Primary Action: Direct Payment Button to Open Installed UPI Apps */}
+
+                      {/* Step 2 Action: Button Labeled 'Open UPI Payment App' */}
                       <div className="flex flex-col items-center space-y-2">
                         <a
                           href={isUpiValid && upiUri && total > 0 ? upiUri : '#'}
@@ -1434,13 +1441,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                           ) : (
                             <>
                               <Smartphone className="w-4 h-4" />
-                              <span>Direct Payment — Open UPI Apps ({formatINR(total)})</span>
+                              <span>Open UPI Payment App</span>
                               <ExternalLink className="w-3.5 h-3.5 ml-1" />
                             </>
                           )}
                         </a>
                         <p className="text-[11px] text-slate-400 text-center">
-                          Opens available UPI apps (Google Pay, PhonePe, Paytm, BHIM) on supported devices.
+                          Opens installed UPI apps (Google Pay, PhonePe, Paytm, BHIM) on supported devices.
                         </p>
                       </div>
 
@@ -1448,28 +1455,36 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                       {directUpiFallbackMessage && (
                         <div
                           id="checkout-direct-fallback-msg"
-                          className="p-3 bg-sky-950/40 rounded-xl border border-sky-500/30 text-sky-200 text-xs flex items-start gap-2.5 animate-fadeIn"
+                          className="p-3.5 bg-sky-950/50 rounded-xl border border-sky-500/30 text-sky-200 text-xs space-y-2.5 animate-fadeIn"
                         >
-                          <AlertCircle className="w-4 h-4 shrink-0 text-sky-400 mt-0.5" />
-                          <span>{directUpiFallbackMessage}</span>
+                          <div className="flex items-start gap-2.5">
+                            <AlertCircle className="w-4 h-4 shrink-0 text-sky-400 mt-0.5" />
+                            <div>
+                              <p className="font-semibold text-white">UPI App Not Detected</p>
+                              <p className="mt-0.5 text-slate-300">{directUpiFallbackMessage}</p>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t border-sky-500/20 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('upi')}
+                              className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-semibold border border-cyan-500/40 transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <QrCode className="w-3.5 h-3.5" />
+                              <span>Pay via UPI (QR Code)</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPaymentMethod('cash')}
+                              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Banknote className="w-3.5 h-3.5" />
+                              <span>Cash on Delivery (COD)</span>
+                            </button>
+                          </div>
                         </div>
                       )}
 
-                      {/* Payment In Progress notice when triggered */}
-                      {directUpiTriggered && (
-                        <div
-                          id="checkout-direct-return-notice"
-                          className="p-3.5 bg-emerald-950/40 rounded-xl border border-emerald-500/30 text-emerald-200 text-xs space-y-1 animate-fadeIn"
-                        >
-                          <p className="font-semibold text-white flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>Payment Initiated</span>
-                          </p>
-                          <p className="text-slate-300">
-                            Complete the payment in your chosen UPI app. When done, upload your payment screenshot below to confirm your order.
-                          </p>
-                        </div>
-                      )}
 
                       {/* UPLOAD PAYMENT SCREENSHOT SECTION */}
                       {renderScreenshotUploadSection()}
