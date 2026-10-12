@@ -2557,12 +2557,12 @@ apiRouter.post(['/api/payments/initiate-upi', '/payments/initiate-upi'], async (
     }
 
     // 2. Generate clean, properly URL-encoded UPI URI
-    const pa = encodeURIComponent(finalUpiId);
+    const pa = encodeURIComponent(finalUpiId).replace(/%40/g, '@');
     const pn = encodeURIComponent(finalMerchantName);
     const am = encodeURIComponent(formattedAmount);
     const cu = 'INR';
     const tr = encodeURIComponent(trimmedTransactionRef);
-    const upiUri = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&cu=${cu}&tr=${tr}`;
+    const upiUri = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&cu=${cu}&tn=${tr}&tr=${tr}`;
 
     sendJson(res, 200, {
       success: true,

@@ -214,9 +214,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       merchantName: effectiveMerchantName,
       amount: total > 0 ? total : undefined,
       transactionRef: transactionRef,
-      note: `FreshCart Order ${rawOrderId}`,
+      note: transactionRef,
     });
-  }, [isUpiValid, rawUpiId, effectiveMerchantName, total, transactionRef, rawOrderId]);
+  }, [isUpiValid, rawUpiId, effectiveMerchantName, total, transactionRef]);
 
   // Generate Desktop QR Code from the EXACT same UPI URI (for Pay via UPI only)
   useEffect(() => {
@@ -390,36 +390,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
   };
 
-  // Direct Payment UPI deep link handler (opens app chooser on mobile devices with actual order details)
-  const handleDirectPaymentDeepLink = async () => {
-    let currentSettings = upiSettings;
-    if (!currentSettings && isLoadingUpiSettings) {
-      try {
-        currentSettings = await fetchUpiSettings();
-        if (currentSettings) {
-          setUpiSettings(currentSettings);
-        }
-      } catch (err) {
-        console.error('[Direct Payment] Error fetching UPI settings:', err);
+  // Direct Payment UPI deep link handler (opens app chooser on mobile and supported devices with actual order details)
+  const handleDirectPaymentDeepLink = (e?: React.MouseEvent) => {
+    if (!isUpiValid || !rawUpiId || total <= 0 || !upiUri) {
+      if (e) {
+        e.preventDefault();
       }
-    }
-
-    const currentRawUpiId = String(currentSettings?.upiId || currentSettings?.upi_id || rawUpiId || '').trim();
-    const currentMerchantName = String(
-      currentSettings?.merchantName || currentSettings?.merchant_name || effectiveMerchantName || 'FreshCart Store'
-    ).trim();
-
-    const isCurrentValid = Boolean(
-      currentSettings &&
-        currentSettings.enabled !== false &&
-        currentSettings.enabled !== (0 as any) &&
-        currentRawUpiId &&
-        isValidUpiId(currentRawUpiId)
-    );
-
-    if (!isCurrentValid || !currentRawUpiId) {
       setDirectUpiFallbackMessage(
-        'Direct UPI payment is currently unavailable. Please choose another payment method.'
+        'Direct UPI payment is currently unavailable. Please check the payable amount or choose another payment method.'
       );
       return;
     }
@@ -427,39 +405,45 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setDirectUpiFallbackMessage(null);
     setIsOpeningDirectUpi(true);
 
-    try {
-      const targetUpiUri =
-        upiUri ||
-        buildUpiUri({
-          upiId: currentRawUpiId,
-          merchantName: currentMerchantName,
-          amount: total > 0 ? total : undefined,
-          transactionRef: transactionRef,
-          note: `FreshCart Order ${rawOrderId}`,
-        });
+    // If triggered from an anchor link with valid upi:// href, let native browser navigation handle it directly from user gesture.
+    // If triggered from another element (e.g. payment method card) or e is undefined, use window.location.href synchronously.
+    const isAnchorWithHref = Boolean(
+      e &&
+        (e.currentTarget as HTMLElement)?.tagName?.toLowerCase() === 'a' &&
+        (e.currentTarget as HTMLAnchorElement)?.getAttribute('href')?.startsWith('upi://')
+    );
 
-      const customerPhone = currentUser?.phone?.trim() || '';
-      const draftOrder: CustomerOrder = {
-        id: formattedOrderId,
-        customerId: currentUser?.id || 'guest_user',
-        customerName: currentUser?.name || 'Guest Customer',
-        customerEmail: currentUser?.email,
-        customerPhone: customerPhone || undefined,
-        deliveryAddress: address,
-        deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
-        estimatedDeliveryTime: 'Express Cold-Chain Delivery',
-        items: [...items],
-        subtotal,
-        discount,
-        total,
-        couponCode: appliedCoupon || undefined,
-        status: 'Pending',
-        createdAt: new Date().toISOString(),
-        paymentMethod: 'Direct Payment',
-        paymentStatus: 'INITIATED',
-      };
+    if (!isAnchorWithHref) {
+      try {
+        window.location.href = upiUri;
+      } catch (err) {
+        console.warn('[Direct Payment] window.location.href navigation failed:', err);
+      }
+    }
 
-      // 1. Dispatch draft order and payment attempt asynchronously with keepalive
+    // Background persistence: register draft order and payment attempt asynchronously without blocking UI/gesture
+    const customerPhone = currentUser?.phone?.trim() || '';
+    const draftOrder: CustomerOrder = {
+      id: formattedOrderId,
+      customerId: currentUser?.id || 'guest_user',
+      customerName: currentUser?.name || 'Guest Customer',
+      customerEmail: currentUser?.email,
+      customerPhone: customerPhone || undefined,
+      deliveryAddress: address,
+      deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
+      estimatedDeliveryTime: 'Express Cold-Chain Delivery',
+      items: [...items],
+      subtotal,
+      discount,
+      total,
+      couponCode: appliedCoupon || undefined,
+      status: 'Pending',
+      createdAt: new Date().toISOString(),
+      paymentMethod: 'Direct Payment',
+      paymentStatus: 'INITIATED',
+    };
+
+    if (!paymentAttemptCreated) {
       fetch('/api/orders', {
         method: 'POST',
         headers: {
@@ -474,8 +458,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         orderId: formattedOrderId,
         customerId: currentUser?.id || 'guest_user',
         amount: total,
-        upiId: currentRawUpiId,
-        merchantName: currentMerchantName,
+        upiId: rawUpiId,
+        merchantName: effectiveMerchantName,
         transactionRef: transactionRef,
       })
         .then((res) => {
@@ -484,72 +468,32 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
           }
         })
         .catch(() => {});
-
-      // 2. Comprehensive device detection
-      const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
-      const isIOS =
-        typeof navigator !== 'undefined' &&
-        (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-          (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent)));
-      const isMobile =
-        isAndroid ||
-        isIOS ||
-        (typeof navigator !== 'undefined' &&
-          /Mobi|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent));
-
-      if (!isMobile) {
-        setDirectUpiFallbackMessage(
-          'Unable to open UPI payment apps on this device. Please use a supported mobile device or choose another payment method.'
-        );
-        return;
-      }
-
-      // 3. On mobile devices, trigger compatible standard upi://pay deep link
-      let appOpened = false;
-      const onBlurOrHidden = () => {
-        appOpened = true;
-        setDirectUpiTriggered(true);
-      };
-
-      window.addEventListener('visibilitychange', onBlurOrHidden, { once: true });
-      window.addEventListener('blur', onBlurOrHidden, { once: true });
-      window.addEventListener('pagehide', onBlurOrHidden, { once: true });
-
-      // Trigger the compatible generic UPI URI (upi://pay) without hardcoding any single app.
-      // On Android, this prompts the OS app chooser with available UPI apps (Google Pay, PhonePe, Paytm, BHIM, etc.).
-      try {
-        const link = document.createElement('a');
-        link.href = targetUpiUri;
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => {
-          if (link.parentNode) link.parentNode.removeChild(link);
-        }, 300);
-      } catch {
-        window.location.href = targetUpiUri;
-      }
-
-      // 4. Graceful fallback timer: if page is still focused after 2.5s, show friendly fallback
-      setTimeout(() => {
-        window.removeEventListener('visibilitychange', onBlurOrHidden);
-        window.removeEventListener('blur', onBlurOrHidden);
-        window.removeEventListener('pagehide', onBlurOrHidden);
-
-        if (!appOpened && !document.hidden) {
-          setDirectUpiFallbackMessage(
-            'Unable to open a compatible UPI app on this device. Please ensure a UPI app is installed or choose another payment method.'
-          );
-        }
-      }, 2500);
-    } catch (err: any) {
-      console.error('[Direct Payment] Deep link error:', err);
-      setDirectUpiFallbackMessage(
-        'Unable to open UPI payment apps. Please choose another payment method.'
-      );
-    } finally {
-      setIsOpeningDirectUpi(false);
     }
+
+    // Fallback detection: if page is still focused after 2.5s and app didn't open, show graceful fallback
+    let appOpened = false;
+    const onBlurOrHidden = () => {
+      appOpened = true;
+      setDirectUpiTriggered(true);
+      setIsOpeningDirectUpi(false);
+    };
+
+    window.addEventListener('visibilitychange', onBlurOrHidden, { once: true });
+    window.addEventListener('blur', onBlurOrHidden, { once: true });
+    window.addEventListener('pagehide', onBlurOrHidden, { once: true });
+
+    setTimeout(() => {
+      window.removeEventListener('visibilitychange', onBlurOrHidden);
+      window.removeEventListener('blur', onBlurOrHidden);
+      window.removeEventListener('pagehide', onBlurOrHidden);
+      setIsOpeningDirectUpi(false);
+
+      if (!appOpened && !document.hidden) {
+        setDirectUpiFallbackMessage(
+          'Unable to open a compatible UPI app on this device. Please ensure a UPI app is installed or choose another payment method.'
+        );
+      }
+    }, 2500);
   };
 
   // Handlers for payment screenshot proof
@@ -1471,14 +1415,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
                       {/* Primary Action: Direct Payment Button to Open Installed UPI Apps */}
                       <div className="flex flex-col items-center space-y-2">
-                        <button
-                          type="button"
+                        <a
+                          href={isUpiValid && upiUri && total > 0 ? upiUri : '#'}
                           id="checkout-direct-open-apps-btn"
                           data-testid="checkout-direct-open-apps-btn"
                           data-action="direct-payment"
-                          disabled={isOpeningDirectUpi}
+                          aria-disabled={isOpeningDirectUpi}
                           onClick={handleDirectPaymentDeepLink}
-                          className="w-full py-3.5 px-6 rounded-xl checkout-neon-btn text-white text-sm font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                          className={`w-full py-3.5 px-6 rounded-xl checkout-neon-btn text-white text-sm font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 text-center ${
+                            isOpeningDirectUpi ? 'pointer-events-none opacity-60' : ''
+                          }`}
                         >
                           {isOpeningDirectUpi ? (
                             <>
@@ -1492,7 +1438,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                               <ExternalLink className="w-3.5 h-3.5 ml-1" />
                             </>
                           )}
-                        </button>
+                        </a>
                         <p className="text-[11px] text-slate-400 text-center">
                           Opens available UPI apps (Google Pay, PhonePe, Paytm, BHIM) on supported devices.
                         </p>

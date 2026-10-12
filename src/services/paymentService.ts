@@ -23,7 +23,7 @@ export function buildUpiUri(params: {
   transactionRef?: string;
   note?: string;
 }): string {
-  const pa = encodeURIComponent((params.upiId || '').trim());
+  const pa = encodeURIComponent((params.upiId || '').trim()).replace(/%40/g, '@');
   const pn = encodeURIComponent((params.merchantName || '').trim());
   const cu = 'INR';
 
@@ -36,12 +36,13 @@ export function buildUpiUri(params: {
 
   uri += `&cu=${cu}`;
 
-  if (params.transactionRef && params.transactionRef.trim().length > 0) {
-    uri += `&tr=${encodeURIComponent(params.transactionRef.trim())}`;
+  const orderRef = (params.note || params.transactionRef || '').trim();
+  if (orderRef) {
+    uri += `&tn=${encodeURIComponent(orderRef)}`;
   }
 
-  if (params.note && params.note.trim().length > 0) {
-    uri += `&tn=${encodeURIComponent(params.note.trim())}`;
+  if (params.transactionRef && params.transactionRef.trim().length > 0) {
+    uri += `&tr=${encodeURIComponent(params.transactionRef.trim())}`;
   }
 
   return uri;
