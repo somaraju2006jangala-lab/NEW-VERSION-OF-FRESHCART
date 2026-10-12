@@ -50,11 +50,6 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             <span className="text-[#006b2c] italic">{t('heroHeadingMinutes')}</span>
           </h1>
 
-          {/* Centered Description */}
-          <p className="text-[14px] sm:text-[15px] md:text-[16px] text-[#3e4a3d] leading-relaxed max-w-2xl text-center font-body">
-            {t('heroSubheading')}
-          </p>
-
           {/* Centered Quick Hero Search Input - Crystal Glass */}
           <div className="relative w-full max-w-xl pt-2 flex flex-col items-center">
             <form onSubmit={handleHeroSubmit} className="relative w-full flex items-center bg-white/35 backdrop-blur-md rounded-2xl shadow-xs border border-white/50 hover:border-white/80 focus-within:bg-white/55 transition-all text-left">
