@@ -76,7 +76,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const { currentUser, addOrder } = useAuth();
   const { t } = useLanguage();
   const [step, setStep] = useState<'details' | 'success'>('details');
-  const [checkoutStep, setCheckoutStep] = useState<'payment' | 'summary'>('payment');
+  const [checkoutStep, setCheckoutStep] = useState<'delivery' | 'payment' | 'summary'>('delivery');
   const [address, setAddress] = useState(
     currentUser?.address || '742 Evergreen Terrace, Apt 4B'
   );
@@ -642,13 +642,29 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
   };
 
-  const handleContinueToSummary = (e?: React.FormEvent) => {
+  const handleContinueToPayment = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!address.trim()) {
-      setAddressError('Please enter a delivery address to proceed to the order summary.');
+      setAddressError('Please enter a delivery address to proceed.');
       return;
     }
     setAddressError(null);
+    setCheckoutStep('payment');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBackToDelivery = () => {
+    setCheckoutStep('delivery');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleContinueToSummary = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!address.trim()) {
+      setAddressError('Please enter a delivery address.');
+      setCheckoutStep('delivery');
+      return;
+    }
     setCheckoutStep('summary');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1148,18 +1164,29 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             </div>
           </div>
         ) : (
-          /* Step: Details (Separated into Page 1: Select Payment Method & Page 2: Order Summary) */
+          /* Step: Details (Separated into Page 1: Delivery Details, Page 2: Select Payment Method, Page 3: Order Items & Summary) */
           <>
             {/* CHECKOUT STEPPER HEADER */}
             <div className="checkout-panel rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                {checkoutStep === 'payment' ? (
+                {checkoutStep === 'delivery' ? (
                   <button
                     type="button"
                     id="checkout-back-to-cart-btn"
                     onClick={onBackToCart}
                     className="w-10 h-10 rounded-full bg-slate-900/90 border border-white/15 hover:border-cyan-400 hover:bg-slate-800 text-cyan-400 transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm active:scale-95"
                     title="Return to Cart"
+                  >
+                    <ArrowLeft className="w-5 h-5 text-cyan-400" />
+                  </button>
+                ) : checkoutStep === 'payment' ? (
+                  <button
+                    type="button"
+                    id="checkout-back-to-delivery-btn"
+                    data-testid="checkout-back-to-delivery-btn"
+                    onClick={handleBackToDelivery}
+                    className="w-10 h-10 rounded-full bg-slate-900/90 border border-white/15 hover:border-cyan-400 hover:bg-slate-800 text-cyan-400 transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm active:scale-95"
+                    title="Back to Delivery Details"
                   >
                     <ArrowLeft className="w-5 h-5 text-cyan-400" />
                   </button>
@@ -1177,45 +1204,84 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 )}
                 <div>
                   <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight font-display">
-                    {checkoutStep === 'payment' ? 'Select Payment Method' : 'Order Summary'}
+                    {checkoutStep === 'delivery'
+                      ? 'Delivery Details'
+                      : checkoutStep === 'payment'
+                      ? 'Select Payment Method'
+                      : 'Order Items & Summary'}
                   </h1>
                   <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-                    {checkoutStep === 'payment'
-                      ? 'Step 1 of 2: Choose your payment method and review delivery address'
-                      : 'Step 2 of 2: Review your order details and confirm payment'}
+                    {checkoutStep === 'delivery'
+                      ? 'Step 1 of 3: Provide your delivery address and schedule'
+                      : checkoutStep === 'payment'
+                      ? 'Step 2 of 3: Choose your payment method and verify details'
+                      : 'Step 3 of 3: Review your order breakdown and confirm payment'}
                   </p>
                 </div>
               </div>
 
               {/* Stepper Progress Badges */}
-              <div className="flex items-center gap-2 self-start sm:self-auto bg-slate-950/80 p-1.5 px-3 rounded-xl border border-white/10">
+              <div className="flex items-center gap-1.5 sm:gap-2 self-start sm:self-auto bg-slate-950/80 p-1.5 px-3 rounded-xl border border-white/10 overflow-x-auto max-w-full">
+                {/* Step 1: Delivery Details */}
                 <button
                   type="button"
                   onClick={() => {
-                    if (checkoutStep === 'summary') handleBackToPayment();
+                    if (checkoutStep !== 'delivery') handleBackToDelivery();
                   }}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    checkoutStep === 'payment'
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    checkoutStep === 'delivery'
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
                       : 'text-slate-300 hover:text-white cursor-pointer'
                   }`}
                 >
                   <span
                     className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                      checkoutStep === 'payment'
+                      checkoutStep === 'delivery'
                         ? 'bg-emerald-500 text-slate-950'
                         : 'bg-emerald-500/30 text-emerald-300'
                     }`}
                   >
-                    {checkoutStep === 'summary' ? '✓' : '1'}
+                    {checkoutStep !== 'delivery' ? '✓' : '1'}
                   </span>
-                  <span>1. Payment Method</span>
+                  <span className="whitespace-nowrap">1. Delivery</span>
                 </button>
 
                 <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
 
+                {/* Step 2: Payment Method */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (checkoutStep === 'summary') handleBackToPayment();
+                    else if (checkoutStep === 'delivery') handleContinueToPayment();
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    checkoutStep === 'payment'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : checkoutStep === 'summary'
+                      ? 'text-slate-300 hover:text-white cursor-pointer'
+                      : 'text-slate-500 cursor-pointer'
+                  }`}
+                >
+                  <span
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      checkoutStep === 'payment'
+                        ? 'bg-emerald-500 text-slate-950'
+                        : checkoutStep === 'summary'
+                        ? 'bg-emerald-500/30 text-emerald-300'
+                        : 'bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {checkoutStep === 'summary' ? '✓' : '2'}
+                  </span>
+                  <span className="whitespace-nowrap">2. Payment</span>
+                </button>
+
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+
+                {/* Step 3: Order Summary */}
                 <div
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     checkoutStep === 'summary'
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
                       : 'text-slate-500'
@@ -1228,18 +1294,17 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                         : 'bg-slate-800 text-slate-500'
                     }`}
                   >
-                    2
+                    3
                   </span>
-                  <span>2. Order Summary</span>
+                  <span className="whitespace-nowrap">3. Summary</span>
                 </div>
               </div>
             </div>
 
-            {/* PAGE 1: SELECT PAYMENT METHOD */}
-            {checkoutStep === 'payment' ? (
+            {/* PAGE 1: DELIVERY ADDRESS & TIME SLOT */}
+            {checkoutStep === 'delivery' && (
               <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
-                {/* 1. DELIVERY ADDRESS & TIME SLOT */}
-                <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-3.5">
+                <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
@@ -1294,7 +1359,57 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   </div>
                 </div>
 
-                {/* 2. SELECT PAYMENT METHOD */}
+                {/* Page 1 Bottom Bar: Cart Total Preview & Continue */}
+                <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0">
+                      <ShoppingBag className="w-5 h-5 text-cyan-400" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-400">
+                        Cart Total ({totalItemCount} {totalItemCount === 1 ? 'item' : 'items'})
+                      </p>
+                      <p className="text-xl font-extrabold text-[#00e699] tabular-nums font-display">
+                        {formatINR(total)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    id="checkout-continue-btn"
+                    data-testid="checkout-continue-btn"
+                    onClick={handleContinueToPayment}
+                    className="py-3.5 px-8 rounded-xl checkout-neon-btn text-white text-sm sm:text-base font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
+                  >
+                    <span>Continue to Payment Method</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* PAGE 2: SELECT PAYMENT METHOD */}
+            {checkoutStep === 'payment' && (
+              <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
+                {/* Delivery Address Pill */}
+                <div className="checkout-subpanel rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
+                    <span className="text-slate-400 shrink-0">Delivering to:</span>
+                    <span className="text-white font-medium truncate">{address}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleBackToDelivery}
+                    className="text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Edit</span>
+                  </button>
+                </div>
+
+                {/* Payment Methods Selection Panel */}
                 <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-4 sm:space-y-5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -1731,26 +1846,23 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   )}
                 </div>
 
-                {/* 3. PAGE 1 BOTTOM ACTION BAR: CONTINUE TO ORDER SUMMARY */}
-                <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0">
-                      <ShoppingBag className="w-5 h-5 text-cyan-400" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400">
-                        Cart Total ({totalItemCount} {totalItemCount === 1 ? 'item' : 'items'})
-                      </p>
-                      <p className="text-xl font-extrabold text-[#00e699] tabular-nums font-display">
-                        {formatINR(total)}
-                      </p>
-                    </div>
-                  </div>
+                {/* Page 2 Bottom Bar: Back to Delivery & Continue to Order Summary */}
+                <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-4">
+                  <button
+                    type="button"
+                    id="checkout-back-to-delivery-btn-bottom"
+                    data-testid="checkout-back-to-delivery-btn"
+                    onClick={handleBackToDelivery}
+                    className="py-3 px-6 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 border border-white/15"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back to Delivery Details</span>
+                  </button>
 
                   <button
                     type="button"
-                    id="checkout-continue-btn"
-                    data-testid="checkout-continue-btn"
+                    id="checkout-continue-to-summary-btn"
+                    data-testid="checkout-continue-to-summary-btn"
                     onClick={handleContinueToSummary}
                     className="py-3.5 px-8 rounded-xl checkout-neon-btn text-white text-sm sm:text-base font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
                   >
@@ -1759,104 +1871,45 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   </button>
                 </div>
               </div>
-            ) : (
-              /* PAGE 2: ORDER SUMMARY */
-              <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
-                {/* 1. SELECTED PAYMENT METHOD & DELIVERY DETAILS RECAP */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Selected Payment Method Card */}
-                  <div className="checkout-panel rounded-2xl p-5 space-y-3.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <CreditCard className="w-4 h-4 text-cyan-400 shrink-0" />
-                        <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight font-display">
-                          Selected Payment Method
-                        </h2>
-                      </div>
-                      <button
-                        type="button"
-                        id="checkout-change-payment-btn"
-                        onClick={handleBackToPayment}
-                        className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Change</span>
-                      </button>
-                    </div>
+            )}
 
-                    <div className="checkout-subpanel rounded-xl p-3.5 flex items-start gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                        {paymentMethod === 'upi' ? (
-                          <QrCode className="w-5 h-5" />
-                        ) : paymentMethod === 'direct' ? (
-                          <Smartphone className="w-5 h-5" />
-                        ) : (
-                          <Banknote className="w-5 h-5" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0 text-xs">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-bold text-white text-sm">
-                            {paymentMethod === 'upi'
-                              ? 'Pay via UPI'
-                              : paymentMethod === 'direct'
-                              ? 'Direct Payment'
-                              : 'Cash on Delivery (COD)'}
-                          </p>
-                          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                            Active Selection
-                          </span>
-                        </div>
-                        <p className="text-slate-400 mt-1">
-                          {paymentMethod === 'upi'
-                            ? `UPI ID: ${rawUpiId || 'merchant@upi'}`
-                            : paymentMethod === 'direct'
-                            ? `UPI Chooser (Ref: ${transactionRef})`
-                            : 'Doorstep cash handover upon delivery'}
-                        </p>
-                        {(paymentMethod === 'upi' || paymentMethod === 'direct') && (
-                          <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
-                            Payee: {effectiveMerchantName}
-                          </p>
-                        )}
-                      </div>
+            {/* PAGE 3: ORDER ITEMS & SUMMARY */}
+            {checkoutStep === 'summary' && (
+              <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
+                {/* 1. DELIVERY DETAILS RECAP */}
+                <div className="checkout-panel rounded-2xl p-5 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight font-display">
+                        Delivery Destination
+                      </h2>
                     </div>
+                    <button
+                      type="button"
+                      id="checkout-edit-delivery-btn"
+                      onClick={handleBackToDelivery}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
                   </div>
 
-                  {/* Delivery Address Card */}
-                  <div className="checkout-panel rounded-2xl p-5 space-y-3.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
-                        <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight font-display">
-                          Delivery Destination
-                        </h2>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleBackToPayment}
-                        className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Edit</span>
-                      </button>
+                  <div className="checkout-subpanel rounded-xl p-3.5 space-y-2 text-xs">
+                    <div>
+                      <p className="text-slate-400 text-[11px]">Address:</p>
+                      <p className="font-medium text-white">{address}</p>
                     </div>
-
-                    <div className="checkout-subpanel rounded-xl p-3.5 space-y-2 text-xs">
+                    {deliveryNote && (
                       <div>
-                        <p className="text-slate-400 text-[11px]">Address:</p>
-                        <p className="font-medium text-white">{address}</p>
+                        <p className="text-slate-400 text-[11px]">Note:</p>
+                        <p className="text-slate-300 italic">{deliveryNote}</p>
                       </div>
-                      {deliveryNote && (
-                        <div>
-                          <p className="text-slate-400 text-[11px]">Note:</p>
-                          <p className="text-slate-300 italic">{deliveryNote}</p>
-                        </div>
-                      )}
-                      <div className="pt-1 flex items-center gap-2 text-cyan-400 text-[11px]">
-                        <Clock className="w-3.5 h-3.5 shrink-0" />
-                        <span>Express Cold-Chain Delivery, 24–30 Minutes</span>
-                      </div>
+                    )}
+                    <div className="pt-1 flex items-center gap-2 text-cyan-400 text-[11px]">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      <span>Express Cold-Chain Delivery, 24–30 Minutes</span>
                     </div>
                   </div>
                 </div>
@@ -1947,116 +2000,48 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   </div>
                 </div>
 
-                {/* 3. PAYMENT VERIFICATION & FINAL CONFIRMATION */}
-                <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-5">
-                  {(paymentMethod === 'upi' || paymentMethod === 'direct') ? (
-                    <div className="space-y-4">
-                      {uploadedScreenshotUrl ? (
-                        <div className="p-4 bg-emerald-950/40 border border-emerald-500/30 rounded-xl space-y-3">
-                          <div className="flex items-center gap-2 text-emerald-300 font-semibold text-xs sm:text-sm">
-                            <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                            <span>Payment Proof Submitted — Awaiting Admin Verification</span>
-                          </div>
-                          <div className="flex items-center gap-3 bg-black/40 p-2.5 rounded-lg border border-white/10">
-                            {screenshotPreview && (
-                              <img
-                                src={screenshotPreview}
-                                alt="Proof Preview"
-                                className="w-12 h-12 object-cover rounded-md border border-white/20"
-                              />
-                            )}
-                            <div className="text-xs text-slate-300 min-w-0">
-                              <p className="font-semibold text-white truncate">
-                                {screenshotFile ? screenshotFile.name : 'Payment Screenshot Proof'}
-                              </p>
-                              <p className="text-[11px] text-slate-400">
-                                Ref: <span className="font-mono text-cyan-300">{transactionRef}</span>
-                              </p>
-                            </div>
-                          </div>
-                          <p className="text-[11px] text-slate-400 leading-relaxed">
-                            Your payment proof has been uploaded. You can now confirm and place your order below. Admin will verify before dispatch.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          <div
-                            id="checkout-upi-proof-required-alert"
-                            data-testid="checkout-upi-proof-required-alert"
-                            className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5 animate-fadeIn"
-                          >
-                            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
-                            <span>
-                              Please submit payment proof first before confirming your order.
-                            </span>
-                          </div>
+                {/* 3. FINAL CONFIRMATION ACTION BAR */}
+                <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col-reverse sm:flex-row items-center justify-between gap-4">
+                  <button
+                    type="button"
+                    id="checkout-back-to-payment-btn-bottom"
+                    data-testid="checkout-back-to-payment-btn"
+                    onClick={handleBackToPayment}
+                    className="w-full sm:w-auto py-3 px-6 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 border border-white/15"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Back to Payment Method</span>
+                  </button>
 
-                          {/* Allow screenshot upload directly on Page 2 if customer hasn't uploaded yet */}
-                          <div className="space-y-2">
-                            <p className="text-xs font-semibold text-white">
-                              Upload Payment Screenshot for Verification:
-                            </p>
-                            {renderScreenshotUploadSection()}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* COD instructions */
-                    <div className="p-4 bg-slate-900/60 border border-white/10 rounded-xl space-y-1.5 text-xs text-slate-300">
-                      <div className="flex items-center gap-2 text-white font-semibold">
-                        <Banknote className="w-4 h-4 text-cyan-400 shrink-0" />
-                        <span>Cash on Delivery Handover</span>
-                      </div>
-                      <p className="text-slate-400">
-                        Please keep exact cash of <strong className="text-white">{formatINR(total)}</strong> ready. Our delivery partner will collect payment at doorstep upon order delivery.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* ACTION BUTTONS (Back + Confirm Order) */}
-                  <div className="pt-2 flex flex-col-reverse sm:flex-row items-center justify-between gap-3 border-t border-white/10">
-                    <button
-                      type="button"
-                      id="checkout-back-to-payment-btn-bottom"
-                      data-testid="checkout-back-to-payment-btn"
-                      onClick={handleBackToPayment}
-                      className="w-full sm:w-auto py-3 px-6 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 border border-white/15"
-                    >
-                      <ArrowLeft className="w-4 h-4" />
-                      <span>Back to Payment Method</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      id="checkout-place-order-btn"
-                      data-testid="checkout-confirm-order-btn"
-                      disabled={
-                        items.length === 0 ||
-                        isSubmitting ||
-                        ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
-                      }
-                      onClick={handlePlaceOrder}
-                      className={`w-full sm:w-auto py-3.5 px-8 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer ${
-                        items.length === 0 ||
-                        isSubmitting ||
-                        ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5 opacity-60'
-                          : 'checkout-neon-btn text-white active:scale-[0.99]'
-                      }`}
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          <span>Processing Order...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>Confirm Order ({formatINR(total)}) →</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    id="checkout-place-order-btn"
+                    data-testid="checkout-confirm-order-btn"
+                    disabled={
+                      items.length === 0 ||
+                      isSubmitting ||
+                      ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
+                    }
+                    onClick={handlePlaceOrder}
+                    className={`w-full sm:w-auto py-3.5 px-8 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer ${
+                      items.length === 0 ||
+                      isSubmitting ||
+                      ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5 opacity-60'
+                        : 'checkout-neon-btn text-white active:scale-[0.99]'
+                    }`}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <span>Processing Order...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Confirm Order ({formatINR(total)}) →</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             )}
