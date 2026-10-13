@@ -204,10 +204,12 @@ export async function generateOrderOtp(
 
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
-  // If order is Cash on Delivery, OTP is NOT required and must not be generated
+  // 1. If order is Cash on Delivery, OTP is NOT required and must not be generated
   const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
   const isCod =
+    !dbOrder?.paymentMethod ||
     dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
+    dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
   if (isCod) {
     return {
@@ -216,8 +218,36 @@ export async function generateOrderOtp(
       maskedPhone: 'Not available',
       expiresAt: 0,
       otp: '',
-      message: 'OTP is not required for Cash on Delivery orders.',
-      error: 'OTP is not required for Cash on Delivery orders.',
+      message: 'OTP is not permitted for Cash on Delivery orders.',
+      error: 'OTP is not permitted for Cash on Delivery orders.',
+    };
+  }
+
+  // 2. Online payments must have COMPLETED/PAID payment status
+  const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+  if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+    return {
+      success: false,
+      orderId,
+      maskedPhone: 'Not available',
+      expiresAt: 0,
+      otp: '',
+      message: 'OTP can only be generated for online orders with COMPLETED payment status.',
+      error: 'OTP can only be generated for online orders with COMPLETED payment status.',
+    };
+  }
+
+  // 3. Customer contact channel validation
+  const phoneToValidate = customerPhone || dbOrder?.customerPhone || dbOrder?.mobile;
+  if (!phoneToValidate || !String(phoneToValidate).trim()) {
+    return {
+      success: false,
+      orderId,
+      maskedPhone: 'Not available',
+      expiresAt: 0,
+      otp: '',
+      message: 'Cannot send OTP: Valid customer mobile number is not available.',
+      error: 'Cannot send OTP: Valid customer mobile number is not available.',
     };
   }
 
@@ -271,7 +301,7 @@ export async function generateOrderOtp(
   });
 
   if (isMySqlConnected()) {
-    saveOtpRecordInDb({
+    await saveOtpRecordInDb({
       orderId,
       customerId: customerId || 'guest',
       otp,
@@ -279,7 +309,7 @@ export async function generateOrderOtp(
       otpSalt: salt,
       expiresAt,
       used: false,
-    }).catch(() => { });
+    });
   }
 
   return {
@@ -325,21 +355,49 @@ export async function resendOrderOtp(
 
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
-  // If order is Cash on Delivery, OTP is NOT required
+  // If order is Cash on Delivery, OTP is NOT permitted
   const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
   const isCod =
+    !dbOrder?.paymentMethod ||
     dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
+    dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
   if (isCod) {
     return {
       success: false,
       orderId,
-      message: 'OTP is not required for Cash on Delivery orders.',
-      error: 'OTP is not required for Cash on Delivery orders.',
+      message: 'OTP is not permitted for Cash on Delivery orders.',
+      error: 'OTP is not permitted for Cash on Delivery orders.',
+    };
+  }
+
+  // Strictly require online payment status to be COMPLETED / PAID
+  const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+  if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+    return {
+      success: false,
+      orderId,
+      message: 'OTP can only be resent for online orders with COMPLETED payment status.',
+      error: 'OTP can only be resent for online orders with COMPLETED payment status.',
     };
   }
 
   const existing = otpStore.get(orderId) || otpStore.get(altId);
+
+  // Rate limiting / cooldown check (15 seconds)
+  if (existing && existing.createdAt && existing.status === 'UNUSED') {
+    const elapsedMs = Date.now() - new Date(existing.createdAt).getTime();
+    if (elapsedMs < 15000) {
+      return {
+        success: false,
+        orderId,
+        message: 'Please wait before requesting another OTP.',
+        error: 'Please wait before requesting another OTP.',
+        maskedPhone: existing.maskedPhone,
+        expiresAt: existing.expiresAt,
+      };
+    }
+  }
   const customerId = fallbackCustomerId || existing?.customerId || 'guest';
   const customerPhone = fallbackCustomerPhone || existing?.customerPhone || '';
 
@@ -399,7 +457,7 @@ export async function resendOrderOtp(
   persistStore();
 
   if (isMySqlConnected()) {
-    saveOtpRecordInDb({
+    await saveOtpRecordInDb({
       orderId,
       customerId,
       otp,
@@ -407,7 +465,7 @@ export async function resendOrderOtp(
       otpSalt: salt,
       expiresAt,
       used: false,
-    }).catch(() => { });
+    });
   }
 
   return {
@@ -549,12 +607,12 @@ export async function verifyOrderOtp(
     persistStore();
 
     if (isMySqlConnected()) {
-      updateOrderOtpInDb(orderId, {
+      await updateOrderOtpInDb(orderId, {
         otpStatus: 'USED',
         otpVerifiedAt: verifiedAt,
         status: 'Delivered',
         used: true,
-      }).catch(() => { });
+      });
     }
 
     return {

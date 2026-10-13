@@ -58,9 +58,17 @@ import {
   ChevronDown,
   Store,
   Banknote,
+  Clock,
 } from 'lucide-react';
 import QRCode from 'qrcode';
-import { verifyOrderOtp, maskMobileNumber } from '../services/otpClientService';
+import {
+  generateOrderOtp,
+  verifyOrderOtp,
+  resendOrderOtp,
+  getOrderOtpStatus,
+  maskMobileNumber,
+  OtpStatusResult,
+} from '../services/otpClientService';
 import {
   getCustomerPhoneForOrder,
   updateOrderPaymentStatus,
@@ -910,6 +918,40 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const selectedOtpOrder = selectedOtpOrderId
     ? ordersList.find((o) => o.id === selectedOtpOrderId)
     : null;
+  const [orderOtpStatusMap, setOrderOtpStatusMap] = useState<Record<string, OtpStatusResult>>({});
+  const [isSendingOtp, setIsSendingOtp] = useState<Record<string, boolean>>({});
+  const [resendCooldown, setResendCooldown] = useState<Record<string, number>>({});
+
+  // Fetch authoritative OTP record status when opening dedicated OTP page
+  useEffect(() => {
+    if (!selectedOtpOrderId) return;
+    getOrderOtpStatus(selectedOtpOrderId, { role: 'admin' }).then((status) => {
+      if (status) {
+        setOrderOtpStatusMap((prev) => ({ ...prev, [selectedOtpOrderId]: status }));
+      }
+    });
+  }, [selectedOtpOrderId]);
+
+  // Resend OTP Cooldown countdown timer
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [id, count] of Object.entries(next)) {
+          if (count > 0) {
+            next[id] = count - 1;
+            changed = true;
+          } else {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // UPI Payment Configuration State
   const [upiIdInput, setUpiIdInput] = useState('');
@@ -1450,6 +1492,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const res = await verifyOrderOtp(order.id, enteredOtp);
       if (res.success && res.status === 'Delivered') {
+        const verifiedTime = res.verifiedAt || new Date().toISOString();
         setOrderOtpFeedback((prev) => ({
           ...prev,
           [order.id]: {
@@ -1459,10 +1502,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         }));
         if (onUpdateOrderStatus) {
           onUpdateOrderStatus(order.id, 'Delivered', {
-            otpVerifiedAt: res.verifiedAt || new Date().toISOString(),
+            otpVerifiedAt: verifiedTime,
             handoverReleased: true,
           });
         }
+        setOrdersList((prev) =>
+          prev.map((o) =>
+            o.id === order.id ? { ...o, status: 'Delivered', otpVerifiedAt: verifiedTime } : o
+          )
+        );
+        setOrderOtpStatusMap((prev) => ({
+          ...prev,
+          [order.id]: {
+            ...(prev[order.id] || {}),
+            status: 'USED',
+            verifiedAt: verifiedTime,
+            hasRecord: true,
+            orderId: order.id,
+            maskedPhone: prev[order.id]?.maskedPhone || 'Customer mobile',
+            expiresAt: prev[order.id]?.expiresAt || 0,
+            isExpired: false,
+            providerConfigured: true,
+          },
+        }));
         setOrderOtpInputs((prev) => {
           const next = { ...prev };
           delete next[order.id];
@@ -1482,7 +1544,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             ...prev,
             [order.id]: {
               type: 'error',
-              message: 'Invalid OTP.',
+              message: res.remainingAttempts !== undefined
+                ? `Invalid OTP. (${res.remainingAttempts} attempt${res.remainingAttempts === 1 ? '' : 's'} remaining)`
+                : 'Invalid OTP.',
               remainingAttempts: res.remainingAttempts,
             },
           }));
@@ -1498,6 +1562,89 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       }));
     } finally {
       setOrderVerifying((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const handleGenerateOtp = async (order: CustomerOrder) => {
+    if (isSendingOtp[order.id]) return;
+    const rawPhone = getCustomerPhoneForOrder(order);
+    setIsSendingOtp((prev) => ({ ...prev, [order.id]: true }));
+    try {
+      const res = await generateOrderOtp(order.id, order.customerId || 'guest', rawPhone || '');
+      if (res.success) {
+        setResendCooldown((prev) => ({ ...prev, [order.id]: 30 }));
+        setOrderOtpFeedback((prev) => ({
+          ...prev,
+          [order.id]: {
+            type: 'success',
+            message: 'Order Handover OTP generated and dispatched to customer.',
+          },
+        }));
+        const updatedStatus = await getOrderOtpStatus(order.id, { role: 'admin' });
+        if (updatedStatus) {
+          setOrderOtpStatusMap((prev) => ({ ...prev, [order.id]: updatedStatus }));
+        }
+      } else {
+        setOrderOtpFeedback((prev) => ({
+          ...prev,
+          [order.id]: {
+            type: 'error',
+            message: res.error || res.message || 'Failed to generate OTP.',
+          },
+        }));
+      }
+    } catch {
+      setOrderOtpFeedback((prev) => ({
+        ...prev,
+        [order.id]: {
+          type: 'error',
+          message: 'Error communicating with server to generate OTP.',
+        },
+      }));
+    } finally {
+      setIsSendingOtp((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const handleResendOtp = async (order: CustomerOrder) => {
+    if (isSendingOtp[order.id] || (resendCooldown[order.id] || 0) > 0) return;
+    const rawPhone = getCustomerPhoneForOrder(order);
+    setIsSendingOtp((prev) => ({ ...prev, [order.id]: true }));
+    try {
+      const res = await resendOrderOtp(order.id, order.customerId || 'guest', rawPhone || '');
+      if (res.success) {
+        setResendCooldown((prev) => ({ ...prev, [order.id]: 30 }));
+        setOrderOtpInputs((prev) => ({ ...prev, [order.id]: '' }));
+        setOrderOtpFeedback((prev) => ({
+          ...prev,
+          [order.id]: {
+            type: 'success',
+            message: 'Fresh 6-digit OTP dispatched to customer. Previous code invalidated.',
+          },
+        }));
+        const updatedStatus = await getOrderOtpStatus(order.id, { role: 'admin' });
+        if (updatedStatus) {
+          setOrderOtpStatusMap((prev) => ({ ...prev, [order.id]: updatedStatus }));
+        }
+      } else {
+        setOrderOtpFeedback((prev) => ({
+          ...prev,
+          [order.id]: {
+            type: 'error',
+            message: res.error || res.message || 'Failed to resend OTP.',
+          },
+        }));
+      }
+    } catch {
+      setOrderOtpFeedback((prev) => ({
+        ...prev,
+        [order.id]: {
+          type: 'error',
+          message: 'Error communicating with server to resend OTP.',
+        },
+      }));
+    } finally {
+      setIsSendingOtp((prev) => ({ ...prev, [order.id]: false }));
     }
   };
 
@@ -2648,201 +2795,392 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         {/* Tab 4: Customer Orders */}
         {activeTab === 'orders' && (
           selectedOtpOrder ? (
-            /* Dedicated OTP Verification Page */
-            <div className="bg-black/35 backdrop-blur-xl rounded-xl border border-white/12 shadow-2xl overflow-hidden p-4 sm:p-6 space-y-6">
-              {/* Top Navigation: Back to Customer Orders */}
-              <div className="flex items-center justify-between pb-4 border-b border-white/10">
-                <button
-                  type="button"
-                  id="back-to-customer-orders-btn"
-                  onClick={() => setSelectedOtpOrderId(null)}
-                  className="px-3.5 py-1.5 rounded-lg border border-white/15 bg-black/30 hover:bg-black/50 text-slate-200 hover:text-white text-[13px] font-semibold flex items-center gap-2 cursor-pointer transition-colors shadow-2xs backdrop-blur-md"
+            /* Dedicated OTP Verification Page - Black Liquid Semi-Solid Opaque Theme */
+            (() => {
+              const displayOrderId = selectedOtpOrder.id.startsWith('#')
+                ? selectedOtpOrder.id
+                : `#${selectedOtpOrder.id}`;
+              const cleanOrderId = selectedOtpOrder.id.replace(/^#/, '');
+              const rawPhone = getCustomerPhoneForOrder(selectedOtpOrder);
+              const displayMobile =
+                formatIndianDisplayNumber(rawPhone) || rawPhone || 'Not available';
+              const validatedPhone = validateIndianMobileNumber(rawPhone);
+              const maskedMobile =
+                validatedPhone.isValid && validatedPhone.normalized
+                  ? maskMobileNumber(validatedPhone.normalized)
+                  : rawPhone && rawPhone.trim().length >= 4
+                  ? `******${rawPhone.replace(/\D/g, '').slice(-4)}`
+                  : 'Not available';
+              const paymentInfo = getDisplayPaymentInfo(selectedOtpOrder);
+              const otpStatus = orderOtpStatusMap[selectedOtpOrder.id];
+              const isDelivered = selectedOtpOrder.status === 'Delivered';
+              const hasOtpRecord = Boolean(otpStatus?.hasRecord || selectedOtpOrder.otpVerifiedAt);
+              const isExpired = otpStatus?.isExpired || otpStatus?.status === 'EXPIRED';
+              const isLocked = otpStatus?.status === 'LOCKED';
+              const cooldownSeconds = resendCooldown[selectedOtpOrder.id] || 0;
+              const isSending = isSendingOtp[selectedOtpOrder.id] || false;
+              const isVerifying = orderVerifying[selectedOtpOrder.id] || false;
+              const currentFeedback = orderOtpFeedback[selectedOtpOrder.id];
+
+              return (
+                <div
+                  id={`dedicated-otp-page-${cleanOrderId}`}
+                  className="relative rounded-2xl overflow-hidden border border-white/[0.12] bg-[#05070c]/90 backdrop-blur-2xl shadow-[0_24px_64px_rgba(0,0,0,0.85),inset_0_1px_1px_rgba(255,255,255,0.15)] p-4 sm:p-7 space-y-6 transition-all duration-200"
                 >
-                  <ArrowLeft className="w-4 h-4 text-[#10b981]" />
-                  <span>Back to Customer Orders</span>
-                </button>
-                <span className="text-[12px] font-semibold text-[#94a3b8]">
-                  Customer Orders Ledger &rsaquo; OTP Verification
-                </span>
-              </div>
+                  {/* Liquid glass ambient background & soft green accent lighting */}
+                  <div className="pointer-events-none absolute -top-32 -right-32 w-80 h-80 bg-emerald-500/12 rounded-full blur-3xl" />
+                  <div className="pointer-events-none absolute -bottom-32 -left-32 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl" />
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
 
-              {/* Title & Example format required by user:
-                  OTP Verification
-
-                  Order ID: #FC-1005
-                  Customer: Rahul
-
-                  Mobile: ******1234
-                  Status: Picking
-
-                  Enter OTP:
-                  [ ______ ] [ Verify OTP ]
-              */}
-              <div className="max-w-xl space-y-5">
-                <div>
-                  <h3 className="text-[22px] font-bold text-white font-display">
-                    OTP Verification
-                  </h3>
-                  <p className="text-[12px] text-[#94a3b8] mt-0.5">
-                    Order handover verification with customer
-                  </p>
-                </div>
-
-                <div className="bg-black/25 backdrop-blur-md border border-white/12 rounded-xl p-5 space-y-3 font-mono text-[14px]">
-                  <div>
-                    <span className="font-semibold text-[#94a3b8]">Order ID: </span>
-                    <span className="font-bold text-[#10b981]">
-                      {selectedOtpOrder.id.startsWith('#') ? selectedOtpOrder.id : `#${selectedOtpOrder.id}`}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-[#94a3b8]">Customer: </span>
-                    <span className="font-bold text-white">{selectedOtpOrder.customerName}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-[#94a3b8]">User ID: </span>
-                    <span className="font-semibold text-slate-200">{selectedOtpOrder.customerId || 'N/A'}</span>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-[#94a3b8]">
-                      {(() => {
-                        const rawPhone = getCustomerPhoneForOrder(selectedOtpOrder);
-                        const validated = validateIndianMobileNumber(rawPhone);
-                        return validated.isValid && validated.normalized ? 'Masked Mobile: ' : 'Mobile: ';
-                      })()}
-                    </span>
-                    <span className="font-bold text-white tracking-wider">
-                      {(() => {
-                        const rawPhone = getCustomerPhoneForOrder(selectedOtpOrder);
-                        const validated = validateIndianMobileNumber(rawPhone);
-                        if (validated.isValid && validated.normalized) {
-                          return maskMobileNumber(validated.normalized);
-                        }
-                        if (rawPhone && rawPhone.trim()) {
-                          const digits = rawPhone.replace(/\D/g, '');
-                          if (digits.length >= 4) {
-                            return `******${digits.slice(-4)}`;
-                          }
-                        }
-                        return 'Not available';
-                      })()}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[#94a3b8]">Status: </span>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-bold border font-sans ${
-                        selectedOtpOrder.status === 'Picking'
-                          ? 'bg-[#fef3c7] text-[#92400e] border-[#fde68a]'
-                          : selectedOtpOrder.status === 'Delivered'
-                          ? 'bg-[#eff4ff] text-[#1d4ed8] border-[#bfdbfe]'
-                          : 'bg-[#f1f5f9] text-[#475569] border-[#cbd5e1]'
-                      }`}
+                  {/* Top Navigation Bar */}
+                  <div className="relative flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
+                    <button
+                      type="button"
+                      id="back-to-customer-orders-btn"
+                      onClick={() => setSelectedOtpOrderId(null)}
+                      className="px-3.5 py-1.5 rounded-xl border border-white/15 bg-black/40 hover:bg-black/60 text-slate-200 hover:text-white text-[13px] font-semibold flex items-center gap-2 cursor-pointer transition-all shadow-[0_4px_16px_rgba(0,0,0,0.4)] backdrop-blur-md hover:border-white/25"
                     >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          selectedOtpOrder.status === 'Picking'
-                            ? 'bg-[#f59e0b]'
-                            : selectedOtpOrder.status === 'Delivered'
-                            ? 'bg-[#3b82f6]'
-                            : 'bg-[#94a3b8]'
-                        }`}
-                      />
-                      {selectedOtpOrder.status}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Form when status is Picking */}
-                {selectedOtpOrder.status === 'Picking' ? (
-                  <div className="space-y-3 pt-2">
-                    <label
-                      htmlFor="separate-otp-input"
-                      className="block text-[13px] font-bold text-white"
-                    >
-                      Order Handover OTP
-                    </label>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <input
-                        type="text"
-                        id="separate-otp-input"
-                        maxLength={6}
-                        value={orderOtpInputs[selectedOtpOrder.id] || ''}
-                        onChange={(e) => handleOtpInputChange(selectedOtpOrder.id, e.target.value)}
-                        placeholder="[ Enter OTP ]"
-                        autoFocus
-                        className="w-44 h-10 px-3 font-mono text-[16px] tracking-widest text-center font-bold bg-black/30 text-white border border-white/15 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#10b981] focus:border-[#10b981] placeholder:text-slate-500"
-                        disabled={orderVerifying[selectedOtpOrder.id]}
-                      />
-                      <button
-                        type="button"
-                        id="separate-otp-verify-btn"
-                        onClick={() => handleVerifyOtp(selectedOtpOrder)}
-                        disabled={
-                          orderVerifying[selectedOtpOrder.id] ||
-                          (orderOtpInputs[selectedOtpOrder.id] || '').length !== 6
-                        }
-                        className={`h-10 px-5 rounded-lg text-[13px] font-bold shadow-xs transition-colors flex items-center gap-2 cursor-pointer ${
-                          (orderOtpInputs[selectedOtpOrder.id] || '').length === 6 && !orderVerifying[selectedOtpOrder.id]
-                            ? 'bg-[#006b2c] hover:bg-[#005221] text-white'
-                            : 'bg-white/5 border border-white/10 text-slate-500 cursor-not-allowed'
-                        }`}
-                      >
-                        {orderVerifying[selectedOtpOrder.id] ? (
-                          <>
-                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Verifying...</span>
-                          </>
-                        ) : (
-                          <span>Verify OTP</span>
-                        )}
-                      </button>
+                      <ArrowLeft className="w-4 h-4 text-[#10b981]" />
+                      <span>Back to Customer Orders</span>
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-[12px] font-medium text-slate-300 font-mono">
+                        Customer Orders Ledger &rsaquo; Order {displayOrderId} &rsaquo; OTP Verification
+                      </span>
                     </div>
-
-                    {/* Feedback Messages */}
-                    {orderOtpFeedback[selectedOtpOrder.id] && (
-                      <div
-                        id="separate-otp-feedback"
-                        className={`text-[12px] p-3 rounded-lg flex items-center justify-between gap-2 animate-in fade-in mt-2 ${
-                          orderOtpFeedback[selectedOtpOrder.id].type === 'success'
-                            ? 'bg-[#f0fdf4] text-[#15803d] border border-[#bbf7d0] font-bold'
-                            : orderOtpFeedback[selectedOtpOrder.id].type === 'expired'
-                            ? 'bg-[#fffbeb] text-[#b45309] border border-[#fde68a] font-semibold'
-                            : 'bg-[#fef2f2] text-[#b91c1c] border border-[#fecaca] font-semibold'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          {orderOtpFeedback[selectedOtpOrder.id].type === 'success' ? (
-                            <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
-                          ) : (
-                            <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
-                          )}
-                          <span>{orderOtpFeedback[selectedOtpOrder.id].message}</span>
-                        </div>
-                      </div>
-                    )}
                   </div>
-                ) : (
-                  /* Delivered State */
-                  <div className="pt-2 space-y-3">
-                    <div className="bg-emerald-950/30 border border-emerald-500/30 p-4 rounded-xl flex items-center gap-3 backdrop-blur-md">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-[#10b981] flex items-center justify-center shrink-0">
-                        <CheckCircle className="w-5 h-5 text-[#10b981]" />
+
+                  {/* Header Title Section */}
+                  <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[#10b981] flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.25)]">
+                        <ShieldCheck className="w-6 h-6 text-[#10b981]" />
                       </div>
                       <div>
-                        <h4 className="text-[14px] font-bold text-emerald-400">
-                          OTP Verified. Order completed.
-                        </h4>
-                        <p className="text-[12px] text-emerald-200/80 mt-0.5">
-                          Order has been successfully handed over to customer. OTP is retired and cannot be reused.
-                          {selectedOtpOrder.otpVerifiedAt && ` (Verified: ${formatOrderDateTime(selectedOtpOrder.otpVerifiedAt)})`}
+                        <h3 className="text-[22px] font-bold text-white font-display tracking-tight flex items-center gap-2">
+                          <span>Order Handover OTP Verification</span>
+                        </h3>
+                        <p className="text-[12px] text-slate-400 mt-0.5">
+                          Verify customer 6-digit code for physical order handover authorization
                         </p>
                       </div>
                     </div>
+
+                    {/* Quick status pills */}
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-[12px] font-bold border font-mono ${
+                          isDelivered
+                            ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/40'
+                            : 'bg-amber-950/60 text-amber-400 border-amber-500/40'
+                        }`}
+                      >
+                        ● Status: {selectedOtpOrder.status}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-full text-[12px] font-bold border font-mono bg-emerald-950/60 text-[#10b981] border-[#10b981]/40">
+                        ● Payment: {paymentInfo.paymentStatus}
+                      </span>
+                    </div>
                   </div>
-                )}
-              </div>
-            </div>
+
+                  {/* Two-Column Grid: Order Details & OTP Verification Controls */}
+                  <div className="relative grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    {/* Panel 1: Order & Customer Information (Liquid Glass Card) */}
+                    <div className="rounded-xl border border-white/10 bg-black/60 backdrop-blur-xl p-5 sm:p-6 space-y-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                        <h4 className="text-[14px] font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                          <ShoppingBag className="w-4 h-4 text-[#10b981]" />
+                          <span>Order & Customer Details</span>
+                        </h4>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {formatOrderDateTime(selectedOtpOrder.createdAt)}
+                        </span>
+                      </div>
+
+                      <div className="space-y-3 font-mono text-[13px]">
+                        <div className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="font-semibold text-slate-400">Order ID:</span>
+                          <span id="otp-page-order-id" className="font-bold text-[#10b981] text-[14px]">
+                            {displayOrderId}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="font-semibold text-slate-400">Customer Name:</span>
+                          <span id="otp-page-customer-name" className="font-bold text-white font-sans text-[14px]">
+                            {selectedOtpOrder.customerName}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="font-semibold text-slate-400">Customer ID:</span>
+                          <span id="otp-page-customer-id" className="font-semibold text-slate-200">
+                            {selectedOtpOrder.customerId || 'N/A'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="font-semibold text-slate-400">Customer Mobile:</span>
+                          <span id="otp-page-customer-mobile" className="font-bold text-white tracking-wider flex items-center gap-1.5 font-sans">
+                            <Phone className="w-3.5 h-3.5 text-[#10b981]" />
+                            <span>{displayMobile}</span>
+                            {maskedMobile !== 'Not available' && (
+                              <span className="text-[11px] text-slate-400 font-mono">({maskedMobile})</span>
+                            )}
+                          </span>
+                        </div>
+
+                        {selectedOtpOrder.customerEmail && (
+                          <div className="flex items-center justify-between py-1 border-b border-white/5">
+                            <span className="font-semibold text-slate-400">Customer Email:</span>
+                            <span id="otp-page-customer-email" className="text-slate-200 font-sans text-[12px] flex items-center gap-1.5">
+                              <Mail className="w-3.5 h-3.5 text-slate-400" />
+                              <span>{selectedOtpOrder.customerEmail}</span>
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="font-semibold text-slate-400">Order Total:</span>
+                          <span className="font-bold text-[#10b981] text-[14px]">
+                            {formatINR(selectedOtpOrder.total)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between py-1 border-b border-white/5">
+                          <span className="font-semibold text-slate-400">Payment Method:</span>
+                          <span id="otp-page-payment-method" className="font-bold text-white flex items-center gap-1.5">
+                            <CreditCard className="w-3.5 h-3.5 text-[#10b981]" />
+                            <span>{paymentInfo.paymentMethod}</span>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between py-1">
+                          <span className="font-semibold text-slate-400">Payment Status:</span>
+                          <span
+                            id="otp-page-payment-status"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[12px] font-bold border border-emerald-500/50 bg-[#064e3b]/50 text-[#10b981]"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#10b981]" />
+                            <span>{paymentInfo.paymentStatus}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Panel 2: Dedicated OTP Handover & Verification (Liquid Glass Card) */}
+                    <div className="rounded-xl border border-white/10 bg-black/60 backdrop-blur-xl p-5 sm:p-6 space-y-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-4">
+                          <h4 className="text-[14px] font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                            <KeyRound className="w-4 h-4 text-[#10b981]" />
+                            <span>OTP Generation & Verification Status</span>
+                          </h4>
+                          <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1">
+                            <Lock className="w-3 h-3 text-[#10b981]" />
+                            <span>SHA-256 Hash</span>
+                          </div>
+                        </div>
+
+                        {/* Status Callout Card */}
+                        <div id="otp-page-status-card">
+                          {isDelivered ? (
+                            <div className="rounded-xl border border-emerald-500/40 bg-emerald-950/30 backdrop-blur-md p-4 space-y-2">
+                              <div className="flex items-center gap-2 text-emerald-400 font-bold text-[14px]">
+                                <CheckCircle className="w-5 h-5 text-[#10b981] shrink-0" />
+                                <span>OTP Verified & Order Handover Complete</span>
+                              </div>
+                              <p className="text-[12px] text-emerald-200/80">
+                                The customer order handover code was successfully verified. Order status has been set to Delivered.
+                                {selectedOtpOrder.otpVerifiedAt && ` (Verified at: ${formatOrderDateTime(selectedOtpOrder.otpVerifiedAt)})`}
+                              </p>
+                              <div className="text-[11px] font-mono text-emerald-300/70 pt-1 border-t border-emerald-500/20">
+                                Status: COMPLETED ● Single-use code retired permanently
+                              </div>
+                            </div>
+                          ) : isLocked ? (
+                            <div className="rounded-xl border border-red-500/40 bg-red-950/30 backdrop-blur-md p-4 space-y-2">
+                              <div className="flex items-center gap-2 text-red-400 font-bold text-[14px]">
+                                <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+                                <span>OTP Locked: Maximum Attempts Exceeded (5/5)</span>
+                              </div>
+                              <p className="text-[12px] text-red-200/80">
+                                5 incorrect OTP verification attempts were entered. Click Resend OTP below to issue a fresh code to the customer.
+                              </p>
+                            </div>
+                          ) : isExpired ? (
+                            <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 backdrop-blur-md p-4 space-y-2">
+                              <div className="flex items-center gap-2 text-amber-400 font-bold text-[14px]">
+                                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                                <span>OTP Expired</span>
+                              </div>
+                              <p className="text-[12px] text-amber-200/80">
+                                The 10-minute expiry window for this handover code has elapsed. Click Resend OTP below to generate a fresh code.
+                              </p>
+                            </div>
+                          ) : hasOtpRecord ? (
+                            <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-emerald-300 font-bold text-[14px]">
+                                  <CheckCircle2 className="w-5 h-5 text-[#10b981] shrink-0" />
+                                  <span>OTP Dispatched & Awaiting Handover</span>
+                                </div>
+                                <span className="px-2 py-0.5 rounded text-[11px] font-bold border border-emerald-500/40 bg-emerald-950/50 text-emerald-300 font-mono">
+                                  Active
+                                </span>
+                              </div>
+                              <p className="text-[12px] text-slate-300">
+                                A secure 6-digit handover OTP was generated and sent to the customer's registered contact channel ({maskedMobile}).
+                              </p>
+                              <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between pt-1 border-t border-white/5">
+                                <span>Recipient: {maskedMobile}</span>
+                                <span>Attempts: 5 Maximum</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-xl border border-white/10 bg-white/[0.03] backdrop-blur-md p-4 space-y-3 text-center sm:text-left">
+                              <div className="flex items-center gap-2 text-slate-200 font-bold text-[14px]">
+                                <KeyRound className="w-5 h-5 text-slate-400 shrink-0" />
+                                <span>Ready for OTP Generation</span>
+                              </div>
+                              <p className="text-[12px] text-slate-400">
+                                Payment is completed online. Click the button below to generate and dispatch the 6-digit handover OTP to the customer.
+                              </p>
+                              <button
+                                type="button"
+                                id="generate-otp-btn"
+                                onClick={() => handleGenerateOtp(selectedOtpOrder)}
+                                disabled={isSending}
+                                className="px-4 py-2 rounded-xl text-[13px] font-bold bg-[#006b2c] hover:bg-[#005221] text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] cursor-pointer flex items-center gap-2 transition-all disabled:opacity-50"
+                              >
+                                {isSending ? (
+                                  <>
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    <span>Generating & Sending...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <KeyRound className="w-4 h-4" />
+                                    <span>Generate & Send OTP to Customer</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Handover Code Verification Form (Only when not yet delivered) */}
+                        {!isDelivered && (
+                          <div className="space-y-4 pt-3">
+                            <div>
+                              <label
+                                htmlFor="separate-otp-input"
+                                className="block text-[13px] font-bold text-white mb-1.5"
+                              >
+                                Enter Customer Handover Code
+                              </label>
+                              <p className="text-[12px] text-slate-400 mb-3">
+                                Request the 6-digit code shown on the customer's device to confirm order delivery.
+                              </p>
+
+                              <div className="flex flex-wrap items-center gap-3">
+                                <input
+                                  type="text"
+                                  id="separate-otp-input"
+                                  maxLength={6}
+                                  value={orderOtpInputs[selectedOtpOrder.id] || ''}
+                                  onChange={(e) => handleOtpInputChange(selectedOtpOrder.id, e.target.value)}
+                                  placeholder="[ ______ ]"
+                                  autoFocus
+                                  className="w-44 h-11 px-3 font-mono text-[18px] tracking-[0.3em] text-center font-bold bg-black/60 text-white border border-white/20 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#10b981] focus:border-[#10b981] placeholder:text-slate-600 shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
+                                  disabled={isVerifying}
+                                />
+
+                                <button
+                                  type="button"
+                                  id="separate-otp-verify-btn"
+                                  onClick={() => handleVerifyOtp(selectedOtpOrder)}
+                                  disabled={
+                                    isVerifying ||
+                                    (orderOtpInputs[selectedOtpOrder.id] || '').length !== 6
+                                  }
+                                  className={`h-11 px-5 rounded-xl text-[13px] font-bold shadow-[0_0_20px_rgba(16,185,129,0.25)] transition-all flex items-center gap-2 cursor-pointer ${
+                                    (orderOtpInputs[selectedOtpOrder.id] || '').length === 6 && !isVerifying
+                                      ? 'bg-gradient-to-r from-[#006b2c] to-[#059669] hover:from-[#005221] hover:to-[#047857] text-white hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]'
+                                      : 'bg-white/5 border border-white/10 text-slate-500 cursor-not-allowed'
+                                  }`}
+                                >
+                                  {isVerifying ? (
+                                    <>
+                                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                      <span>Verifying...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ShieldCheck className="w-4 h-4 text-[#10b981]" />
+                                      <span>Verify OTP</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  id="separate-otp-resend-btn"
+                                  onClick={() => handleResendOtp(selectedOtpOrder)}
+                                  disabled={isSending || cooldownSeconds > 0}
+                                  title={
+                                    cooldownSeconds > 0
+                                      ? `Wait ${cooldownSeconds}s before resending`
+                                      : 'Invalidate current OTP and dispatch a fresh 6-digit code'
+                                  }
+                                  className="h-11 px-4 rounded-xl border border-white/15 bg-black/40 hover:bg-black/60 text-slate-300 hover:text-white text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_2px_10px_rgba(0,0,0,0.4)]"
+                                >
+                                  <RefreshCw className={`w-3.5 h-3.5 ${isSending ? 'animate-spin' : ''}`} />
+                                  <span>
+                                    {cooldownSeconds > 0
+                                      ? `Resend in ${cooldownSeconds}s`
+                                      : isSending
+                                      ? 'Sending...'
+                                      : 'Resend OTP'}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Feedback Messages */}
+                            {currentFeedback && (
+                              <div
+                                id="separate-otp-feedback"
+                                className={`text-[12px] p-3 rounded-xl flex items-center gap-2.5 animate-in fade-in ${
+                                  currentFeedback.type === 'success'
+                                    ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-bold'
+                                    : currentFeedback.type === 'expired'
+                                    ? 'bg-amber-950/60 text-amber-300 border border-amber-500/40 font-semibold'
+                                    : 'bg-red-950/60 text-red-300 border border-red-500/40 font-semibold'
+                                }`}
+                              >
+                                {currentFeedback.type === 'success' ? (
+                                  <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                                )}
+                                <span>{currentFeedback.message}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Security Banner at bottom of panel */}
+                      <div className="pt-3 border-t border-white/10 text-[11px] text-slate-500 font-mono flex items-center justify-between">
+                        <span>Security: Admin portal never displays plain OTP codes</span>
+                        <span>Attempts: 5 Maximum</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
           ) : (
             <div className="bg-black/35 backdrop-blur-xl rounded-xl border border-white/12 shadow-2xl overflow-hidden space-y-5 p-4 sm:p-6">
             {/* Header / Subheader */}
@@ -3099,6 +3437,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     order.paymentMethod.toLowerCase().includes('cash') ||
                     order.paymentMethod.toUpperCase() === 'COD';
 
+                  const isOnlineMethod =
+                    !isCod &&
+                    (paymentInfo.paymentMethod.toLowerCase().includes('online') ||
+                      paymentInfo.paymentMethod.toLowerCase().includes('upi') ||
+                      paymentInfo.paymentMethod.toLowerCase().includes('phonepe') ||
+                      paymentInfo.paymentMethod.toLowerCase().includes('paytm') ||
+                      paymentInfo.paymentMethod.toLowerCase().includes('google pay') ||
+                      paymentInfo.paymentMethod.toLowerCase().includes('gpay'));
+
+                  const isCompletedPayment =
+                    (paymentInfo.paymentStatus === 'COMPLETED' ||
+                      order.paymentStatus === 'COMPLETED' ||
+                      order.paymentStatus === 'PAID') &&
+                    paymentInfo.paymentStatus !== 'PENDING VERIFICATION' &&
+                    paymentInfo.paymentStatus !== 'REJECTED' &&
+                    paymentInfo.paymentStatus !== 'UNPAID' &&
+                    paymentInfo.paymentStatus !== 'COD';
+
+                  const isOtpEligible = !isCod && isOnlineMethod && isCompletedPayment;
+
                   // Build plain text format matching user's requested specification:
                   const textLines: string[] = [
                     `Customer: ${order.customerName}`,
@@ -3196,22 +3554,40 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             </button>
                           )}
 
-                          {/* Small "OTP" button to open separate OTP Verification page (Excluded for COD; only for PAID online orders) */}
-                          {order.status === 'Picking' &&
-                            !isCod &&
-                            (order.paymentStatus === 'PAID' || order.paymentStatus === 'Paid' || paymentInfo.paymentStatus === 'COMPLETED') && (
-                            <button
-                              type="button"
-                              id={`order-otp-btn-${order.id}`}
-                              onClick={() => {
-                                setSelectedOtpOrderId(order.id);
-                              }}
-                              title={`Open OTP Verification page for ${displayOrderId}`}
-                              className="px-2.5 py-1 text-[11px] font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/40 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs backdrop-blur-xs"
-                            >
-                              <ShieldCheck className="w-3.5 h-3.5 text-[#10b981]" />
-                              <span>OTP</span>
-                            </button>
+                          {/* OTP Button & Status for eligible orders (online & COMPLETED payment status) */}
+                          {isOtpEligible && (
+                            <div className="flex items-center gap-1.5">
+                              {order.otpVerifiedAt || order.status === 'Delivered' ? (
+                                <span
+                                  id={`order-otp-status-badge-${cleanOrderId}`}
+                                  title="Order handover OTP verified"
+                                  className="px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-500/40 bg-emerald-950/40 text-emerald-400 font-mono flex items-center gap-1"
+                                >
+                                  <CheckCircle className="w-3 h-3 text-[#10b981]" />
+                                  <span>OTP Verified</span>
+                                </span>
+                              ) : orderOtpStatusMap[order.id]?.status === 'UNUSED' ? (
+                                <span
+                                  id={`order-otp-status-badge-${cleanOrderId}`}
+                                  title="OTP generated and sent to customer"
+                                  className="px-2 py-0.5 rounded text-[10px] font-bold border border-amber-500/40 bg-amber-950/40 text-amber-400 font-mono flex items-center gap-1"
+                                >
+                                  <KeyRound className="w-3 h-3 text-[#f59e0b]" />
+                                  <span>OTP Sent</span>
+                                </span>
+                              ) : null}
+
+                              <button
+                                type="button"
+                                id={`order-otp-btn-${cleanOrderId}`}
+                                onClick={() => setSelectedOtpOrderId(order.id)}
+                                title={`Open Dedicated OTP Verification Page for Order ${displayOrderId}`}
+                                className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-[0_2px_10px_rgba(16,185,129,0.15)] hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] backdrop-blur-xs"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5 text-[#10b981]" />
+                                <span>OTP</span>
+                              </button>
+                            </div>
                           )}
 
                           {/* Automatic read-only status display — manual status control removed */}

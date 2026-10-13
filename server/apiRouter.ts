@@ -1539,7 +1539,9 @@ apiRouter.post(['/api/otp/generate', '/otp/generate', '/generate'], async (req: 
     }
 
     const result = await generateOrderOtp(orderId, customerId || 'guest', customerPhone || '');
-    sendJson(res, 200, result);
+    // Strictly sanitize: never expose actual OTP in Admin or public API responses
+    const { otp: _omittedOtp, ...sanitizedResult } = result;
+    sendJson(res, 200, sanitizedResult);
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err.message || 'Failed to generate order OTP.' });
   }
@@ -1579,7 +1581,9 @@ apiRouter.post(['/api/otp/resend', '/otp/resend', '/resend'], async (req: Reques
     }
 
     const result = await resendOrderOtp(orderId, customerId, customerPhone);
-    sendJson(res, 200, result);
+    // Strictly sanitize: never expose actual OTP in Admin or public API responses
+    const { otp: _omittedResendOtp, ...sanitizedResult } = result;
+    sendJson(res, 200, sanitizedResult);
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err.message || 'Failed to resend OTP.' });
   }
@@ -3229,7 +3233,6 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
         message: 'Payment verified successfully and marked as PAID.',
         paymentStatus: 'PAID',
         otpSent,
-        otpCode: generatedOtpCode || undefined,
         verifiedAt: new Date().toISOString(),
         verifiedBy: adminName,
       });
