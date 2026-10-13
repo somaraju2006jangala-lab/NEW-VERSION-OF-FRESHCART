@@ -11,6 +11,7 @@ export const DEMO_CUSTOMER_EMAIL = 'customer@freshcart.com';
 export const DEMO_CUSTOMER_PASSWORD = 'FreshCart2026!';
 
 import { hashPassword, generateSalt } from '../utils/crypto';
+import { AuthorizedAdmin, saveAdminSession, loginAdmin } from './adminService';
 
 export { hashPassword, generateSalt };
 
@@ -493,16 +494,29 @@ export function generateClientAuthToken(customer: Partial<Customer>): string {
  * Authenticates a customer by email, User ID, or mobile number and password using the shared persistent database.
  * Confirms authentication against the MySQL/TiDB database across all devices.
  */
-export async function loginCustomer(
+export interface SharedLoginResult {
+  success: boolean;
+  role?: 'admin' | 'customer';
+  customer?: Customer;
+  admin?: AuthorizedAdmin;
+  token?: string;
+  error?: string;
+}
+
+/**
+ * Shared authentication for both customers and administrators.
+ * Authenticates against backend, verifies role, and saves session.
+ */
+export async function loginShared(
   identifier: string,
   plainPassword: string
-): Promise<{ success: boolean; customer?: Customer; error?: string }> {
+): Promise<SharedLoginResult> {
   const trimmedIdentifier = identifier.trim();
 
   if (!trimmedIdentifier) {
     return {
       success: false,
-      error: 'Please enter your email address, User ID, or mobile number.',
+      error: 'Please enter your email address or User ID.',
     };
   }
   if (!plainPassword) {
@@ -522,37 +536,53 @@ export async function loginCustomer(
 
     const data = await res.json().catch(() => null);
 
-    if (res.ok && data?.success && data?.customer) {
-      const token = data.token || generateClientAuthToken(data.customer);
-      const sessionUser: Customer = {
-        ...data.customer,
-        passwordHash: '',
-        passwordSalt: '',
-        token,
-      };
+    if (res.ok && data?.success) {
+      // Administrator account
+      if (data.role === 'admin' || data.admin) {
+        const admin: AuthorizedAdmin = data.admin;
+        const token = data.token;
+        if (token && admin) {
+          saveAdminSession(token, admin);
+        }
+        return {
+          success: true,
+          role: 'admin',
+          admin,
+          token,
+        };
+      }
 
-      // Persist active session on this device
-      localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
+      // Customer account
+      if (data.role === 'customer' || data.customer) {
+        const token = data.token || generateClientAuthToken(data.customer);
+        const sessionUser: Customer = {
+          ...data.customer,
+          passwordHash: '',
+          passwordSalt: '',
+          token,
+        };
 
+        // Persist active session on this device
+        localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
+
+        return {
+          success: true,
+          role: 'customer',
+          customer: sessionUser,
+          token,
+        };
+      }
+    }
+
+    // 2. Fallback: If separate admin endpoint is configured and /api/auth/login returned an error,
+    // connect to /api/admin/login without weakening authentication:
+    const adminRes = await loginAdmin(trimmedIdentifier, plainPassword).catch(() => null);
+    if (adminRes && adminRes.success && adminRes.admin && adminRes.token) {
       return {
         success: true,
-        customer: sessionUser,
-      };
-    }
-
-    if (res.status === 401) {
-      return {
-        success: false,
-        error: data?.error || 'Incorrect password entered. Please try again or click "Forgot Password?".',
-      };
-    }
-
-    if (res.status === 404) {
-      return {
-        success: false,
-        error:
-          data?.error ||
-          'No customer account found with this email, User ID, or mobile number. Please check your spelling or register.',
+        role: 'admin',
+        admin: adminRes.admin,
+        token: adminRes.token,
       };
     }
 
@@ -563,16 +593,51 @@ export async function loginCustomer(
       };
     }
 
+    if (adminRes?.error) {
+      return {
+        success: false,
+        error: adminRes.error,
+      };
+    }
+
     return {
       success: false,
-      error: `Login failed (Status ${res.status}). Database service is unavailable. Please try again.`,
+      error: 'Invalid credentials. Please verify your email/User ID and password.',
     };
   } catch (err: any) {
+    // If network issue contacting /api/auth/login, try admin endpoint as well
+    try {
+      const adminRes = await loginAdmin(trimmedIdentifier, plainPassword);
+      if (adminRes && adminRes.success && adminRes.admin && adminRes.token) {
+        return {
+          success: true,
+          role: 'admin',
+          admin: adminRes.admin,
+          token: adminRes.token,
+        };
+      }
+    } catch {}
+
     return {
       success: false,
-      error: 'Unable to connect to the authentication server. Please check your network connection and server status.',
+      error: 'Unable to connect to the authentication server. Please check your network connection.',
     };
   }
+}
+
+/**
+ * Authenticates a customer by email, User ID, or mobile number and password using the shared persistent database.
+ * Confirms authentication against the MySQL/TiDB database across all devices.
+ */
+export async function loginCustomer(
+  identifier: string,
+  plainPassword: string
+): Promise<{ success: boolean; customer?: Customer; error?: string }> {
+  const result = await loginShared(identifier, plainPassword);
+  if (result.success && result.customer) {
+    return { success: true, customer: result.customer };
+  }
+  return { success: false, error: result.error || 'Login failed' };
 }
 
 export interface RegisterPayload {

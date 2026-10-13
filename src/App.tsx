@@ -14,7 +14,6 @@ import { CartPage } from './components/CartPage';
 import { CheckoutPage } from './components/CheckoutPage';
 import { ProductModal } from './components/ProductModal';
 import { AdminPortal } from './components/AdminPortal';
-import { AdminLogin } from './components/AdminLogin';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
 import {
@@ -123,7 +122,16 @@ function FreshCartStore() {
   const handleAdminLogout = () => {
     clearAdminSession();
     setCurrentAdmin(null);
-    navigateToView(currentUser ? 'storefront' : 'login');
+    navigateToView('login');
+  };
+
+  const handleSharedLoginSuccess = (role: 'admin' | 'customer', admin?: AuthorizedAdmin) => {
+    if (role === 'admin' && admin) {
+      setCurrentAdmin(admin);
+      navigateToView('admin');
+    } else {
+      navigateToView('storefront');
+    }
   };
 
 
@@ -325,25 +333,31 @@ function FreshCartStore() {
         return;
       }
 
-      if (!currentUser) {
+      if (!currentUser && !currentAdmin) {
         // UNAUTHENTICATED USERS:
-        // Only 'login', 'register', and 'admin' are permitted.
-        // The main storefront and customer dashboard are strictly protected.
-        if (hash === '#/admin' || hash === '#admin') {
-          setCurrentView('admin');
-        } else if (hash === '#/register' || hash === '#register') {
+        // Only the shared 'login' and customer 'register' pages are accessible.
+        // Direct access to protected routes (#/admin, #/storefront, #/dashboard, etc.) redirects to shared login.
+        if (hash === '#/register' || hash === '#register') {
           setCurrentView('register');
         } else {
-          // Default to login page on initial site visit or any protected page attempt
           setCurrentView('login');
           if (hash !== '#/login' && hash !== '#login') {
             window.location.hash = '#/login';
           }
         }
-      } else {
-        // AUTHENTICATED CUSTOMERS:
-        if (hash === '#/admin' || hash === '#admin') {
+      } else if (currentAdmin) {
+        // AUTHENTICATED ADMINISTRATOR:
+        if (hash === '#/storefront' || hash === '#storefront') {
+          setCurrentView('storefront');
+        } else {
           setCurrentView('admin');
+        }
+      } else if (currentUser) {
+        // AUTHENTICATED CUSTOMERS:
+        // Customer accounts cannot open Admin Portal (#/admin)
+        if (hash === '#/admin' || hash === '#admin') {
+          setCurrentView('storefront');
+          window.location.hash = '#/storefront';
         } else if (hash === '#/dashboard' || hash === '#dashboard' || hash.startsWith('#/dashboard?') || hash.startsWith('#dashboard?')) {
           setCurrentView('dashboard');
         } else if (hash === '#/cart' || hash === '#cart' || hash.startsWith('#/cart?') || hash.startsWith('#cart?')) {
@@ -392,11 +406,24 @@ function FreshCartStore() {
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [currentUser, isLoading]);
+  }, [currentUser, currentAdmin, isLoading]);
 
   const navigateToView = (view: ViewType, param?: string) => {
+    // If trying to open admin without active admin authorization, redirect to shared login or storefront
+    if (view === 'admin' && !currentAdmin) {
+      if (currentUser) {
+        setCurrentView('storefront');
+        window.location.hash = '#/storefront';
+        return;
+      }
+      setCurrentView('login');
+      window.location.hash = '#/login';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     // Route guard: if trying to open storefront, dashboard, search, category, cart, or checkout without auth, redirect to login
-    if (!currentUser && (view === 'storefront' || view === 'dashboard' || view === 'search' || view === 'category' || view === 'cart' || view === 'checkout')) {
+    if (!currentUser && !currentAdmin && (view === 'storefront' || view === 'dashboard' || view === 'search' || view === 'category' || view === 'cart' || view === 'checkout')) {
       setCurrentView('login');
       window.location.hash = '#/login';
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -775,7 +802,7 @@ function FreshCartStore() {
       {/* Universal Header with View Navigation & Customer Authentication */}
       <Header
         currentView={currentView}
-        isAdminSignIn={currentView === 'admin' && !currentAdmin}
+        isAdminSignIn={false}
         onToggleView={(view) => navigateToView(view)}
         cartCount={cartCount}
         onOpenCart={() => navigateToView('cart')}
@@ -819,25 +846,20 @@ function FreshCartStore() {
               onUpdateDeliveryRules={handleUpdateDeliveryRules}
             />
           ) : (
-            <AdminLogin
-              onLoginSuccess={(admin) => {
-                setCurrentAdmin(admin);
-                navigateToView('admin');
-              }}
-              onBackToStorefront={() => navigateToView(currentUser ? 'storefront' : 'login')}
+            <LoginPage
+              onNavigateToRegister={() => navigateToView('register')}
+              onLoginSuccess={handleSharedLoginSuccess}
             />
           )
         ) : currentView === 'login' ? (
           <LoginPage
             onNavigateToRegister={() => navigateToView('register')}
-            onLoginSuccess={() => navigateToView('storefront')}
-            onNavigateToAdmin={() => navigateToView('admin')}
+            onLoginSuccess={handleSharedLoginSuccess}
           />
         ) : currentView === 'register' ? (
           <RegisterPage
             onNavigateToLogin={() => navigateToView('login')}
             onRegisterSuccess={() => navigateToView('storefront')}
-            onNavigateToAdmin={() => navigateToView('admin')}
           />
         ) : currentView === 'dashboard' ? (
           currentUser ? (
@@ -857,8 +879,7 @@ function FreshCartStore() {
           ) : (
             <LoginPage
               onNavigateToRegister={() => navigateToView('register')}
-              onLoginSuccess={() => navigateToView('storefront')}
-              onNavigateToAdmin={() => navigateToView('admin')}
+              onLoginSuccess={handleSharedLoginSuccess}
             />
           )
         ) : currentView === 'search' ? (
@@ -877,8 +898,7 @@ function FreshCartStore() {
           ) : (
             <LoginPage
               onNavigateToRegister={() => navigateToView('register')}
-              onLoginSuccess={() => navigateToView('storefront')}
-              onNavigateToAdmin={() => navigateToView('admin')}
+              onLoginSuccess={handleSharedLoginSuccess}
             />
           )
         ) : currentView === 'category' ? (
@@ -897,8 +917,7 @@ function FreshCartStore() {
           ) : (
             <LoginPage
               onNavigateToRegister={() => navigateToView('register')}
-              onLoginSuccess={() => navigateToView('storefront')}
-              onNavigateToAdmin={() => navigateToView('admin')}
+              onLoginSuccess={handleSharedLoginSuccess}
             />
           )
         ) : currentView === 'cart' ? (
@@ -923,8 +942,7 @@ function FreshCartStore() {
           ) : (
             <LoginPage
               onNavigateToRegister={() => navigateToView('register')}
-              onLoginSuccess={() => navigateToView('storefront')}
-              onNavigateToAdmin={() => navigateToView('admin')}
+              onLoginSuccess={handleSharedLoginSuccess}
             />
           )
         ) : currentView === 'checkout' ? (
@@ -948,8 +966,7 @@ function FreshCartStore() {
           ) : (
             <LoginPage
               onNavigateToRegister={() => navigateToView('register')}
-              onLoginSuccess={() => navigateToView('storefront')}
-              onNavigateToAdmin={() => navigateToView('admin')}
+              onLoginSuccess={handleSharedLoginSuccess}
             />
           )
         ) : currentUser ? (
@@ -1073,8 +1090,7 @@ function FreshCartStore() {
           /* Fallback if unauthenticated and somehow on storefront view */
           <LoginPage
             onNavigateToRegister={() => navigateToView('register')}
-            onLoginSuccess={() => navigateToView('storefront')}
-            onNavigateToAdmin={() => navigateToView('admin')}
+            onLoginSuccess={handleSharedLoginSuccess}
           />
         )}
       </main>

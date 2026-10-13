@@ -440,11 +440,50 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       return;
     }
 
+    // 1. Check if this is an administrator account in the persistent admins table
+    const admin = await findAdminInDb(loginIdentifier);
+    if (admin) {
+      if (admin.status !== 'active') {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Administrator account is deactivated. Please contact the project owner.',
+        });
+        return;
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, admin.password_hash || '');
+      if (isPasswordValid) {
+        const token = signAdminToken({
+          adminId: admin.admin_id,
+          email: admin.email,
+          fullName: admin.full_name,
+          role: admin.role,
+          tokenVersion: admin.token_version,
+        });
+
+        sendJson(res, 200, {
+          success: true,
+          role: 'admin',
+          adminRole: admin.role,
+          admin: {
+            adminId: admin.admin_id,
+            fullName: admin.full_name,
+            email: admin.email,
+            role: admin.role,
+            status: admin.status,
+          },
+          token,
+        });
+        return;
+      }
+    }
+
+    // 2. Check if this is a customer account in the customers table
     const customer = await findCustomerInDb(loginIdentifier);
     if (!customer) {
-      sendJson(res, 404, {
+      sendJson(res, 401, {
         success: false,
-        error: 'No customer account found with this email, User ID, or mobile number. Please check your spelling or create an account.',
+        error: 'Invalid email/User ID or password. Please verify your credentials.',
       });
       return;
     }
@@ -528,7 +567,12 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       token,
     };
 
-    sendJson(res, 200, { success: true, customer: sessionUser, token });
+    sendJson(res, 200, {
+      success: true,
+      role: 'customer',
+      customer: sessionUser,
+      token,
+    });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Server error during login.' });
   }

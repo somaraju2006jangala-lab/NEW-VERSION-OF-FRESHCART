@@ -17,16 +17,16 @@ import {
   X,
 } from 'lucide-react';
 
+import { AuthorizedAdmin } from '../services/adminService';
+
 interface LoginPageProps {
   onNavigateToRegister: () => void;
-  onLoginSuccess: () => void;
-  onNavigateToAdmin?: () => void;
+  onLoginSuccess: (role: 'admin' | 'customer', admin?: AuthorizedAdmin) => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onNavigateToRegister,
   onLoginSuccess,
-  onNavigateToAdmin,
 }) => {
   const { login, requestReset } = useAuth();
 
@@ -46,7 +46,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     setErrorMessage(null);
 
-    if (!identifier.trim()) {
+    const cleanIdentifier = identifier.trim();
+    if (!cleanIdentifier) {
       setErrorMessage('Please enter your email or User ID.');
       return;
     }
@@ -58,22 +59,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
     setIsSubmitting(true);
     try {
-      const result = await login(identifier, password);
+      const result = await login(cleanIdentifier, password);
       if (result.success) {
-        onLoginSuccess();
+        if (result.role === 'admin' && result.admin) {
+          onLoginSuccess('admin', result.admin);
+        } else {
+          onLoginSuccess('customer');
+        }
       } else {
-        setErrorMessage(result.error || 'Invalid credentials. Please try again.');
+        setErrorMessage(result.error || 'Invalid credentials. Please verify your email/User ID and password.');
       }
-    } catch (err) {
+    } catch {
       setErrorMessage('An unexpected error occurred during login. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleFillDemo = () => {
+  const handleFillCustomerDemo = () => {
     setIdentifier(DEMO_CUSTOMER_EMAIL);
     setPassword(DEMO_CUSTOMER_PASSWORD);
+    setErrorMessage(null);
+  };
+
+  const handleFillAdminDemo = () => {
+    setIdentifier('owner@freshcart.com');
+    setPassword('FreshCartOwner2026!');
     setErrorMessage(null);
   };
 
@@ -97,18 +108,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       <div className="w-full max-w-md mb-4 flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[#006b2c] bg-white/35 backdrop-blur-xs px-3 py-1 rounded-full border border-white/50">
           <ShieldCheck className="w-3.5 h-3.5 text-[#006b2c]" />
-          <span>Customer Access Portal</span>
+          <span>Secure Sign-In Portal</span>
         </div>
 
-        {onNavigateToAdmin && (
-          <button
-            type="button"
-            onClick={onNavigateToAdmin}
-            className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#565e74] hover:text-[#006b2c] transition-colors cursor-pointer"
-          >
-            <span>Ops &amp; Admin Portal →</span>
-          </button>
-        )}
+        <span className="text-[11px] text-[#565e74] font-medium bg-white/20 backdrop-blur-xs px-2.5 py-0.5 rounded-full border border-white/40">
+          Role-Based Access
+        </span>
       </div>
 
       {/* Main Login Card - Crystal Clear Glass */}
@@ -126,19 +131,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             Welcome to FreshCart
           </h1>
           <p className="text-[13px] text-[#565e74] mt-1.5">
-            Log in to manage orders, live deliveries, and saved fresh grocery carts
+            Sign in with your email or User ID to access your portal
           </p>
 
-          {/* 1-Click Demo Login Pill */}
-          <div className="mt-4 pt-3 border-t border-dashed border-white/40">
+          {/* 1-Click Demo Login Pills */}
+          <div className="mt-4 pt-3 border-t border-dashed border-white/40 flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
-              onClick={handleFillDemo}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white/35 hover:bg-white/60 text-[#006b2c] text-[12px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs border border-white/55 shadow-2xs cursor-pointer"
+              onClick={handleFillCustomerDemo}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/35 hover:bg-white/60 text-[#006b2c] text-[11px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs border border-white/55 shadow-2xs cursor-pointer"
               title="Auto-fill pre-seeded customer credentials"
             >
               <Sparkles className="w-3.5 h-3.5 text-[#006b2c]" />
-              <span>Click to auto-fill Demo Customer Account</span>
+              <span>Auto-fill Customer Demo</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleFillAdminDemo}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/35 hover:bg-white/60 text-[#006b2c] text-[11px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs border border-white/55 shadow-2xs cursor-pointer"
+              title="Auto-fill pre-seeded administrator credentials"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#006b2c]" />
+              <span>Auto-fill Admin Demo</span>
             </button>
           </div>
         </div>
@@ -159,15 +173,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* User ID / Email */}
           <div className="space-y-1.5">
             <label
-              htmlFor="customer-email"
+              htmlFor="login-identifier"
               className="block text-[12px] font-semibold text-[#0b1c30]"
             >
-              Email, User ID, or Mobile Number
+              Email or User ID
             </label>
             <div className="relative flex items-center">
               <Mail className="absolute left-3.5 w-4 h-4 text-[#6e7b6c] pointer-events-none" />
               <input
-                id="customer-email"
+                id="login-identifier"
                 type="text"
                 required
                 value={identifier}
@@ -175,7 +189,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   setIdentifier(e.target.value);
                   if (errorMessage) setErrorMessage(null);
                 }}
-                placeholder="customer@freshcart.com or mobile / user ID"
+                placeholder="customer@freshcart.com or owner@freshcart.com"
                 autoComplete="username"
                 className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/35 backdrop-blur-xs border border-white/55 text-[13px] text-[#0b1c30] placeholder:text-[#565e74]/70 focus:outline-hidden focus:bg-white/60 focus:ring-2 focus:ring-[#006b2c] focus:border-white/80 transition-all shadow-2xs"
               />
@@ -186,7 +200,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label
-                htmlFor="customer-password"
+                htmlFor="login-password"
                 className="block text-[12px] font-semibold text-[#0b1c30]"
               >
                 Password
@@ -207,7 +221,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <div className="relative flex items-center">
               <Lock className="absolute left-3.5 w-4 h-4 text-[#6e7b6c] pointer-events-none" />
               <input
-                id="customer-password"
+                id="login-password"
                 type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
@@ -239,18 +253,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Submit Button */}
           <button
             type="submit"
-            id="customer-login-btn"
+            id="sign-in-btn"
             disabled={isSubmitting}
             className="w-full py-3 rounded-xl bg-[#006b2c] hover:bg-[#00873a] hover:-translate-y-0.5 hover:shadow-lg hover:brightness-105 active:translate-y-0 active:scale-[0.99] text-white font-semibold text-[14px] shadow-md transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-75"
           >
             {isSubmitting ? (
               <div className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                <span>Authenticating Customer...</span>
+                <span>Signing In...</span>
               </div>
             ) : (
               <>
-                <span>Log In &amp; Continue to Store</span>
+                <span>Sign In</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
@@ -259,7 +273,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Security Assurance Tag */}
           <div className="flex items-center justify-center gap-2 text-[11px] text-[#565e74] pt-1">
             <ShieldCheck className="w-3.5 h-3.5 text-[#006b2c]" />
-            <span>Encrypted Session · SHA-256 Hashed Security</span>
+            <span>Encrypted Session · Automatic Role Redirection</span>
           </div>
         </form>
 
