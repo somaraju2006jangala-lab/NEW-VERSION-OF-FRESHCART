@@ -1150,11 +1150,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         const cleanId = item.orderId.replace(/^#/, '');
         setQueueFeedback({
           type: 'success',
-          message: `Payment for Order #${cleanId} verified successfully and confirmed as PAID in database. Delivery OTP dispatched to customer.`,
+          message: `Payment for Order #${cleanId} verified successfully and confirmed as COMPLETED in database. Delivery OTP dispatched to customer.`,
         });
         const verifiedAt = res.verifiedAt || new Date().toISOString();
         const verifiedBy = res.verifiedBy || 'admin';
-        updateOrderPaymentStatus(item.orderId, 'PAID', {
+        updateOrderPaymentStatus(item.orderId, 'COMPLETED', {
           verifiedAt,
           verifiedBy,
         });
@@ -1164,7 +1164,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             return oClean === cleanId
               ? {
                   ...o,
-                  paymentStatus: 'PAID',
+                  paymentStatus: 'COMPLETED',
                   verifiedAt,
                   verifiedBy,
                   screenshotUrl: undefined,
@@ -4483,7 +4483,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     {
                       key: 'paid' as const,
                       label: 'Verified & Paid',
-                      count: verificationQueue.filter((i) => i.paymentStatus === 'PAID').length,
+                      count: verificationQueue.filter((i) => i.paymentStatus === 'PAID' || i.paymentStatus === 'COMPLETED').length,
                       highlight: false,
                     },
                     {
@@ -4531,7 +4531,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   if (queueFilter === 'pending') {
                     return item.paymentStatus === 'PENDING_VERIFICATION' || (item.paymentStatus as string) === 'PENDING';
                   }
-                  if (queueFilter === 'paid') return item.paymentStatus === 'PAID';
+                  if (queueFilter === 'paid') return item.paymentStatus === 'PAID' || item.paymentStatus === 'COMPLETED';
                   if (queueFilter === 'rejected') return item.paymentStatus === 'REJECTED';
                   return true;
                 });
@@ -4696,7 +4696,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             const isPending =
                               item.paymentStatus === 'PENDING_VERIFICATION' ||
                               (item.paymentStatus as string) === 'PENDING';
-                            const isPaid = item.paymentStatus === 'PAID';
+                            const isPaid = item.paymentStatus === 'PAID' || item.paymentStatus === 'COMPLETED';
                             const isRejected = item.paymentStatus === 'REJECTED';
                             const hasProof = !!(item.screenshotUrl || item.screenshotPath);
                             const adminImgSrc = getAdminScreenshotUrl(item.screenshotUrl, item.orderId);
@@ -6130,7 +6130,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </button>
 
               <div className="flex items-center gap-2">
-                {viewingScreenshotItem.paymentStatus !== 'PAID' && (
+                {viewingScreenshotItem.paymentStatus !== 'PAID' && viewingScreenshotItem.paymentStatus !== 'COMPLETED' && (
                   <>
                     <button
                       type="button"
@@ -6260,7 +6260,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   Delete Order #{deleteConfirmVerificationOrder.orderId.replace(/^#/, '')}
                 </h3>
                 <p className="text-xs text-slate-400">
-                  {deleteConfirmVerificationOrder.paymentStatus === 'PAID'
+                  {deleteConfirmVerificationOrder.paymentStatus === 'PAID' || deleteConfirmVerificationOrder.paymentStatus === 'COMPLETED'
                     ? 'Verified & Paid'
                     : deleteConfirmVerificationOrder.paymentStatus === 'REJECTED'
                     ? 'Rejected Payment'
@@ -6276,7 +6276,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Payment Status:</span>
-                <span className={deleteConfirmVerificationOrder.paymentStatus === 'PAID' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                <span className={(deleteConfirmVerificationOrder.paymentStatus === 'PAID' || deleteConfirmVerificationOrder.paymentStatus === 'COMPLETED') ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
                   {deleteConfirmVerificationOrder.paymentStatus}
                 </span>
               </div>

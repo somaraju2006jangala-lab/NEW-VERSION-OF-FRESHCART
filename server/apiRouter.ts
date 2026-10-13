@@ -3162,13 +3162,13 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
     const adminName = auth.admin?.full_name || auth.admin?.admin_id || 'Admin';
 
     if (upperAction === 'APPROVE') {
-      // Prevent duplicate verification: check if already PAID
-      if (currentPayment.paymentStatus === 'PAID') {
+      // Prevent duplicate verification: check if already PAID or COMPLETED
+      if (currentPayment.paymentStatus === 'PAID' || currentPayment.paymentStatus === 'COMPLETED') {
         sendJson(res, 200, {
           success: true,
-          message: 'Payment has already been marked as PAID. Duplicate OTP sending prevented.',
+          message: 'Payment has already been marked as COMPLETED. Duplicate OTP sending prevented.',
           alreadyPaid: true,
-          paymentStatus: 'PAID',
+          paymentStatus: 'COMPLETED',
           otpSent: false,
           duplicatePrevented: true,
         });
@@ -3191,7 +3191,7 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
         return;
       }
 
-      // 2. MySQL successfully confirmed PAID! Now securely delete stored screenshot file and any disk copies
+      // 2. MySQL successfully confirmed COMPLETED! Now securely delete stored screenshot file and any disk copies
       if (verifyResult.screenshotPathToDelete && fs.existsSync(verifyResult.screenshotPathToDelete)) {
         try {
           fs.unlinkSync(verifyResult.screenshotPathToDelete);
@@ -3230,8 +3230,8 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
 
       sendJson(res, 200, {
         success: true,
-        message: 'Payment verified successfully and marked as PAID.',
-        paymentStatus: 'PAID',
+        message: 'Payment verified successfully and marked as COMPLETED.',
+        paymentStatus: 'COMPLETED',
         otpSent,
         verifiedAt: new Date().toISOString(),
         verifiedBy: adminName,

@@ -260,6 +260,7 @@ export async function uploadPaymentScreenshot(
               : o
           );
           localStorage.setItem('freshcart_customer_orders', JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
         }
       } catch {}
 
@@ -352,14 +353,15 @@ export async function adminVerifyPayment(
     const data = await res.json().catch(() => null);
 
     if (res.ok && data?.success) {
-      const newStatus = action === 'APPROVE' ? 'PAID' : 'REJECTED';
+      const newStatus = action === 'APPROVE' ? (data.paymentStatus || 'COMPLETED') : 'REJECTED';
       // Synchronize to localStorage
       try {
         const raw = localStorage.getItem('freshcart_customer_orders');
         if (raw) {
           const orders = JSON.parse(raw);
+          const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
           const updated = orders.map((o: any) =>
-            o.id === orderId
+            o.id === orderId || o.id === altId
               ? {
                   ...o,
                   paymentStatus: newStatus,
@@ -371,6 +373,7 @@ export async function adminVerifyPayment(
               : o
           );
           localStorage.setItem('freshcart_customer_orders', JSON.stringify(updated));
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
         }
       } catch {}
 

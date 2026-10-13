@@ -52,22 +52,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const customerOrders = getCustomerOrders(currentUser?.id);
     setOrders(customerOrders);
 
-    if (currentUser?.id || currentUser?.token) {
-      fetch('/api/orders', {
-        headers: {
-          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-        },
+    const custId = currentUser?.id;
+    const url = custId ? `/api/orders?customerId=${encodeURIComponent(custId)}` : '/api/orders';
+    fetch(url, {
+      headers: {
+        ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
+      },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.orders)) {
+          syncBackendOrders(data.orders);
+          const synced = getCustomerOrders(currentUser?.id);
+          setOrders(synced);
+        }
       })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data?.success && Array.isArray(data.orders)) {
-            syncBackendOrders(data.orders);
-            const synced = getCustomerOrders(currentUser?.id);
-            setOrders(synced);
-          }
-        })
-        .catch(() => {});
-    }
+      .catch(() => {});
   }, [currentUser?.id, currentUser?.token]);
 
   useEffect(() => {

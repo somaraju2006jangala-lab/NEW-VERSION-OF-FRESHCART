@@ -3868,7 +3868,7 @@ export async function verifyUpiPaymentInDb(params: {
     );
 
     const currentStatus = existing[0]?.paymentStatus;
-    if (params.action === 'APPROVE' && currentStatus === 'PAID') {
+    if (params.action === 'APPROVE' && (currentStatus === 'PAID' || currentStatus === 'COMPLETED')) {
       await connection.rollback();
       return { success: true, alreadyPaid: true };
     }
@@ -3876,10 +3876,10 @@ export async function verifyUpiPaymentInDb(params: {
     const screenshotPathToDelete = existing[0]?.screenshotPath || undefined;
 
     if (params.action === 'APPROVE') {
-      // Mark as PAID, record verification audit, clear screenshot reference from active file reference
+      // Mark as COMPLETED, record verification audit, clear screenshot reference from active file reference
       await connection.query(
         `UPDATE payments
-         SET payment_status = 'PAID',
+         SET payment_status = 'COMPLETED',
              paid_at = NOW(),
              verified_at = NOW(),
              verified_by = ?,
@@ -3895,7 +3895,7 @@ export async function verifyUpiPaymentInDb(params: {
 
       await connection.query(
         `UPDATE orders
-         SET payment_status = 'PAID',
+         SET payment_status = 'COMPLETED',
              screenshot_url = NULL,
              screenshot_data = NULL,
              verified_at = NOW(),

@@ -969,6 +969,7 @@ export function updateOrderPaymentStatus(
         : o
     );
     localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
 
     // Persist payment status update to MySQL database
     const cleanId = orderId.replace(/^#/, '');

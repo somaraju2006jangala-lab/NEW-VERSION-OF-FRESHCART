@@ -238,9 +238,11 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         order.paymentMethod?.toLowerCase().includes('cash') ||
         order.paymentMethod === 'COD' ||
         order.paymentMethod === 'Cash on Delivery';
-      const isPaid = order.paymentStatus?.toUpperCase() === 'PAID';
+      const isPaid =
+        order.paymentStatus?.toUpperCase() === 'PAID' ||
+        order.paymentStatus?.toUpperCase() === 'COMPLETED';
 
-      // COD must NEVER generate/fetch OTP. Online UPI orders only fetch OTP once admin confirms PAID!
+      // COD must NEVER generate/fetch OTP. Online UPI orders only fetch OTP once admin confirms PAID/COMPLETED!
       if (!isCod && isPaid && order.status === 'Picking' && !customerOrderOtps[order.id]) {
         // Mark loading state
         setCustomerOrderOtps((prev) => ({
@@ -309,22 +311,40 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Sync with storage and periodically poll orders so delivered status reflects automatically
+  // Sync with storage, custom update events, and periodically poll orders so admin approval reflects automatically
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'freshcart_customer_orders') {
         refreshOrders();
       }
     };
+    const handleCustomSync = () => {
+      refreshOrders();
+    };
+
     window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('freshcart_orders_updated', handleCustomSync);
+    window.addEventListener('focus', handleCustomSync);
+
     const pollInterval = setInterval(() => {
-      if (activeOrders.some((o) => o.status === 'Picking')) {
+      // Automatically poll orders from database so admin verification or delivery changes update live
+      const needsPolling = activeOrders.some(
+        (o) =>
+          o.status === 'Picking' ||
+          o.status === 'Pending' ||
+          (o.paymentMethod?.toLowerCase().includes('upi') &&
+            o.paymentStatus?.toUpperCase() !== 'COMPLETED' &&
+            o.paymentStatus?.toUpperCase() !== 'PAID')
+      );
+      if (needsPolling) {
         refreshOrders();
       }
-    }, 3000);
+    }, 2500);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('freshcart_orders_updated', handleCustomSync);
+      window.removeEventListener('focus', handleCustomSync);
       clearInterval(pollInterval);
     };
   }, [activeOrders, refreshOrders]);
@@ -833,30 +853,34 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           <span className="px-2.5 py-0.5 rounded-full bg-[#dcfce7] text-[#15803d] text-[11px] font-bold animate-pulse">
                             ● {getStatusLabel(order.status)}
                           </span>
-                          {order.paymentMethod?.toLowerCase().includes('upi') && (
-                            <span
-                              id={`order-payment-status-badge-${order.id.replace('#', '')}`}
-                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                                order.paymentStatus?.toUpperCase() === 'PAID'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                                  : order.paymentStatus === 'PENDING_VERIFICATION'
-                                  ? 'bg-amber-50 text-amber-700 border-amber-300'
-                                  : order.paymentStatus === 'REJECTED'
-                                  ? 'bg-rose-50 text-rose-700 border-rose-300'
-                                  : 'bg-blue-50 text-blue-700 border-blue-300'
-                              }`}
-                            >
-                              Payment: {
-                                order.paymentStatus === 'PENDING_VERIFICATION'
-                                  ? 'Pending Verification'
-                                  : order.paymentStatus === 'REJECTED'
-                                  ? 'Rejected'
-                                  : order.paymentStatus === 'PAID'
-                                  ? 'Paid'
-                                  : (order.paymentStatus || 'Payment Attempted')
-                              }
-                            </span>
-                          )}
+                          <span
+                            id={`order-payment-method-badge-${order.id.replace('#', '')}`}
+                            className="px-2.5 py-0.5 rounded-full bg-[#eff4ff] text-[#1e40af] border border-[#dbeafe] text-[11px] font-semibold"
+                          >
+                            Payment Method: {order.paymentMethod || 'Online'}
+                          </span>
+                          <span
+                            id={`order-payment-status-badge-${order.id.replace('#', '')}`}
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                              order.paymentStatus?.toUpperCase() === 'COMPLETED' || order.paymentStatus?.toUpperCase() === 'PAID'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                : order.paymentStatus === 'PENDING_VERIFICATION' || order.paymentStatus === 'PENDING VERIFICATION'
+                                ? 'bg-amber-50 text-amber-700 border-amber-300'
+                                : order.paymentStatus === 'REJECTED'
+                                ? 'bg-rose-50 text-rose-700 border-rose-300'
+                                : 'bg-blue-50 text-blue-700 border-blue-300'
+                            }`}
+                          >
+                            Payment Status: {
+                              order.paymentStatus?.toUpperCase() === 'COMPLETED' || order.paymentStatus?.toUpperCase() === 'PAID'
+                                ? 'COMPLETED'
+                                : order.paymentStatus === 'PENDING_VERIFICATION' || order.paymentStatus === 'PENDING VERIFICATION'
+                                ? 'PENDING VERIFICATION'
+                                : order.paymentStatus === 'REJECTED'
+                                ? 'REJECTED'
+                                : (order.paymentStatus || 'PENDING')
+                            }
+                          </span>
                         </div>
                         <div className="text-[12px] text-[#565e74] mt-0.5 flex items-center gap-3">
                           <span>Placed: {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -879,11 +903,18 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                     {(() => {
                       const isUpi =
                         order.paymentMethod === 'UPI' ||
-                        order.paymentMethod?.toLowerCase().includes('upi');
-                      const isPaid = order.paymentStatus?.toUpperCase() === 'PAID';
+                        order.paymentMethod?.toLowerCase().includes('upi') ||
+                        order.paymentMethod?.toLowerCase().includes('phonepe') ||
+                        order.paymentMethod?.toLowerCase().includes('google pay') ||
+                        order.paymentMethod?.toLowerCase().includes('gpay') ||
+                        order.paymentMethod?.toLowerCase().includes('paytm') ||
+                        order.paymentMethod?.toLowerCase().includes('online');
+                      const isCompleted =
+                        order.paymentStatus?.toUpperCase() === 'COMPLETED' ||
+                        order.paymentStatus?.toUpperCase() === 'PAID';
 
-                      // Show upload section ONLY for relevant online UPI orders when proof is required (i.e. NOT paid)
-                      if (!isUpi || isPaid) return null;
+                      // When online payment is COMPLETED, automatically remove the entire Upload Payment Screenshot section
+                      if (!isUpi || isCompleted) return null;
 
                       const isPendingVerification = order.paymentStatus === 'PENDING_VERIFICATION';
                       const isRejected = order.paymentStatus === 'REJECTED';
@@ -1100,12 +1131,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                       );
                     })()}
 
-                    {/* Order Handover OTP Section for Picking Status (Only for confirmed PAID online orders, NOT for COD) */}
+                    {/* Order Handover OTP Section for Picking Status (Only for confirmed PAID/COMPLETED online orders, NOT for COD) */}
                     {order.status === 'Picking' &&
                       !order.paymentMethod?.toLowerCase().includes('cash') &&
                       order.paymentMethod !== 'COD' &&
                       order.paymentMethod !== 'Cash on Delivery' &&
-                      order.paymentStatus?.toUpperCase() === 'PAID' && (
+                      (order.paymentStatus?.toUpperCase() === 'PAID' ||
+                        order.paymentStatus?.toUpperCase() === 'COMPLETED') && (
                       <div
                         id={`order-handover-otp-${order.id.replace('#', '')}`}
                         className="p-4 sm:p-5 rounded-2xl bg-[#f0fdf4] border-2 border-[#86efac] text-center space-y-2.5 shadow-xs animate-in fade-in duration-200"
