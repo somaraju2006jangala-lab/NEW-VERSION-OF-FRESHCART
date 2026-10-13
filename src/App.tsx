@@ -99,25 +99,31 @@ function FreshCartStore() {
 
   // Authorized Admin Authentication & Session State
   const [currentAdmin, setCurrentAdmin] = useState<AuthorizedAdmin | null>(() => getStoredAdminUser());
+  const [isAdminVerifying, setIsAdminVerifying] = useState<boolean>(() => !!getStoredAdminToken());
 
   useEffect(() => {
     const verifyAdmin = async () => {
       const token = getStoredAdminToken();
       if (token) {
-        const res = await fetchAdminProfile();
-        if (res.success && res.admin) {
-          setCurrentAdmin(res.admin);
-        } else {
-          setCurrentAdmin(null);
+        try {
+          const res = await fetchAdminProfile();
+          if (res.success && res.admin) {
+            setCurrentAdmin(res.admin);
+          } else {
+            clearAdminSession();
+            setCurrentAdmin(null);
+          }
+        } catch {
+          // Network issue: keep cached admin
         }
       } else {
+        clearAdminSession();
         setCurrentAdmin(null);
       }
+      setIsAdminVerifying(false);
     };
-    if (currentView === 'admin') {
-      verifyAdmin();
-    }
-  }, [currentView]);
+    verifyAdmin();
+  }, []);
 
   const handleAdminLogout = () => {
     clearAdminSession();
@@ -317,7 +323,7 @@ function FreshCartStore() {
 
   // Synchronize URL Hash routing with currentView and enforce route protection
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || isAdminVerifying) return;
 
     const handleHashChange = () => {
       const hash = window.location.hash.toLowerCase();
@@ -351,6 +357,9 @@ function FreshCartStore() {
           setCurrentView('storefront');
         } else {
           setCurrentView('admin');
+          if (hash !== '#/admin' && hash !== '#admin') {
+            window.location.hash = '#/admin';
+          }
         }
       } else if (currentUser) {
         // AUTHENTICATED CUSTOMERS:
@@ -406,7 +415,7 @@ function FreshCartStore() {
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [currentUser, currentAdmin, isLoading]);
+  }, [currentUser, currentAdmin, isLoading, isAdminVerifying]);
 
   const navigateToView = (view: ViewType, param?: string) => {
     // If trying to open admin without active admin authorization, redirect to shared login or storefront
@@ -783,7 +792,7 @@ function FreshCartStore() {
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  if (isLoading) {
+  if (isLoading || isAdminVerifying) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-transparent relative z-10 overflow-hidden">
         <div className="relative z-10 flex flex-col items-center gap-3 bg-white/40 backdrop-blur-md p-8 rounded-3xl border border-white/55 shadow-xl">

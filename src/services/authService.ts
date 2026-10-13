@@ -3,7 +3,7 @@ import { INITIAL_PRODUCTS } from '../data/products';
 import { validateIndianMobileNumber } from './registrationOtpService';
 
 const STORAGE_CUSTOMERS_KEY = 'freshcart_registered_customers';
-const STORAGE_CURRENT_USER_KEY = 'freshcart_active_customer_session';
+export const STORAGE_CURRENT_USER_KEY = 'freshcart_active_customer_session';
 const STORAGE_CUSTOMER_ORDERS_KEY = 'freshcart_customer_orders_inr_v1';
 
 // Demo customer credentials

@@ -15,6 +15,7 @@ import {
   initializeAuthStore,
   RegisterPayload,
   syncBackendOrders,
+  STORAGE_CURRENT_USER_KEY,
 } from '../services/authService';
 import { AuthorizedAdmin } from '../services/adminService';
 
@@ -37,8 +38,14 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<Customer | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<Customer | null>(() => getCurrentCustomer());
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    try {
+      return !!localStorage.getItem(STORAGE_CURRENT_USER_KEY);
+    } catch {
+      return false;
+    }
+  });
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
 
   const refreshOrders = useCallback(() => {
@@ -69,19 +76,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await initializeAuthStore();
         const user = getCurrentCustomer();
         if (user) {
-          setCurrentUser(user);
-          setOrders(getCustomerOrders(user.id));
-          fetch('/api/orders', {
-            headers: user.token ? { Authorization: `Bearer ${user.token}` } : {},
-          })
-            .then((res) => res.json())
-            .then((data) => {
-              if (data?.success && Array.isArray(data.orders)) {
-                syncBackendOrders(data.orders);
+          if (user.token) {
+            try {
+              const res = await fetch('/api/auth/me', {
+                headers: { Authorization: `Bearer ${user.token}` },
+              });
+              if (res.ok) {
+                const data = await res.json().catch(() => ({}));
+                if (data?.success && data?.customer) {
+                  const verifiedCustomer: Customer = {
+                    ...user,
+                    ...data.customer,
+                    token: user.token,
+                  };
+                  setCurrentUser(verifiedCustomer);
+                  localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(verifiedCustomer));
+                  setOrders(getCustomerOrders(verifiedCustomer.id));
+                } else {
+                  setCurrentUser(user);
+                  setOrders(getCustomerOrders(user.id));
+                }
+              } else if (res.status === 401 || res.status === 403) {
+                // Token expired or invalid - clear session!
+                logoutCustomer();
+                setCurrentUser(null);
+                setOrders([]);
+              } else {
+                setCurrentUser(user);
                 setOrders(getCustomerOrders(user.id));
               }
+            } catch {
+              setCurrentUser(user);
+              setOrders(getCustomerOrders(user.id));
+            }
+
+            // Sync orders if user still active
+            fetch('/api/orders', {
+              headers: { Authorization: `Bearer ${user.token}` },
             })
-            .catch(() => {});
+              .then((res) => res.json())
+              .then((data) => {
+                if (data?.success && Array.isArray(data.orders)) {
+                  syncBackendOrders(data.orders);
+                  setOrders(getCustomerOrders(user.id));
+                }
+              })
+              .catch(() => {});
+          } else {
+            setCurrentUser(user);
+            setOrders(getCustomerOrders(user.id));
+          }
+        } else {
+          setCurrentUser(null);
         }
       } catch (err) {
         console.error('Error during Auth initialization:', err);
