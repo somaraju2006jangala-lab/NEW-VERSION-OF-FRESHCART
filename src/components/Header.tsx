@@ -21,6 +21,7 @@ import {
 
 interface HeaderProps {
   currentView: ViewType;
+  isAdminSignIn?: boolean;
   onToggleView: (view: ViewType) => void;
   cartCount: number;
   onOpenCart: () => void;
@@ -33,6 +34,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   currentView,
+  isAdminSignIn,
   onToggleView,
   cartCount,
   onOpenCart,
@@ -143,7 +145,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Search Box / Tagline */}
           <div className="flex-1 max-w-xl mx-1 sm:mx-3">
-            {currentView === 'login' || currentView === 'register' ? (
+            {currentView === 'login' || currentView === 'register' || isAdminSignIn ? (
               <div className="text-center hidden md:block">
                 <span className="text-[12px] font-medium text-[#565e74]">
                   {t('tagline')}

@@ -775,6 +775,7 @@ function FreshCartStore() {
       {/* Universal Header with View Navigation & Customer Authentication */}
       <Header
         currentView={currentView}
+        isAdminSignIn={currentView === 'admin' && !currentAdmin}
         onToggleView={(view) => navigateToView(view)}
         cartCount={cartCount}
         onOpenCart={() => navigateToView('cart')}
