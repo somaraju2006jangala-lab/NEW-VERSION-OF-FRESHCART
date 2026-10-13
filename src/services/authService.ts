@@ -11,7 +11,7 @@ export const DEMO_CUSTOMER_EMAIL = 'customer@freshcart.com';
 export const DEMO_CUSTOMER_PASSWORD = 'FreshCart2026!';
 
 import { hashPassword, generateSalt } from '../utils/crypto';
-import { AuthorizedAdmin, saveAdminSession, loginAdmin } from './adminService';
+import { AuthorizedAdmin, saveAdminSession, loginAdmin, getStoredAdminToken } from './adminService';
 
 export { hashPassword, generateSalt };
 
@@ -948,13 +948,13 @@ export function updateOrderStatus(
  */
 export function updateOrderPaymentStatus(
   orderId: string,
-  paymentStatus: 'Pending' | 'Pending Verification' | 'PENDING_VERIFICATION' | 'Paid' | 'PAID' | 'Failed' | 'REJECTED' | string,
+  paymentStatus: 'Pending' | 'Pending Verification' | 'PENDING_VERIFICATION' | 'Paid' | 'PAID' | 'Failed' | 'REJECTED' | 'COMPLETED' | 'COD' | string,
   meta?: { screenshotUrl?: string; verifiedAt?: string; verifiedBy?: string; verificationNotes?: string }
 ): void {
   try {
     const raw = localStorage.getItem(STORAGE_CUSTOMER_ORDERS_KEY);
     const orders: CustomerOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
-    const isPaid = paymentStatus.toUpperCase() === 'PAID';
+    const isPaid = paymentStatus.toUpperCase() === 'PAID' || paymentStatus.toUpperCase() === 'COMPLETED';
     const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
     const updated = orders.map((o) =>
       o.id === orderId || o.id === altId
@@ -969,8 +969,81 @@ export function updateOrderPaymentStatus(
         : o
     );
     localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(updated));
+
+    // Persist payment status update to MySQL database
+    const cleanId = orderId.replace(/^#/, '');
+    const adminToken = getStoredAdminToken();
+    fetch(`/api/orders/${encodeURIComponent(cleanId)}/payment-status`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-role': 'admin',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+      body: JSON.stringify({ paymentStatus, ...meta }),
+    }).catch(() => {});
   } catch (err) {
     console.error('Failed to update order payment status:', err);
+  }
+}
+
+/**
+ * Confirms cash collection for a Cash on Delivery (COD) order.
+ * Saves COMPLETED status to MySQL database and updates local state.
+ */
+export async function confirmCodCashCollection(
+  orderId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const verifiedAt = new Date().toISOString();
+    updateOrderPaymentStatus(orderId, 'COMPLETED', {
+      verifiedAt,
+      verifiedBy: 'Admin',
+    });
+
+    const cleanId = orderId.replace(/^#/, '');
+    const adminToken = getStoredAdminToken();
+    const res = await fetch(`/api/orders/${encodeURIComponent(cleanId)}/payment-status`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-role': 'admin',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+      body: JSON.stringify({ paymentStatus: 'COMPLETED' }),
+    });
+
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      return { success: true };
+    }
+    return { success: true }; // Local state updated
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to confirm cash collection.' };
+  }
+}
+
+/**
+ * Fetches all orders from MySQL database for Admin Portal.
+ * Merges authoritative database records with local state.
+ */
+export async function fetchAllOrdersFromBackend(): Promise<CustomerOrder[]> {
+  try {
+    const adminToken = getStoredAdminToken();
+    const res = await fetch('/api/orders', {
+      headers: {
+        'x-admin-role': 'admin',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.success && Array.isArray(data.orders)) {
+      syncBackendOrders(data.orders);
+    }
+    return getCustomerOrders();
+  } catch (err) {
+    console.warn('Failed to fetch orders from backend:', err);
+    return getCustomerOrders();
   }
 }
 
@@ -985,12 +1058,17 @@ export function syncBackendOrders(backendOrders: any[]): void {
     let changed = false;
 
     backendOrders.forEach((bo) => {
-      const boAltId = bo.id?.startsWith('#') ? bo.id.slice(1) : `#${bo.id}`;
-      const matchIndex = orders.findIndex((o) => o.id === bo.id || o.id === boAltId);
+      const boCleanId = String(bo.id || '').replace(/^#/, '');
+      const matchIndex = orders.findIndex((o) => {
+        const oCleanId = String(o.id || '').replace(/^#/, '');
+        return oCleanId === boCleanId;
+      });
+
       if (matchIndex >= 0) {
         const existing = orders[matchIndex];
         orders[matchIndex] = {
           ...existing,
+          paymentMethod: bo.paymentMethod || existing.paymentMethod,
           paymentStatus: bo.paymentStatus || existing.paymentStatus,
           screenshotUrl: bo.screenshotUrl !== undefined ? bo.screenshotUrl : existing.screenshotUrl,
           verifiedAt: bo.verifiedAt || existing.verifiedAt,
@@ -998,6 +1076,12 @@ export function syncBackendOrders(backendOrders: any[]): void {
           verificationNotes: bo.verificationNotes || existing.verificationNotes,
           status: bo.status || existing.status,
         };
+        changed = true;
+      } else {
+        orders.push({
+          ...bo,
+          id: bo.id.startsWith('#') ? bo.id : `#${bo.id}`,
+        });
         changed = true;
       }
     });

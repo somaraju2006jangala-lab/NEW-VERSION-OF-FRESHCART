@@ -2400,6 +2400,53 @@ export async function findOrdersForCustomerInDb(customerId?: string): Promise<an
 
     const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
+    // Query associated payment records from payments table to ensure authoritative state
+    const orderIds = rows.map((r) => r.id);
+    if (orderIds.length > 0) {
+      const cleanIds = orderIds.map((id) => String(id).replace(/^#/, ''));
+      const [payRows] = await pool.query<RowDataPacket[]>(
+        `SELECT order_id, payment_method, payment_status, screenshot_path, verified_at, verified_by
+         FROM payments
+         WHERE order_id IN (?) OR order_id IN (?)
+         ORDER BY id ASC`,
+        [orderIds, cleanIds]
+      );
+      const payMap = new Map<string, RowDataPacket>();
+      for (const p of payRows) {
+        const key1 = String(p.order_id || '');
+        const key2 = key1.replace(/^#/, '');
+        payMap.set(key1, p);
+        payMap.set(key2, p);
+      }
+
+      for (const ord of rows) {
+        const cleanId = String(ord.id || '').replace(/^#/, '');
+        const p = payMap.get(ord.id) || payMap.get(cleanId);
+        if (p) {
+          if (p.payment_method && (!ord.paymentMethod || ord.paymentMethod === 'COD')) {
+            ord.paymentMethod = p.payment_method;
+          }
+          // Harmonize status: if either indicates completed/paid, mark completed/paid
+          const pStatus = String(p.payment_status || '').toUpperCase();
+          const oStatus = String(ord.paymentStatus || '').toUpperCase();
+          if (pStatus === 'PAID' || pStatus === 'COMPLETED' || oStatus === 'PAID' || oStatus === 'COMPLETED') {
+            ord.paymentStatus = 'COMPLETED';
+          } else if (pStatus === 'PENDING_VERIFICATION' || oStatus === 'PENDING_VERIFICATION') {
+            ord.paymentStatus = 'PENDING_VERIFICATION';
+          } else if (pStatus === 'REJECTED' || oStatus === 'REJECTED') {
+            ord.paymentStatus = 'REJECTED';
+          } else if (pStatus) {
+            ord.paymentStatus = p.payment_status;
+          }
+          if (!ord.screenshotUrl && p.screenshot_path) {
+            ord.screenshotUrl = `/api/payments/screenshot/${encodeURIComponent(cleanId)}`;
+          }
+          ord.verifiedAt = ord.verifiedAt || p.verified_at;
+          ord.verifiedBy = ord.verifiedBy || p.verified_by;
+        }
+      }
+    }
+
     for (const ord of rows) {
       const [itemRows] = await pool.query<RowDataPacket[]>(
         `SELECT product_id as id, product_name as title, quantity, unit, price, subtotal
@@ -2447,6 +2494,76 @@ export async function updateOrderStatusInDb(
     return true;
   } catch (err: any) {
     console.error('[MySQL] Error updating order status:', err?.message);
+    return false;
+  }
+}
+
+/**
+ * Updates order payment status in MySQL (e.g. COD cash collection or admin payment update).
+ */
+export async function updateOrderPaymentStatusInDb(
+  orderId: string,
+  paymentStatus: string,
+  adminUsername: string = 'Admin'
+): Promise<boolean> {
+  const pool = getPool();
+  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+
+  try {
+    await pool.query(
+      `UPDATE orders
+       SET payment_status = ?,
+           verified_at = NOW(),
+           verified_by = ?
+       WHERE order_id IN (?, ?)`,
+      [paymentStatus, adminUsername, orderId, altId]
+    );
+
+    const [payRows] = await pool.query<RowDataPacket[]>(
+      `SELECT payment_id FROM payments WHERE order_id IN (?, ?)`,
+      [orderId, altId]
+    );
+
+    if (payRows.length > 0) {
+      await pool.query(
+        `UPDATE payments
+         SET payment_status = ?,
+             paid_at = NOW(),
+             verified_at = NOW(),
+             verified_by = ?
+         WHERE order_id IN (?, ?)`,
+        [paymentStatus, adminUsername, orderId, altId]
+      );
+    } else {
+      // If no payments row exists (e.g. for demo or legacy COD orders), create one if customer exists
+      try {
+        const [orderRows] = await pool.query<RowDataPacket[]>(
+          `SELECT customer_id, payment_method, total FROM orders WHERE order_id IN (?, ?) LIMIT 1`,
+          [orderId, altId]
+        );
+        if (orderRows.length > 0) {
+          const o = orderRows[0];
+          // Check if customer exists to satisfy fk_payments_customer foreign key
+          const [custRows] = await pool.query<RowDataPacket[]>(
+            `SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1`,
+            [o.customer_id]
+          );
+          if (custRows.length > 0) {
+            const payId = `PAY-${orderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+            await pool.query(
+              `INSERT INTO payments (payment_id, order_id, customer_id, payment_method, payment_status, amount, paid_at, verified_at, verified_by)
+               VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)`,
+              [payId, orderId, o.customer_id, o.payment_method || 'COD', paymentStatus, o.total, adminUsername]
+            );
+          }
+        }
+      } catch (payInsertErr: any) {
+        console.warn('[MySQL] Non-critical warning inserting payments row:', payInsertErr?.message);
+      }
+    }
+    return true;
+  } catch (err: any) {
+    console.error('[MySQL] Error updating order payment status in DB:', err?.message);
     return false;
   }
 }

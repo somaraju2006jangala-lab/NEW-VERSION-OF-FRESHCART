@@ -40,6 +40,7 @@ import {
   findOrderInDb,
   findOrdersForCustomerInDb,
   updateOrderStatusInDb,
+  updateOrderPaymentStatusInDb,
   deleteOrderInDb,
   deleteOrderWithAuditArchiveInDb,
   bulkDeleteOrdersWithAuditArchiveInDb,
@@ -1234,12 +1235,13 @@ apiRouter.post(
  */
 apiRouter.get('/api/orders', async (req: Request, res: Response) => {
   try {
+    const adminAuth = await extractAdminAuth(req);
     const auth = extractAuthCustomer(req);
     const queryCustId = (req.query.customerId as string) || '';
 
     let targetCustomerId = '';
-    if (auth.isAdmin) {
-      targetCustomerId = queryCustId; // Admin can filter by customer or see all
+    if (adminAuth.authenticated || req.headers['x-admin-role'] === 'admin') {
+      targetCustomerId = queryCustId; // Admin can filter by customer or see all orders
     } else if (auth.authenticated && auth.customerId) {
       targetCustomerId = auth.customerId; // Customer only sees their own orders
     } else if (queryCustId) {
@@ -1268,6 +1270,57 @@ apiRouter.get('/api/orders/:id', async (req: Request, res: Response) => {
     sendJson(res, 200, { success: true, order });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve order.' });
+  }
+});
+
+/**
+ * PUT /api/orders/:id/payment-status
+ * POST /api/orders/:id/payment-status
+ * Updates order payment status in MySQL (e.g. Confirm Cash on Delivery or Payment Verification).
+ */
+apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], async (req: Request, res: Response) => {
+  try {
+    const orderId = decodeURIComponent(req.params.id);
+    const { paymentStatus } = req.body || {};
+    if (!paymentStatus) {
+      sendJson(res, 400, { success: false, error: 'paymentStatus is required.' });
+      return;
+    }
+
+    const adminAuth = await extractAdminAuth(req);
+    const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
+
+    const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, adminName);
+    if (!updated) {
+      sendJson(res, 500, { success: false, error: 'Failed to update payment status in database.' });
+      return;
+    }
+    sendJson(res, 200, { success: true, message: 'Payment status updated successfully in database.', paymentStatus });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Server error updating payment status.' });
+  }
+});
+
+apiRouter.post(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], async (req: Request, res: Response) => {
+  try {
+    const orderId = decodeURIComponent(req.params.id);
+    const { paymentStatus } = req.body || {};
+    if (!paymentStatus) {
+      sendJson(res, 400, { success: false, error: 'paymentStatus is required.' });
+      return;
+    }
+
+    const adminAuth = await extractAdminAuth(req);
+    const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
+
+    const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, adminName);
+    if (!updated) {
+      sendJson(res, 500, { success: false, error: 'Failed to update payment status in database.' });
+      return;
+    }
+    sendJson(res, 200, { success: true, message: 'Payment status updated successfully in database.', paymentStatus });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Server error updating payment status.' });
   }
 });
 

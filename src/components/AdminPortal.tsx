@@ -57,10 +57,16 @@ import {
   Phone,
   ChevronDown,
   Store,
+  Banknote,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { verifyOrderOtp, maskMobileNumber } from '../services/otpClientService';
-import { getCustomerPhoneForOrder, updateOrderPaymentStatus } from '../services/authService';
+import {
+  getCustomerPhoneForOrder,
+  updateOrderPaymentStatus,
+  confirmCodCashCollection,
+  fetchAllOrdersFromBackend,
+} from '../services/authService';
 import { formatIndianDisplayNumber, validateIndianMobileNumber } from '../services/registrationOtpService';
 import {
   fetchUpiSettings,
@@ -232,6 +238,131 @@ interface AdminPortalProps {
   onUpdateTaxAndPacking?: (percentage: number) => Promise<void> | void;
   currentAdmin?: AuthorizedAdmin | null;
   onAdminLogout?: () => void;
+}
+ 
+/**
+ * Resolves payment method display name, payment status, and themed styling
+ * according to Customer Orders Ledger specifications:
+ *
+ * Online payments (UPI, PhonePe, Google Pay, Paytm, etc.):
+ * - Successfully verified/approved: COMPLETED (Green)
+ * - Proof awaiting verification: PENDING VERIFICATION (Amber)
+ * - Admin rejects proof: REJECTED (Red)
+ * - No successful payment recorded: UNPAID (Red)
+ *
+ * Cash on Delivery (COD):
+ * - Method: Cash on Delivery
+ * - Before cash is collected: COD (Amber)
+ * - Confirmed cash collection: COMPLETED (Green)
+ */
+export function getDisplayPaymentInfo(order: CustomerOrder): {
+  paymentMethod: string;
+  paymentStatus: 'COMPLETED' | 'PENDING VERIFICATION' | 'REJECTED' | 'UNPAID' | 'COD';
+  badgeStyle: {
+    bg: string;
+    text: string;
+    border: string;
+    dot: string;
+  };
+} {
+  const rawMethod = (order.paymentMethod || '').trim();
+  const rawStatus = (order.paymentStatus || '').trim().toUpperCase();
+  const hasProof = Boolean(order.screenshotUrl);
+
+  const isCod =
+    !rawMethod ||
+    rawMethod.toLowerCase().includes('cash') ||
+    rawMethod.toUpperCase() === 'COD';
+
+  if (isCod) {
+    const isCompleted =
+      rawStatus === 'COMPLETED' ||
+      rawStatus === 'PAID' ||
+      rawStatus === 'CONFIRMED' ||
+      rawStatus === 'COLLECTED';
+
+    const status: 'COMPLETED' | 'COD' = isCompleted ? 'COMPLETED' : 'COD';
+    return {
+      paymentMethod: 'Cash on Delivery',
+      paymentStatus: status,
+      badgeStyle: isCompleted
+        ? {
+            bg: 'bg-emerald-500/15',
+            text: 'text-[#10b981]',
+            border: 'border-emerald-500/30',
+            dot: 'bg-[#10b981]',
+          }
+        : {
+            bg: 'bg-amber-500/15',
+            text: 'text-[#f59e0b]',
+            border: 'border-amber-500/30',
+            dot: 'bg-[#f59e0b]',
+          },
+    };
+  }
+
+  // Online payments (UPI, PhonePe, Google Pay, Paytm, or other online UPI methods)
+  let method = 'Online (UPI)';
+  if (rawMethod.toLowerCase().includes('phonepe')) {
+    method = 'Online (PhonePe)';
+  } else if (rawMethod.toLowerCase().includes('google pay') || rawMethod.toLowerCase().includes('gpay')) {
+    method = 'Online (Google Pay)';
+  } else if (rawMethod.toLowerCase().includes('paytm')) {
+    method = 'Online (Paytm)';
+  } else if (rawMethod.startsWith('Online (')) {
+    method = rawMethod;
+  }
+
+  let status: 'COMPLETED' | 'PENDING VERIFICATION' | 'REJECTED' | 'UNPAID';
+
+  if (rawStatus === 'PAID' || rawStatus === 'COMPLETED' || rawStatus === 'APPROVED' || rawStatus === 'SUCCESS') {
+    status = 'COMPLETED';
+  } else if (
+    rawStatus === 'PENDING_VERIFICATION' ||
+    rawStatus === 'PENDING VERIFICATION' ||
+    (hasProof && rawStatus !== 'REJECTED' && rawStatus !== 'FAILED')
+  ) {
+    status = 'PENDING VERIFICATION';
+  } else if (rawStatus === 'REJECTED' || rawStatus === 'FAILED') {
+    status = 'REJECTED';
+  } else {
+    status = 'UNPAID';
+  }
+
+  const badgeStyle =
+    status === 'COMPLETED'
+      ? {
+          bg: 'bg-emerald-500/15',
+          text: 'text-[#10b981]',
+          border: 'border-emerald-500/30',
+          dot: 'bg-[#10b981]',
+        }
+      : status === 'PENDING VERIFICATION'
+      ? {
+          bg: 'bg-amber-500/15',
+          text: 'text-[#f59e0b]',
+          border: 'border-amber-500/30',
+          dot: 'bg-[#f59e0b] animate-pulse',
+        }
+      : status === 'REJECTED'
+      ? {
+          bg: 'bg-rose-500/15',
+          text: 'text-[#ef4444]',
+          border: 'border-rose-500/30',
+          dot: 'bg-[#ef4444]',
+        }
+      : {
+          bg: 'bg-rose-500/15',
+          text: 'text-[#ef4444]',
+          border: 'border-rose-500/30',
+          dot: 'bg-[#ef4444]',
+        };
+
+  return {
+    paymentMethod: method,
+    paymentStatus: status,
+    badgeStyle,
+  };
 }
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
@@ -751,6 +882,24 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
   const [pulseToast, setPulseToast] = useState<string | null>(null);
 
+  // Customer Orders Ledger state & synchronization with authoritative database
+  const [ordersList, setOrdersList] = useState<CustomerOrder[]>(customerOrders);
+  const [isConfirmingCash, setIsConfirmingCash] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (customerOrders && customerOrders.length > 0) {
+      setOrdersList(customerOrders);
+    }
+  }, [customerOrders]);
+
+  useEffect(() => {
+    fetchAllOrdersFromBackend().then((orders) => {
+      if (Array.isArray(orders) && orders.length > 0) {
+        setOrdersList(orders);
+      }
+    });
+  }, [activeTab]);
+
   // OTP Verification States for Admin Customer Orders Ledger
   const [orderOtpInputs, setOrderOtpInputs] = useState<Record<string, string>>({});
   const [orderVerifying, setOrderVerifying] = useState<Record<string, boolean>>({});
@@ -759,7 +908,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   >({});
   const [selectedOtpOrderId, setSelectedOtpOrderId] = useState<string | null>(null);
   const selectedOtpOrder = selectedOtpOrderId
-    ? customerOrders.find((o) => o.id === selectedOtpOrderId)
+    ? ordersList.find((o) => o.id === selectedOtpOrderId)
     : null;
 
   // UPI Payment Configuration State
@@ -961,10 +1110,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           type: 'success',
           message: `Payment for Order #${cleanId} verified successfully and confirmed as PAID in database. Delivery OTP dispatched to customer.`,
         });
+        const verifiedAt = res.verifiedAt || new Date().toISOString();
+        const verifiedBy = res.verifiedBy || 'admin';
         updateOrderPaymentStatus(item.orderId, 'PAID', {
-          verifiedAt: res.verifiedAt || new Date().toISOString(),
-          verifiedBy: res.verifiedBy || 'admin',
+          verifiedAt,
+          verifiedBy,
         });
+        setOrdersList((prev) =>
+          prev.map((o) => {
+            const oClean = o.id.replace(/^#/, '');
+            return oClean === cleanId
+              ? {
+                  ...o,
+                  paymentStatus: 'PAID',
+                  verifiedAt,
+                  verifiedBy,
+                  screenshotUrl: undefined,
+                }
+              : o;
+          })
+        );
         if (onUpdateOrderStatus) {
           onUpdateOrderStatus(item.orderId, 'Picking');
         }
@@ -1001,11 +1166,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const res = await adminVerifyPayment(item.orderId, 'REJECT', reason.trim());
       if (res.success) {
+        const cleanId = item.orderId.replace(/^#/, '');
+        const verifiedAt = res.verifiedAt || new Date().toISOString();
+        const verifiedBy = res.verifiedBy || 'admin';
         updateOrderPaymentStatus(item.orderId, 'REJECTED', {
           verificationNotes: reason.trim(),
-          verifiedAt: res.verifiedAt || new Date().toISOString(),
-          verifiedBy: res.verifiedBy || 'admin',
+          verifiedAt,
+          verifiedBy,
         });
+        setOrdersList((prev) =>
+          prev.map((o) => {
+            const oClean = o.id.replace(/^#/, '');
+            return oClean === cleanId
+              ? {
+                  ...o,
+                  paymentStatus: 'REJECTED',
+                  verificationNotes: reason.trim(),
+                  verifiedAt,
+                  verifiedBy,
+                }
+              : o;
+          })
+        );
         setRejectingItem(null);
         setRejectReasonInput('');
         if (viewingScreenshotItem?.orderId === item.orderId) {
@@ -1025,6 +1207,39 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       });
     } finally {
       setIsVerifyingAction(false);
+    }
+  };
+
+  const handleConfirmCashCollection = async (orderId: string) => {
+    setIsConfirmingCash((prev) => ({ ...prev, [orderId]: true }));
+    try {
+      await confirmCodCashCollection(orderId);
+      const verifiedAt = new Date().toISOString();
+      const adminName = currentAdmin?.fullName || currentAdmin?.adminId || 'Admin';
+      setOrdersList((prev) =>
+        prev.map((o) => {
+          const oClean = o.id.replace(/^#/, '');
+          const cleanId = orderId.replace(/^#/, '');
+          return oClean === cleanId
+            ? {
+                ...o,
+                paymentStatus: 'COMPLETED',
+                verifiedAt,
+                verifiedBy: adminName,
+              }
+            : o;
+        })
+      );
+      if (onUpdateOrderStatus) {
+        const found = ordersList.find(
+          (o) => o.id === orderId || o.id.replace(/^#/, '') === orderId.replace(/^#/, '')
+        );
+        if (found) {
+          onUpdateOrderStatus(orderId, found.status, { paymentStatus: 'COMPLETED' } as any);
+        }
+      }
+    } finally {
+      setIsConfirmingCash((prev) => ({ ...prev, [orderId]: false }));
     }
   };
 
@@ -1288,7 +1503,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const periodDisplayMessage = activeHistoryPeriod ? activeHistoryPeriod.displayMessage : null;
 
-  const filteredOrders = customerOrders
+  const filteredOrders = ordersList
     .filter((order) => {
       const q = orderSearch.toLowerCase().trim();
       const matchesSearch =
@@ -2649,19 +2864,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               {/* Status counter badges */}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-slate-300 text-[12px] font-bold">
-                  Total: {customerOrders.length}
+                  Total: {ordersList.length}
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-[#fef3c7] text-[#92400e] text-[12px] font-bold flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-[#f59e0b]" />
-                  Picking: {customerOrders.filter((o) => o.status === 'Picking').length}
+                  Picking: {ordersList.filter((o) => o.status === 'Picking').length}
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-[#dcfce7] text-[#15803d] text-[12px] font-bold flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-[#16a34a]" />
-                  Ordered: {customerOrders.filter((o) => o.status === 'Ordered').length}
+                  Ordered: {ordersList.filter((o) => o.status === 'Ordered').length}
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-[#eff4ff] text-[#1d4ed8] text-[12px] font-bold flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-[#3b82f6]" />
-                  Delivered: {customerOrders.filter((o) => o.status === 'Delivered').length}
+                  Delivered: {ordersList.filter((o) => o.status === 'Delivered').length}
                 </span>
               </div>
             </div>
@@ -2875,8 +3090,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 {filteredOrders.map((order) => {
                   const formattedDateTime = formatOrderDateTime(order.createdAt);
                   const displayOrderId = order.id.startsWith('#') ? order.id : `#${order.id}`;
+                  const cleanOrderId = order.id.replace(/^#/, '');
                   const resolvedPhone = getCustomerPhoneForOrder(order);
                   const displayMobile = formatIndianDisplayNumber(resolvedPhone) || resolvedPhone || 'Not available';
+                  const paymentInfo = getDisplayPaymentInfo(order);
+                  const isCod =
+                    !order.paymentMethod ||
+                    order.paymentMethod.toLowerCase().includes('cash') ||
+                    order.paymentMethod.toUpperCase() === 'COD';
 
                   // Build plain text format matching user's requested specification:
                   const textLines: string[] = [
@@ -2900,6 +3121,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   });
                   textLines.push('');
                   textLines.push(`Total: ${formatINR(order.total)}`);
+                  textLines.push(`Payment Method: ${paymentInfo.paymentMethod}`);
+                  textLines.push(`Payment Status: ${paymentInfo.paymentStatus}`);
                   textLines.push(`Status: ${order.status}`);
 
                   const fullOrderText = textLines.join('\n');
@@ -2925,9 +3148,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           >
                             ● {order.status}
                           </span>
+                          <span
+                            id={`order-payment-badge-${cleanOrderId}`}
+                            className={`px-2 py-0.5 rounded-full text-[11px] font-bold border font-mono ${paymentInfo.badgeStyle.bg} ${paymentInfo.badgeStyle.text} ${paymentInfo.badgeStyle.border}`}
+                          >
+                            ● {paymentInfo.paymentStatus}
+                          </span>
                         </div>
 
-                        {/* Actions: Copy Record, OTP button, Read-only Status */}
+                        {/* Actions: Copy Record, Confirm Cash Collection (for COD), OTP button, Read-only Status */}
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -2952,11 +3181,25 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             )}
                           </button>
 
+                          {/* Confirm Cash Collection button for Cash on Delivery orders before cash is collected */}
+                          {isCod && paymentInfo.paymentStatus === 'COD' && (
+                            <button
+                              type="button"
+                              id={`confirm-cash-btn-${cleanOrderId}`}
+                              onClick={() => handleConfirmCashCollection(order.id)}
+                              disabled={isConfirmingCash[order.id]}
+                              title={`Confirm cash collection of ${formatINR(order.total)} for Order ${displayOrderId}`}
+                              className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs backdrop-blur-xs disabled:opacity-50"
+                            >
+                              <Banknote className="w-3.5 h-3.5 text-[#10b981]" />
+                              <span>{isConfirmingCash[order.id] ? 'Saving...' : 'Confirm Cash Collection'}</span>
+                            </button>
+                          )}
+
                           {/* Small "OTP" button to open separate OTP Verification page (Excluded for COD; only for PAID online orders) */}
                           {order.status === 'Picking' &&
-                            !order.paymentMethod?.toLowerCase().includes('cash') &&
-                            order.paymentMethod !== 'COD' &&
-                            (order.paymentStatus === 'PAID' || order.paymentStatus === 'Paid') && (
+                            !isCod &&
+                            (order.paymentStatus === 'PAID' || order.paymentStatus === 'Paid' || paymentInfo.paymentStatus === 'COMPLETED') && (
                             <button
                               type="button"
                               id={`order-otp-btn-${order.id}`}
@@ -3038,6 +3281,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                         <div className="pt-2 border-t border-white/10">
                           <span className="font-semibold text-[#94a3b8]">Total: </span>
                           <span className="font-bold text-[#10b981]">{formatINR(order.total)}</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-[#94a3b8]">Payment Method: </span>
+                          <span
+                            id={`order-payment-method-${cleanOrderId}`}
+                            data-payment-method={paymentInfo.paymentMethod}
+                            className="font-bold text-white"
+                          >
+                            {paymentInfo.paymentMethod}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-[#94a3b8]">Payment Status: </span>
+                          <span
+                            id={`order-payment-status-${cleanOrderId}`}
+                            data-payment-status={paymentInfo.paymentStatus}
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[12px] font-bold border font-mono ${paymentInfo.badgeStyle.bg} ${paymentInfo.badgeStyle.text} ${paymentInfo.badgeStyle.border}`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${paymentInfo.badgeStyle.dot}`} />
+                            <span>{paymentInfo.paymentStatus}</span>
+                          </span>
                         </div>
                         <div>
                           <span className="font-semibold text-[#94a3b8]">Status: </span>
