@@ -64,6 +64,7 @@ import QRCode from 'qrcode';
 import {
   generateOrderOtp,
   verifyOrderOtp,
+  resendOrderOtp,
   getOrderOtpStatus,
   maskMobileNumber,
   OtpStatusResult,
@@ -1025,6 +1026,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [orderOtpStatusMap, setOrderOtpStatusMap] = useState<Record<string, OtpStatusResult>>({});
   const [isSendingOtp, setIsSendingOtp] = useState<Record<string, boolean>>({});
   const [expandedOtpOrders, setExpandedOtpOrders] = useState<Record<string, boolean>>({});
+  const [resendCooldown, setResendCooldown] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => {
+        let changed = false;
+        const next: Record<string, number> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (v > 1) {
+            next[k] = v - 1;
+            changed = true;
+          } else if (v === 1) {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Fetch authoritative OTP record status when opening dedicated OTP page and for active ledger orders
   useEffect(() => {
@@ -1702,6 +1723,52 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         [order.id]: {
           type: 'error',
           message: 'Error communicating with server to generate OTP.',
+        },
+      }));
+    } finally {
+      setIsSendingOtp((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const handleResendOtp = async (order: CustomerOrder) => {
+    if (isSendingOtp[order.id] || (resendCooldown[order.id] || 0) > 0) return;
+    const rawPhone = getCustomerPhoneForOrder(order);
+    setIsSendingOtp((prev) => ({ ...prev, [order.id]: true }));
+    try {
+      const res = await resendOrderOtp(
+        order.id,
+        order.customerId || 'guest',
+        rawPhone || ''
+      );
+      if (res.success) {
+        setResendCooldown((prev) => ({ ...prev, [order.id]: 15 }));
+        setOrderOtpInputs((prev) => ({ ...prev, [order.id]: '' }));
+        setOrderOtpFeedback((prev) => ({
+          ...prev,
+          [order.id]: {
+            type: 'success',
+            message: 'Fresh 6-digit OTP dispatched to customer. Previous code invalidated.',
+          },
+        }));
+        const updatedStatus = await getOrderOtpStatus(order.id, { role: 'admin' });
+        if (updatedStatus) {
+          setOrderOtpStatusMap((prev) => ({ ...prev, [order.id]: updatedStatus }));
+        }
+      } else {
+        setOrderOtpFeedback((prev) => ({
+          ...prev,
+          [order.id]: {
+            type: 'error',
+            message: res.error || res.message || 'Failed to resend OTP.',
+          },
+        }));
+      }
+    } catch {
+      setOrderOtpFeedback((prev) => ({
+        ...prev,
+        [order.id]: {
+          type: 'error',
+          message: 'Error communicating with server to resend OTP.',
         },
       }));
     } finally {
@@ -3179,6 +3246,35 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                       </>
                                     )}
                                   </button>
+
+                                  <button
+                                    type="button"
+                                    id="separate-otp-resend-btn"
+                                    onClick={() => handleResendOtp(selectedOtpOrder)}
+                                    disabled={
+                                      isVerifying ||
+                                      isSending ||
+                                      (resendCooldown[selectedOtpOrder.id] || 0) > 0
+                                    }
+                                    title={`Invalidates previous OTP and generates a fresh one for Order ${displayOrderId}`}
+                                    className="h-11 px-4 rounded-xl text-[13px] font-bold border border-emerald-500/30 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+                                  >
+                                    {isSending ? (
+                                      <>
+                                        <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
+                                        <span>Generating...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                                        <span>
+                                          {(resendCooldown[selectedOtpOrder.id] || 0) > 0
+                                            ? `Resend OTP (${resendCooldown[selectedOtpOrder.id]}s)`
+                                            : 'Resend OTP'}
+                                        </span>
+                                      </>
+                                    )}
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -3187,7 +3283,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             {currentFeedback && (
                               <div
                                 id="separate-otp-feedback"
-                                className={`text-[12px] p-3 rounded-xl flex items-center gap-2.5 animate-in fade-in ${
+                                className={`text-[12px] p-3 rounded-xl flex items-center justify-between gap-2.5 animate-in fade-in ${
                                   currentFeedback.type === 'success'
                                     ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-bold'
                                     : currentFeedback.type === 'expired'
@@ -3195,12 +3291,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                     : 'bg-red-950/60 text-red-300 border border-red-500/40 font-semibold'
                                 }`}
                               >
-                                {currentFeedback.type === 'success' ? (
-                                  <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
-                                ) : (
-                                  <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                                <div className="flex items-center gap-2">
+                                  {currentFeedback.type === 'success' ? (
+                                    <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
+                                  ) : (
+                                    <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                                  )}
+                                  <span>{currentFeedback.message}</span>
+                                </div>
+                                {currentFeedback.type === 'expired' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResendOtp(selectedOtpOrder)}
+                                    disabled={
+                                      isVerifying ||
+                                      isSending ||
+                                      (resendCooldown[selectedOtpOrder.id] || 0) > 0
+                                    }
+                                    className="underline font-bold text-amber-300 hover:text-amber-200 cursor-pointer ml-auto text-[12px] disabled:opacity-50"
+                                  >
+                                    Resend OTP
+                                  </button>
                                 )}
-                                <span>{currentFeedback.message}</span>
                               </div>
                             )}
                           </div>
@@ -3805,13 +3917,42 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 </>
                               )}
                             </button>
+
+                            <button
+                              type="button"
+                              id={`order-resend-otp-btn-${cleanOrderId}`}
+                              onClick={() => handleResendOtp(order)}
+                              disabled={
+                                orderVerifying[order.id] ||
+                                isSendingOtp[order.id] ||
+                                (resendCooldown[order.id] || 0) > 0
+                              }
+                              title={`Invalidates previous OTP and generates a fresh one for Order ${displayOrderId}`}
+                              className="h-11 px-3.5 rounded-xl text-[12px] font-bold border border-emerald-500/30 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+                            >
+                              {isSendingOtp[order.id] ? (
+                                <>
+                                  <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
+                                  <span>Generating...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>
+                                    {(resendCooldown[order.id] || 0) > 0
+                                      ? `Resend OTP (${resendCooldown[order.id]}s)`
+                                      : 'Resend OTP'}
+                                  </span>
+                                </>
+                              )}
+                            </button>
                           </div>
 
                           {/* Inline Feedback Messages */}
                           {orderOtpFeedback[order.id] && (
                             <div
                               id={`order-otp-feedback-${cleanOrderId}`}
-                              className={`text-[12px] p-2.5 rounded-xl flex items-center gap-2 animate-in fade-in ${
+                              className={`text-[12px] p-2.5 rounded-xl flex items-center justify-between gap-2 animate-in fade-in ${
                                 orderOtpFeedback[order.id].type === 'success'
                                   ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-bold'
                                   : orderOtpFeedback[order.id].type === 'expired'
@@ -3819,12 +3960,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                   : 'bg-red-950/60 text-red-300 border border-red-500/40 font-semibold'
                               }`}
                             >
-                              {orderOtpFeedback[order.id].type === 'success' ? (
-                                <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
-                              ) : (
-                                <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                              <div className="flex items-center gap-2">
+                                {orderOtpFeedback[order.id].type === 'success' ? (
+                                  <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                                )}
+                                <span>{orderOtpFeedback[order.id].message}</span>
+                              </div>
+                              {orderOtpFeedback[order.id].type === 'expired' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleResendOtp(order)}
+                                  disabled={
+                                    orderVerifying[order.id] ||
+                                    isSendingOtp[order.id] ||
+                                    (resendCooldown[order.id] || 0) > 0
+                                  }
+                                  className="underline font-bold text-amber-300 hover:text-amber-200 cursor-pointer ml-2 text-[11px] disabled:opacity-50"
+                                >
+                                  Resend OTP
+                                </button>
                               )}
-                              <span>{orderOtpFeedback[order.id].message}</span>
                             </div>
                           )}
                         </div>

@@ -31,9 +31,8 @@ import {
   Upload,
   Image as ImageIcon,
   Eye,
-  RefreshCw,
 } from 'lucide-react';
-import { getCustomerOrderOtp, resendOrderOtp } from '../services/otpClientService';
+import { getCustomerOrderOtp } from '../services/otpClientService';
 import { uploadPaymentScreenshot } from '../services/paymentService';
 
 interface CustomerDashboardProps {
@@ -135,10 +134,6 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   // Order Handover OTP State for Customer Orders
   const [customerOrderOtps, setCustomerOrderOtps] = useState<
     Record<string, { otp?: string; loading?: boolean; isExpired?: boolean; error?: string }>
-  >({});
-  const [resendingOtp, setResendingOtp] = useState<Record<string, boolean>>({});
-  const [customerOtpFeedback, setCustomerOtpFeedback] = useState<
-    Record<string, { type: 'success' | 'error'; message: string } | null>
   >({});
 
   // UPI Payment Screenshot Upload State for Customer Orders
@@ -347,58 +342,6 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     };
   }, [orders, refreshOrders]);
 
-  const handleCustomerResendOtp = async (orderId: string, phone?: string) => {
-    if (resendingOtp[orderId] || !currentUser?.id) return;
-    setResendingOtp((prev) => ({ ...prev, [orderId]: true }));
-    setCustomerOtpFeedback((prev) => ({ ...prev, [orderId]: null }));
-
-    try {
-      const res = await resendOrderOtp(
-        orderId,
-        currentUser.id,
-        phone || currentUser.phone || '',
-        currentUser.token
-      );
-      if (res.success && res.otp) {
-        // Immediately replace all displayed OTP digits with the newly generated OTP
-        setCustomerOrderOtps((prev) => ({
-          ...prev,
-          [orderId]: {
-            otp: res.otp,
-            isExpired: false,
-            loading: false,
-            error: undefined,
-          },
-        }));
-        setCustomerOtpFeedback((prev) => ({
-          ...prev,
-          [orderId]: {
-            type: 'success',
-            message: 'New OTP generated successfully.',
-          },
-        }));
-      } else {
-        setCustomerOtpFeedback((prev) => ({
-          ...prev,
-          [orderId]: {
-            type: 'error',
-            message: res.error || res.message || 'Failed to regenerate OTP. Please try again later.',
-          },
-        }));
-      }
-    } catch {
-      setCustomerOtpFeedback((prev) => ({
-        ...prev,
-        [orderId]: {
-          type: 'error',
-          message: 'Failed to contact server to resend OTP. Please try again later.',
-        },
-      }));
-    } finally {
-      setResendingOtp((prev) => ({ ...prev, [orderId]: false }));
-    }
-  };
-
   const handleFetchOtp = async (orderId: string) => {
     if (!currentUser?.id) return;
     setCustomerOrderOtps((prev) => ({
@@ -430,7 +373,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           [orderId]: {
             isExpired: true,
             loading: false,
-            error: res.error || 'OTP expired. Please click Resend OTP to receive a new code.',
+            error: res.error || 'OTP has expired. Please request the store administrator to issue a fresh OTP.',
           },
         }));
       } else {
@@ -1303,42 +1246,6 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                 <p className="text-[12.5px] text-emerald-200/90 font-medium max-w-md mx-auto leading-relaxed">
                                   Your six-digit OTP is ready. Share this code with the delivery team to confirm delivery.
                                 </p>
-
-                                {/* Action Row */}
-                                <div className="pt-1 flex flex-col items-center gap-2">
-                                  <button
-                                    type="button"
-                                    id={`customer-resend-otp-btn-${cleanOrderId}`}
-                                    onClick={() => handleCustomerResendOtp(order.id, order.customerPhone)}
-                                    disabled={resendingOtp[order.id]}
-                                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 hover:text-white text-[12px] font-bold transition-all shadow-[0_2px_12px_rgba(16,185,129,0.2)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${resendingOtp[order.id] ? 'animate-spin' : ''}`} />
-                                    <span>{resendingOtp[order.id] ? 'Generating New OTP...' : 'Resend OTP'}</span>
-                                  </button>
-
-                                  {/* Success message banner: "New OTP generated successfully." */}
-                                  {customerOtpFeedback[order.id]?.type === 'success' && (
-                                    <div
-                                      id={`customer-otp-feedback-success-${cleanOrderId}`}
-                                      className="px-3.5 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-[12px] font-bold flex items-center gap-1.5 animate-in fade-in"
-                                    >
-                                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                                      <span>{customerOtpFeedback[order.id]?.message}</span>
-                                    </div>
-                                  )}
-
-                                  {/* Error message banner */}
-                                  {customerOtpFeedback[order.id]?.type === 'error' && (
-                                    <div
-                                      id={`customer-otp-feedback-error-${cleanOrderId}`}
-                                      className="px-3.5 py-1.5 rounded-lg bg-rose-950/80 border border-rose-500/50 text-rose-300 text-[12px] font-semibold flex items-center gap-1.5 animate-in fade-in"
-                                    >
-                                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                                      <span>{customerOtpFeedback[order.id]?.message}</span>
-                                    </div>
-                                  )}
-                                </div>
                               </div>
                             ) : (
                               <div className="space-y-3 py-2">
@@ -1346,7 +1253,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                   <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
                                   <span>
                                     {otpData?.isExpired
-                                      ? 'OTP expired. Please click Resend OTP to receive a fresh 6-digit code.'
+                                      ? 'OTP expired. Please request the store administrator or delivery agent to issue a fresh OTP.'
                                       : otpData?.error || 'Failed to load Order Handover OTP.'}
                                   </span>
                                 </div>
@@ -1359,16 +1266,6 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                     className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/20 text-[12px] font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
                                   >
                                     Retry Loading
-                                  </button>
-                                  <button
-                                    type="button"
-                                    id={`customer-resend-otp-btn-${cleanOrderId}`}
-                                    onClick={() => handleCustomerResendOtp(order.id, order.customerPhone)}
-                                    disabled={resendingOtp[order.id]}
-                                    className="px-4 py-1.5 rounded-lg bg-[#006b2c] hover:bg-[#005221] text-white text-[12px] font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                                  >
-                                    <RefreshCw className={`w-3.5 h-3.5 ${resendingOtp[order.id] ? 'animate-spin' : ''}`} />
-                                    <span>{resendingOtp[order.id] ? 'Generating...' : 'Resend OTP'}</span>
                                   </button>
                                 </div>
                               </div>

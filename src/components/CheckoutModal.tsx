@@ -17,7 +17,7 @@ import {
   Zap,
   AlertTriangle,
 } from 'lucide-react';
-import { generateOrderOtp, resendOrderOtp } from '../services/otpClientService';
+import { generateOrderOtp } from '../services/otpClientService';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -67,7 +67,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [orderHandoverOtp, setOrderHandoverOtp] = useState<string | null>(null);
   const [otpExpiresAt, setOtpExpiresAt] = useState<number | null>(null);
   const [isOtpExpired, setIsOtpExpired] = useState<boolean>(false);
-  const [isResendingOtp, setIsResendingOtp] = useState<boolean>(false);
   const [placedOrderId, setPlacedOrderId] = useState<string>('');
 
   useEffect(() => {
@@ -178,28 +177,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setStep('success');
       onClearCart();
     }, 800);
-  };
-
-  const handleCustomerResendOtp = async () => {
-    if (!placedOrderId || isResendingOtp) return;
-    setIsResendingOtp(true);
-    try {
-      const customerPhone = currentUser?.phone?.trim() || '';
-      const res = await resendOrderOtp(
-        placedOrderId,
-        currentUser?.id || 'guest_user',
-        customerPhone
-      );
-      if (res.success && res.otp) {
-        setOrderHandoverOtp(res.otp);
-        setOtpExpiresAt(res.expiresAt || (Date.now() + 10 * 60 * 1000));
-        setIsOtpExpired(false);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setIsResendingOtp(false);
-    }
   };
 
   const handleDone = () => {
@@ -460,46 +437,17 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <span>Order Handover OTP</span>
                 </div>
 
-                {!isOtpExpired ? (
-                  <div className="space-y-1">
-                    <div
-                      id="customer-order-handover-otp"
-                      className="font-mono text-[32px] sm:text-[36px] font-extrabold tracking-widest text-[#006b2c] select-all leading-tight py-0.5"
-                    >
-                      {orderHandoverOtp}
-                    </div>
-                    <p className="text-[12px] text-[#166534] font-medium">
-                      Please provide this OTP when receiving your order.
-                    </p>
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        id="customer-resend-otp-btn"
-                        onClick={handleCustomerResendOtp}
-                        disabled={isResendingOtp}
-                        className="text-[11px] font-semibold text-[#15803d] hover:text-[#006b2c] underline cursor-pointer disabled:opacity-50"
-                      >
-                        {isResendingOtp ? 'Generating New OTP...' : 'Resend OTP'}
-                      </button>
-                    </div>
+                <div className="space-y-1">
+                  <div
+                    id="customer-order-handover-otp"
+                    className="font-mono text-[32px] sm:text-[36px] font-extrabold tracking-widest text-[#006b2c] select-all leading-tight py-0.5"
+                  >
+                    {orderHandoverOtp}
                   </div>
-                ) : (
-                  <div className="space-y-2 py-1">
-                    <div className="text-[13px] font-semibold text-[#dc2626] flex items-center justify-center gap-1.5">
-                      <AlertTriangle className="w-4 h-4 shrink-0 text-[#dc2626]" />
-                      <span>OTP expired. Please request a new OTP.</span>
-                    </div>
-                    <button
-                      type="button"
-                      id="customer-request-new-otp-btn"
-                      onClick={handleCustomerResendOtp}
-                      disabled={isResendingOtp}
-                      className="px-4 py-1.5 rounded-lg bg-[#006b2c] hover:bg-[#005221] text-white text-[12px] font-bold transition-colors cursor-pointer shadow-xs disabled:opacity-50"
-                    >
-                      {isResendingOtp ? 'Generating New OTP...' : 'Request New OTP'}
-                    </button>
-                  </div>
-                )}
+                  <p className="text-[12px] text-[#166534] font-medium">
+                    Please provide this OTP when receiving your order.
+                  </p>
+                </div>
               </div>
             )}
 
