@@ -410,6 +410,7 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       address: address || '',
       loyaltyTier: newCustomer.loyaltyTier,
       savedAddresses: newCustomer.savedAddresses,
+      createdAt: verified.createdAt || new Date().toISOString(),
       token,
     };
 
@@ -565,6 +566,7 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       address: customer.address,
       loyaltyTier: customer.loyaltyTier,
       savedAddresses: customer.savedAddresses || [],
+      createdAt: customer.createdAt || new Date().toISOString(),
       token,
     };
 
@@ -710,6 +712,7 @@ apiRouter.get(['/api/auth/me', '/auth/me'], async (req: Request, res: Response) 
       address: customer.address,
       loyaltyTier: customer.loyaltyTier,
       savedAddresses: customer.savedAddresses || [],
+      createdAt: customer.createdAt || new Date().toISOString(),
     };
 
     sendJson(res, 200, { success: true, customer: sessionUser });
@@ -1580,8 +1583,40 @@ apiRouter.post(['/api/otp/resend', '/otp/resend', '/resend'], async (req: Reques
       return;
     }
 
-    const result = await resendOrderOtp(orderId, customerId, customerPhone);
-    // Strictly sanitize: never expose actual OTP in Admin or public API responses
+    const auth = extractAuthCustomer(req);
+    const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+    const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
+    const targetCustId = customerId || auth.customerId || dbOrder?.customerId || 'guest';
+
+    const result = await resendOrderOtp(orderId, targetCustId, customerPhone);
+    if (!result.success) {
+      sendJson(res, 400, result);
+      return;
+    }
+
+    // Return the actual newly generated OTP strictly to the authorized customer who owns the order
+    const orderOwner = dbOrder?.customerId || targetCustId;
+    const isAuthorizedOwner =
+      auth.authenticated &&
+      (auth.customerId === orderOwner ||
+        orderOwner === 'guest' ||
+        orderOwner === 'guest_user' ||
+        orderOwner === 'cust-guest' ||
+        auth.customerId.toLowerCase() === (orderOwner || '').toLowerCase());
+
+    if (isAuthorizedOwner) {
+      sendJson(res, 200, {
+        success: true,
+        orderId: result.orderId,
+        otp: result.otp,
+        maskedPhone: result.maskedPhone,
+        message: 'New OTP generated successfully.',
+        status: 'UNUSED',
+      });
+      return;
+    }
+
+    // Strictly sanitize: never expose actual plaintext OTP in Admin or public API responses
     const { otp: _omittedResendOtp, ...sanitizedResult } = result;
     sendJson(res, 200, sanitizedResult);
   } catch (err: any) {
@@ -1607,7 +1642,7 @@ apiRouter.get(
       }
 
       const orderId = decodeURIComponent(req.params.orderId);
-      const result = await getCustomerOrderOtp(orderId, auth.customerId);
+      const result = await getCustomerOrderOtp(orderId, auth.customerId, auth.email);
 
       if (!result.success) {
         if (result.error?.includes('Access denied')) {

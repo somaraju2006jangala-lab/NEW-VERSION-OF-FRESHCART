@@ -64,7 +64,6 @@ import QRCode from 'qrcode';
 import {
   generateOrderOtp,
   verifyOrderOtp,
-  resendOrderOtp,
   getOrderOtpStatus,
   maskMobileNumber,
   OtpStatusResult,
@@ -372,6 +371,111 @@ export function getDisplayPaymentInfo(order: CustomerOrder): {
     badgeStyle,
   };
 }
+
+interface SixDigitAdminOtpInputProps {
+  value: string;
+  onChange: (val: string) => void;
+  disabled?: boolean;
+  autoFocus?: boolean;
+  idPrefix?: string;
+}
+
+export const SixDigitAdminOtpInput: React.FC<SixDigitAdminOtpInputProps> = ({
+  value,
+  onChange,
+  disabled = false,
+  autoFocus = false,
+  idPrefix = 'admin-otp',
+}) => {
+  const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
+
+  const digits = Array.from({ length: 6 }, (_, i) => value[i] || '');
+
+  const handleChange = (index: number, char: string) => {
+    const clean = char.replace(/\D/g, '');
+    if (!clean) {
+      const newDigits = [...digits];
+      newDigits[index] = '';
+      onChange(newDigits.join(''));
+      return;
+    }
+
+    if (clean.length === 1) {
+      const newDigits = [...digits];
+      newDigits[index] = clean;
+      const combined = newDigits.join('').slice(0, 6);
+      onChange(combined);
+      if (index < 5 && inputsRef.current[index + 1]) {
+        inputsRef.current[index + 1]?.focus();
+      }
+    } else {
+      const slice = clean.slice(0, 6);
+      onChange(slice);
+      const nextIdx = Math.min(slice.length, 5);
+      inputsRef.current[nextIdx]?.focus();
+    }
+  };
+
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace') {
+      if (!digits[index] && index > 0) {
+        const newDigits = [...digits];
+        newDigits[index - 1] = '';
+        onChange(newDigits.join(''));
+        inputsRef.current[index - 1]?.focus();
+      } else {
+        const newDigits = [...digits];
+        newDigits[index] = '';
+        onChange(newDigits.join(''));
+      }
+    } else if (e.key === 'ArrowLeft' && index > 0) {
+      inputsRef.current[index - 1]?.focus();
+    } else if (e.key === 'ArrowRight' && index < 5) {
+      inputsRef.current[index + 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pasted) {
+      onChange(pasted);
+      const focusIndex = Math.min(pasted.length, 5);
+      inputsRef.current[focusIndex]?.focus();
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 sm:gap-2">
+      <input
+        type="hidden"
+        id={idPrefix === 'separate-otp' ? 'separate-otp-input' : `${idPrefix}-input`}
+        value={value}
+        readOnly
+      />
+      {Array.from({ length: 6 }).map((_, idx) => (
+        <input
+          key={idx}
+          ref={(el) => {
+            inputsRef.current[idx] = el;
+          }}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={1}
+          id={`${idPrefix}-box-${idx}`}
+          value={digits[idx] || ''}
+          onChange={(e) => handleChange(idx, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(idx, e)}
+          onPaste={handlePaste}
+          disabled={disabled}
+          autoFocus={autoFocus && idx === 0}
+          className="w-9 h-11 sm:w-11 sm:h-12 rounded-xl bg-black/75 text-white font-mono text-[18px] sm:text-[20px] font-bold text-center border border-white/20 focus:border-[#10b981] focus:ring-2 focus:ring-[#10b981]/40 focus:outline-hidden transition-all shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)] disabled:opacity-50"
+        />
+      ))}
+    </div>
+  );
+};
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
   products,
@@ -920,9 +1024,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     : null;
   const [orderOtpStatusMap, setOrderOtpStatusMap] = useState<Record<string, OtpStatusResult>>({});
   const [isSendingOtp, setIsSendingOtp] = useState<Record<string, boolean>>({});
-  const [resendCooldown, setResendCooldown] = useState<Record<string, number>>({});
+  const [expandedOtpOrders, setExpandedOtpOrders] = useState<Record<string, boolean>>({});
 
-  // Fetch authoritative OTP record status when opening dedicated OTP page
+  // Fetch authoritative OTP record status when opening dedicated OTP page and for active ledger orders
   useEffect(() => {
     if (!selectedOtpOrderId) return;
     getOrderOtpStatus(selectedOtpOrderId, { role: 'admin' }).then((status) => {
@@ -932,26 +1036,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     });
   }, [selectedOtpOrderId]);
 
-  // Resend OTP Cooldown countdown timer
   useEffect(() => {
-    const timer = setInterval(() => {
-      setResendCooldown((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const [id, count] of Object.entries(next)) {
-          if (count > 0) {
-            next[id] = count - 1;
-            changed = true;
-          } else {
-            delete next[id];
-            changed = true;
-          }
+    const eligibleOrders = ordersList.filter((o) => {
+      if (o.status === 'Delivered') return false;
+      const isCod =
+        !o.paymentMethod ||
+        o.paymentMethod.toLowerCase().includes('cash') ||
+        o.paymentMethod.toUpperCase() === 'COD';
+      const isCompleted =
+        o.paymentStatus === 'COMPLETED' || o.paymentStatus === 'PAID';
+      return isCod || isCompleted;
+    });
+
+    eligibleOrders.forEach((o) => {
+      getOrderOtpStatus(o.id, { role: 'admin' }).then((status) => {
+        if (status) {
+          setOrderOtpStatusMap((prev) => ({ ...prev, [o.id]: status }));
         }
-        return changed ? next : prev;
       });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    });
+  }, [ordersList]);
 
   // UPI Payment Configuration State
   const [upiIdInput, setUpiIdInput] = useState('');
@@ -1572,7 +1676,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     try {
       const res = await generateOrderOtp(order.id, order.customerId || 'guest', rawPhone || '');
       if (res.success) {
-        setResendCooldown((prev) => ({ ...prev, [order.id]: 30 }));
         setOrderOtpFeedback((prev) => ({
           ...prev,
           [order.id]: {
@@ -1599,48 +1702,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         [order.id]: {
           type: 'error',
           message: 'Error communicating with server to generate OTP.',
-        },
-      }));
-    } finally {
-      setIsSendingOtp((prev) => ({ ...prev, [order.id]: false }));
-    }
-  };
-
-  const handleResendOtp = async (order: CustomerOrder) => {
-    if (isSendingOtp[order.id] || (resendCooldown[order.id] || 0) > 0) return;
-    const rawPhone = getCustomerPhoneForOrder(order);
-    setIsSendingOtp((prev) => ({ ...prev, [order.id]: true }));
-    try {
-      const res = await resendOrderOtp(order.id, order.customerId || 'guest', rawPhone || '');
-      if (res.success) {
-        setResendCooldown((prev) => ({ ...prev, [order.id]: 30 }));
-        setOrderOtpInputs((prev) => ({ ...prev, [order.id]: '' }));
-        setOrderOtpFeedback((prev) => ({
-          ...prev,
-          [order.id]: {
-            type: 'success',
-            message: 'Fresh 6-digit OTP dispatched to customer. Previous code invalidated.',
-          },
-        }));
-        const updatedStatus = await getOrderOtpStatus(order.id, { role: 'admin' });
-        if (updatedStatus) {
-          setOrderOtpStatusMap((prev) => ({ ...prev, [order.id]: updatedStatus }));
-        }
-      } else {
-        setOrderOtpFeedback((prev) => ({
-          ...prev,
-          [order.id]: {
-            type: 'error',
-            message: res.error || res.message || 'Failed to resend OTP.',
-          },
-        }));
-      }
-    } catch {
-      setOrderOtpFeedback((prev) => ({
-        ...prev,
-        [order.id]: {
-          type: 'error',
-          message: 'Error communicating with server to resend OTP.',
         },
       }));
     } finally {
@@ -2817,7 +2878,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               const hasOtpRecord = Boolean(otpStatus?.hasRecord || selectedOtpOrder.otpVerifiedAt);
               const isExpired = otpStatus?.isExpired || otpStatus?.status === 'EXPIRED';
               const isLocked = otpStatus?.status === 'LOCKED';
-              const cooldownSeconds = resendCooldown[selectedOtpOrder.id] || 0;
               const isSending = isSendingOtp[selectedOtpOrder.id] || false;
               const isVerifying = orderVerifying[selectedOtpOrder.id] || false;
               const currentFeedback = orderOtpFeedback[selectedOtpOrder.id];
@@ -3005,7 +3065,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 <span>OTP Locked: Maximum Attempts Exceeded (5/5)</span>
                               </div>
                               <p className="text-[12px] text-red-200/80">
-                                5 incorrect OTP verification attempts were entered. Click Resend OTP below to issue a fresh code to the customer.
+                                5 incorrect OTP verification attempts were entered. The customer can request a fresh code from their portal.
                               </p>
                             </div>
                           ) : isExpired ? (
@@ -3015,7 +3075,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 <span>OTP Expired</span>
                               </div>
                               <p className="text-[12px] text-amber-200/80">
-                                The 10-minute expiry window for this handover code has elapsed. Click Resend OTP below to generate a fresh code.
+                                This delivery code has expired. The customer can request a fresh code from their portal.
                               </p>
                             </div>
                           ) : hasOtpRecord ? (
@@ -3083,67 +3143,43 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                 Request the 6-digit code shown on the customer's device to confirm order delivery.
                               </p>
 
-                              <div className="flex flex-wrap items-center gap-3">
-                                <input
-                                  type="text"
-                                  id="separate-otp-input"
-                                  maxLength={6}
-                                  value={orderOtpInputs[selectedOtpOrder.id] || ''}
-                                  onChange={(e) => handleOtpInputChange(selectedOtpOrder.id, e.target.value)}
-                                  placeholder="[ ______ ]"
-                                  autoFocus
-                                  className="w-44 h-11 px-3 font-mono text-[18px] tracking-[0.3em] text-center font-bold bg-black/60 text-white border border-white/20 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#10b981] focus:border-[#10b981] placeholder:text-slate-600 shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
-                                  disabled={isVerifying}
-                                />
+                              <div className="space-y-3">
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <SixDigitAdminOtpInput
+                                    idPrefix="separate-otp"
+                                    value={orderOtpInputs[selectedOtpOrder.id] || ''}
+                                    onChange={(val) => handleOtpInputChange(selectedOtpOrder.id, val)}
+                                    disabled={isVerifying}
+                                    autoFocus
+                                  />
 
-                                <button
-                                  type="button"
-                                  id="separate-otp-verify-btn"
-                                  onClick={() => handleVerifyOtp(selectedOtpOrder)}
-                                  disabled={
-                                    isVerifying ||
-                                    (orderOtpInputs[selectedOtpOrder.id] || '').length !== 6
-                                  }
-                                  className={`h-11 px-5 rounded-xl text-[13px] font-bold shadow-[0_0_20px_rgba(16,185,129,0.25)] transition-all flex items-center gap-2 cursor-pointer ${
-                                    (orderOtpInputs[selectedOtpOrder.id] || '').length === 6 && !isVerifying
-                                      ? 'bg-gradient-to-r from-[#006b2c] to-[#059669] hover:from-[#005221] hover:to-[#047857] text-white hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]'
-                                      : 'bg-white/5 border border-white/10 text-slate-500 cursor-not-allowed'
-                                  }`}
-                                >
-                                  {isVerifying ? (
-                                    <>
-                                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                      <span>Verifying...</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ShieldCheck className="w-4 h-4 text-[#10b981]" />
-                                      <span>Verify OTP</span>
-                                    </>
-                                  )}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  id="separate-otp-resend-btn"
-                                  onClick={() => handleResendOtp(selectedOtpOrder)}
-                                  disabled={isSending || cooldownSeconds > 0}
-                                  title={
-                                    cooldownSeconds > 0
-                                      ? `Wait ${cooldownSeconds}s before resending`
-                                      : 'Invalidate current OTP and dispatch a fresh 6-digit code'
-                                  }
-                                  className="h-11 px-4 rounded-xl border border-white/15 bg-black/40 hover:bg-black/60 text-slate-300 hover:text-white text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_2px_10px_rgba(0,0,0,0.4)]"
-                                >
-                                  <RefreshCw className={`w-3.5 h-3.5 ${isSending ? 'animate-spin' : ''}`} />
-                                  <span>
-                                    {cooldownSeconds > 0
-                                      ? `Resend in ${cooldownSeconds}s`
-                                      : isSending
-                                      ? 'Sending...'
-                                      : 'Resend OTP'}
-                                  </span>
-                                </button>
+                                  <button
+                                    type="button"
+                                    id="separate-otp-verify-btn"
+                                    onClick={() => handleVerifyOtp(selectedOtpOrder)}
+                                    disabled={
+                                      isVerifying ||
+                                      (orderOtpInputs[selectedOtpOrder.id] || '').length !== 6
+                                    }
+                                    className={`h-11 px-5 rounded-xl text-[13px] font-bold shadow-[0_0_20px_rgba(16,185,129,0.25)] transition-all flex items-center gap-2 cursor-pointer ${
+                                      (orderOtpInputs[selectedOtpOrder.id] || '').length === 6 && !isVerifying
+                                        ? 'bg-gradient-to-r from-[#006b2c] to-[#059669] hover:from-[#005221] hover:to-[#047857] text-white hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]'
+                                        : 'bg-white/5 border border-white/10 text-slate-500 cursor-not-allowed'
+                                    }`}
+                                  >
+                                    {isVerifying ? (
+                                      <>
+                                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        <span>Verifying...</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ShieldCheck className="w-4 h-4 text-[#10b981]" />
+                                        <span>Verify OTP</span>
+                                      </>
+                                    )}
+                                  </button>
+                                </div>
                               </div>
                             </div>
 
@@ -3455,7 +3491,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     paymentInfo.paymentStatus !== 'UNPAID' &&
                     paymentInfo.paymentStatus !== 'COD';
 
-                  const isOtpEligible = !isCod && isOnlineMethod && isCompletedPayment;
+                  const isOtpEligible = isCod || (isOnlineMethod && isCompletedPayment);
 
                   // Build plain text format matching user's requested specification:
                   const textLines: string[] = [
@@ -3554,7 +3590,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             </button>
                           )}
 
-                          {/* OTP Button & Status for eligible orders (online & COMPLETED payment status) */}
+                          {/* OTP Button & Status for eligible orders (online & COMPLETED payment status, or COD) */}
                           {isOtpEligible && (
                             <div className="flex items-center gap-1.5">
                               {order.otpVerifiedAt || order.status === 'Delivered' ? (
@@ -3564,28 +3600,60 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                                   className="px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-500/40 bg-emerald-950/40 text-emerald-400 font-mono flex items-center gap-1"
                                 >
                                   <CheckCircle className="w-3 h-3 text-[#10b981]" />
-                                  <span>OTP Verified</span>
+                                  <span>Verified</span>
                                 </span>
-                              ) : orderOtpStatusMap[order.id]?.status === 'UNUSED' ? (
+                              ) : orderOtpStatusMap[order.id]?.isExpired || orderOtpStatusMap[order.id]?.status === 'EXPIRED' ? (
+                                <span
+                                  id={`order-otp-status-badge-${cleanOrderId}`}
+                                  title="Order handover OTP expired"
+                                  className="px-2 py-0.5 rounded text-[10px] font-bold border border-amber-500/40 bg-amber-950/40 text-amber-400 font-mono flex items-center gap-1"
+                                >
+                                  <AlertTriangle className="w-3 h-3 text-[#f59e0b]" />
+                                  <span>Expired</span>
+                                </span>
+                              ) : (
                                 <span
                                   id={`order-otp-status-badge-${cleanOrderId}`}
                                   title="OTP generated and sent to customer"
-                                  className="px-2 py-0.5 rounded text-[10px] font-bold border border-amber-500/40 bg-amber-950/40 text-amber-400 font-mono flex items-center gap-1"
+                                  className="px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-500/40 bg-emerald-950/40 text-emerald-300 font-mono flex items-center gap-1"
                                 >
-                                  <KeyRound className="w-3 h-3 text-[#f59e0b]" />
-                                  <span>OTP Sent</span>
+                                  <KeyRound className="w-3 h-3 text-[#10b981]" />
+                                  <span>Generated</span>
                                 </span>
-                              ) : null}
+                              )}
+
+                              {order.status !== 'Delivered' && (
+                                <button
+                                  type="button"
+                                  id={`order-enter-otp-btn-${cleanOrderId}`}
+                                  onClick={() => {
+                                    setExpandedOtpOrders((prev) => ({
+                                      ...prev,
+                                      [order.id]: prev[order.id] === false ? true : false,
+                                    }));
+                                    if (!orderOtpStatusMap[order.id]) {
+                                      getOrderOtpStatus(order.id, { role: 'admin' }).then((st) => {
+                                        if (st) setOrderOtpStatusMap((prev) => ({ ...prev, [order.id]: st }));
+                                      });
+                                    }
+                                  }}
+                                  title={`Enter OTP for Order ${displayOrderId}`}
+                                  className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-[0_2px_10px_rgba(16,185,129,0.15)] hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] backdrop-blur-xs"
+                                >
+                                  <ShieldCheck className="w-3.5 h-3.5 text-[#10b981]" />
+                                  <span>Enter OTP</span>
+                                </button>
+                              )}
 
                               <button
                                 type="button"
                                 id={`order-otp-btn-${cleanOrderId}`}
                                 onClick={() => setSelectedOtpOrderId(order.id)}
                                 title={`Open Dedicated OTP Verification Page for Order ${displayOrderId}`}
-                                className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-all duration-150 flex items-center gap-1.5 cursor-pointer shadow-[0_2px_10px_rgba(16,185,129,0.15)] hover:shadow-[0_4px_16px_rgba(16,185,129,0.3)] backdrop-blur-xs"
+                                className="px-2.5 py-1 text-[11px] font-bold text-slate-300 hover:text-white bg-black/40 hover:bg-black/60 border border-white/15 rounded-lg transition-all duration-150 flex items-center gap-1.5 cursor-pointer backdrop-blur-xs"
                               >
-                                <ShieldCheck className="w-3.5 h-3.5 text-[#10b981]" />
-                                <span>OTP</span>
+                                <KeyRound className="w-3.5 h-3.5 text-[#10b981]" />
+                                <span>Details</span>
                               </button>
                             </div>
                           )}
@@ -3684,6 +3752,83 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           <span className="font-bold text-[#10b981]">{order.status}</span>
                         </div>
                       </div>
+
+                      {/* Inline 6-Digit OTP Verification Panel for Customer Orders Ledger */}
+                      {isOtpEligible && order.status !== 'Delivered' && expandedOtpOrders[order.id] !== false && (
+                        <div
+                          id={`order-otp-ledger-panel-${cleanOrderId}`}
+                          className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 backdrop-blur-md p-4 sm:p-5 space-y-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <ShieldCheck className="w-4 h-4 text-[#10b981]" />
+                              <span className="text-[13px] font-bold text-white font-display">
+                                Customer Delivery Handover OTP
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-400">
+                              Enter the 6-digit code shown on the customer's portal
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3">
+                            <SixDigitAdminOtpInput
+                              idPrefix={`ledger-otp-${cleanOrderId}`}
+                              value={orderOtpInputs[order.id] || ''}
+                              onChange={(val) => handleOtpInputChange(order.id, val)}
+                              disabled={orderVerifying[order.id]}
+                            />
+
+                            <button
+                              type="button"
+                              id={`order-verify-otp-btn-${cleanOrderId}`}
+                              onClick={() => handleVerifyOtp(order)}
+                              disabled={
+                                orderVerifying[order.id] ||
+                                (orderOtpInputs[order.id] || '').length !== 6
+                              }
+                              className={`h-11 px-4 rounded-xl text-[12px] font-bold shadow-[0_0_20px_rgba(16,185,129,0.25)] transition-all flex items-center gap-2 cursor-pointer ${
+                                (orderOtpInputs[order.id] || '').length === 6 && !orderVerifying[order.id]
+                                  ? 'bg-gradient-to-r from-[#006b2c] to-[#059669] hover:from-[#005221] hover:to-[#047857] text-white hover:shadow-[0_0_25px_rgba(16,185,129,0.4)]'
+                                  : 'bg-white/5 border border-white/10 text-slate-500 cursor-not-allowed'
+                              }`}
+                            >
+                              {orderVerifying[order.id] ? (
+                                <>
+                                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  <span>Verifying...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <ShieldCheck className="w-4 h-4 text-[#10b981]" />
+                                  <span>Verify OTP</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          {/* Inline Feedback Messages */}
+                          {orderOtpFeedback[order.id] && (
+                            <div
+                              id={`order-otp-feedback-${cleanOrderId}`}
+                              className={`text-[12px] p-2.5 rounded-xl flex items-center gap-2 animate-in fade-in ${
+                                orderOtpFeedback[order.id].type === 'success'
+                                  ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-bold'
+                                  : orderOtpFeedback[order.id].type === 'expired'
+                                  ? 'bg-amber-950/60 text-amber-300 border border-amber-500/40 font-semibold'
+                                  : 'bg-red-950/60 text-red-300 border border-red-500/40 font-semibold'
+                              }`}
+                            >
+                              {orderOtpFeedback[order.id].type === 'success' ? (
+                                <CheckCircle className="w-4 h-4 text-[#16a34a] shrink-0" />
+                              ) : (
+                                <AlertTriangle className="w-4 h-4 text-[#dc2626] shrink-0" />
+                              )}
+                              <span>{orderOtpFeedback[order.id].message}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

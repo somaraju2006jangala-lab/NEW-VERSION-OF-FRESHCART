@@ -16,6 +16,7 @@ import {
   isProductionEnv,
   saveOtpRecordInDb,
   findOtpRecordInDb,
+  findCustomerInDb,
 } from './db.ts';
 
 // Connect to MySQL eagerly if in running server
@@ -204,51 +205,60 @@ export async function generateOrderOtp(
 
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
-  // 1. If order is Cash on Delivery, OTP is NOT required and must not be generated
   const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
   const isCod =
     !dbOrder?.paymentMethod ||
     dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
     dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
-  if (isCod) {
-    return {
-      success: false,
-      orderId,
-      maskedPhone: 'Not available',
-      expiresAt: 0,
-      otp: '',
-      message: 'OTP is not permitted for Cash on Delivery orders.',
-      error: 'OTP is not permitted for Cash on Delivery orders.',
-    };
-  }
 
-  // 2. Online payments must have COMPLETED/PAID payment status
-  const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
-  if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
-    return {
-      success: false,
-      orderId,
-      maskedPhone: 'Not available',
-      expiresAt: 0,
-      otp: '',
-      message: 'OTP can only be generated for online orders with COMPLETED payment status.',
-      error: 'OTP can only be generated for online orders with COMPLETED payment status.',
-    };
+  // For online payments: require COMPLETED or PAID status before generating delivery OTP
+  if (!isCod) {
+    const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+    if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+      return {
+        success: false,
+        orderId,
+        maskedPhone: 'Not available',
+        expiresAt: 0,
+        otp: '',
+        message: 'OTP can only be generated for online orders with COMPLETED payment status.',
+        error: 'OTP can only be generated for online orders with COMPLETED payment status.',
+      };
+    }
   }
 
   // 3. Customer contact channel validation
-  const phoneToValidate = customerPhone || dbOrder?.customerPhone || dbOrder?.mobile;
+  let phoneToValidate = customerPhone || dbOrder?.customerPhone || dbOrder?.mobile;
   if (!phoneToValidate || !String(phoneToValidate).trim()) {
-    return {
-      success: false,
-      orderId,
-      maskedPhone: 'Not available',
-      expiresAt: 0,
-      otp: '',
-      message: 'Cannot send OTP: Valid customer mobile number is not available.',
-      error: 'Cannot send OTP: Valid customer mobile number is not available.',
-    };
+    try {
+      const custId = customerId || dbOrder?.customerId;
+      if (custId) {
+        const cust = await findCustomerInDb(custId);
+        if (cust?.phone) {
+          phoneToValidate = cust.phone;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (phoneToValidate && typeof phoneToValidate === 'string' && phoneToValidate.trim()) {
+    const norm = normalizeAndValidateIndianMobile(phoneToValidate);
+    if (norm.isValid) {
+      formattedPhone = norm.e164Format;
+      maskedPhone = norm.maskedPhone;
+    } else {
+      const cleanDigits = phoneToValidate.replace(/\D/g, '');
+      if (cleanDigits.length >= 4) {
+        maskedPhone = `******${cleanDigits.slice(-4)}`;
+      } else {
+        maskedPhone = phoneToValidate;
+      }
+    }
+  } else {
+    maskedPhone = 'Customer Portal';
   }
 
   // If an active UNUSED and unexpired OTP already exists for this order, reuse it
@@ -304,7 +314,7 @@ export async function generateOrderOtp(
     await saveOtpRecordInDb({
       orderId,
       customerId: customerId || 'guest',
-      otp,
+      otp: undefined, // Only hash and salt are persisted in database
       otpHash: hashedOtp,
       otpSalt: salt,
       expiresAt,
@@ -355,31 +365,24 @@ export async function resendOrderOtp(
 
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
-  // If order is Cash on Delivery, OTP is NOT permitted
   const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
   const isCod =
     !dbOrder?.paymentMethod ||
     dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
     dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
-  if (isCod) {
-    return {
-      success: false,
-      orderId,
-      message: 'OTP is not permitted for Cash on Delivery orders.',
-      error: 'OTP is not permitted for Cash on Delivery orders.',
-    };
-  }
 
-  // Strictly require online payment status to be COMPLETED / PAID
-  const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
-  if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
-    return {
-      success: false,
-      orderId,
-      message: 'OTP can only be resent for online orders with COMPLETED payment status.',
-      error: 'OTP can only be resent for online orders with COMPLETED payment status.',
-    };
+  // For online payments: require COMPLETED or PAID status
+  if (!isCod) {
+    const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+    if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+      return {
+        success: false,
+        orderId,
+        message: 'OTP can only be resent for online orders with COMPLETED payment status.',
+        error: 'OTP can only be resent for online orders with COMPLETED payment status.',
+      };
+    }
   }
 
   const existing = otpStore.get(orderId) || otpStore.get(altId);
@@ -460,7 +463,7 @@ export async function resendOrderOtp(
     await saveOtpRecordInDb({
       orderId,
       customerId,
-      otp,
+      otp: undefined, // Only hash and salt are persisted in database
       otpHash: hashedOtp,
       otpSalt: salt,
       expiresAt,
@@ -508,18 +511,7 @@ export async function verifyOrderOtp(
 
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
-  // If order is Cash on Delivery, OTP is NOT required
   const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
-  const isCod =
-    dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
-    dbOrder?.paymentMethod === 'Cash on Delivery';
-  if (isCod) {
-    return {
-      success: false,
-      error: 'OTP verification is not required for Cash on Delivery orders.',
-      status: 'Picking',
-    };
-  }
 
   const dbOtp = await findOtpRecordInDb(orderId);
   const localRecord = otpStore.get(orderId) || otpStore.get(altId);
@@ -696,7 +688,8 @@ export function getOrderOtpStatus(orderId: string): {
  */
 export async function getCustomerOrderOtp(
   orderId: string,
-  requestingCustomerId: string
+  requestingCustomerId: string,
+  requestingEmail?: string
 ): Promise<{
   success: boolean;
   orderId: string;
@@ -739,26 +732,33 @@ export async function getCustomerOrderOtp(
   const localRecord = otpStore.get(orderId) || otpStore.get(altId);
   const knownOrder = KNOWN_CUSTOMER_ORDERS[orderId] || KNOWN_CUSTOMER_ORDERS[altId];
 
-  // If order is Cash on Delivery, OTP is NOT required
   const isCod =
+    !dbOrder?.paymentMethod ||
     dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
+    dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
-  if (isCod) {
-    return {
-      success: false,
-      orderId,
-      expiresAt: 0,
-      isExpired: false,
-      status: 'NOT_FOUND',
-      error: 'OTP is not required for Cash on Delivery orders.',
-    };
+
+  // For online orders: require COMPLETED or PAID status before releasing delivery OTP
+  if (!isCod && dbOrder) {
+    const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+    if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+      return {
+        success: false,
+        orderId,
+        expiresAt: 0,
+        isExpired: false,
+        status: 'NOT_FOUND',
+        error: 'Delivery OTP will be available once online payment is verified and completed.',
+      };
+    }
   }
 
   const orderOwner = dbOrder?.customerId || localRecord?.customerId || knownOrder?.customerId;
+  const orderEmail = dbOrder?.customerEmail || '';
   const orderStatus = dbOrder?.status || knownOrder?.status || (localRecord?.status === 'USED' ? 'Delivered' : 'Picking');
   const orderPhone = dbOrder?.customerPhone || localRecord?.customerPhone || knownOrder?.customerPhone || '';
 
-  if (!orderOwner && !localRecord) {
+  if (!orderOwner && !orderEmail && !localRecord) {
     return {
       success: false,
       orderId,
@@ -770,11 +770,19 @@ export async function getCustomerOrderOtp(
   }
 
   // Customer authorization: check if requesting customer owns this order
+  const normReqId = (requestingCustomerId || '').trim().toLowerCase();
+  const normOwner = (orderOwner || '').trim().toLowerCase();
+  const normReqEmail = (requestingEmail || '').trim().toLowerCase();
+  const normOrderEmail = (orderEmail || '').trim().toLowerCase();
+
   const isOwner =
-    orderOwner === requestingCustomerId ||
-    orderOwner === 'guest' ||
-    orderOwner === 'guest_user' ||
-    orderOwner === 'cust-guest';
+    normOwner === normReqId ||
+    normOwner === 'guest' ||
+    normOwner === 'guest_user' ||
+    normOwner === 'cust-guest' ||
+    (!normOwner && normOrderEmail && normReqEmail && normOrderEmail === normReqEmail) ||
+    (normReqEmail && normOrderEmail && normReqEmail === normOrderEmail) ||
+    (normReqId && dbOrder?.customerId && normReqId === String(dbOrder.customerId).toLowerCase());
 
   if (!isOwner) {
     return {
@@ -839,3 +847,12 @@ export async function getCustomerOrderOtp(
     error: gen.error,
   };
 }
+
+export function resetOtpCooldownForTesting(orderId: string): void {
+  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+  const rec = otpStore.get(orderId) || otpStore.get(altId);
+  if (rec) {
+    rec.createdAt = new Date(Date.now() - 30000).toISOString();
+  }
+}
+

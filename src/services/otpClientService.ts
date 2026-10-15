@@ -108,12 +108,21 @@ export async function verifyOrderOtp(
 export async function resendOrderOtp(
   orderId: string,
   customerId?: string,
-  customerPhone?: string
+  customerPhone?: string,
+  authToken?: string
 ): Promise<OtpResendResult> {
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (customerId) {
+      headers['x-customer-id'] = customerId;
+    }
+    if (authToken && typeof authToken === 'string' && authToken.trim()) {
+      headers['Authorization'] = `Bearer ${authToken.trim()}`;
+    }
+
     const res = await fetch('/api/otp/resend', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ orderId, customerId, customerPhone }),
     });
     return await res.json();

@@ -2850,7 +2850,7 @@ export async function saveOtpRecordInDb(record: {
       [
         record.orderId,
         record.customerId,
-        record.otp || null,
+        null, // Strictly null: only cryptographically secure hash is stored in database
         record.otpHash,
         record.otpSalt,
         record.expiresAt,
