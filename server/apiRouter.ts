@@ -232,9 +232,51 @@ export async function extractAdminAuth(req: Request): Promise<{
 
   return {
     authenticated: false,
-    error: 'Access denied: Valid admin authentication token required.',
+    error: 'Access denied: Valid staff authentication token required.',
     statusCode: 401,
   };
+}
+
+/**
+ * Asserts that the authenticated staff record has an administrator role ('admin' or 'owner').
+ * Strictly blocks employees from accessing administrative endpoints (returning 403 Forbidden).
+ */
+export function requireAdminRole(
+  auth: { authenticated: boolean; admin?: AdminRecord; error?: string; statusCode?: number },
+  res: Response
+): boolean {
+  if (!auth.authenticated || !auth.admin) {
+    sendJson(res, auth.statusCode || 401, {
+      success: false,
+      error: auth.error || 'Access denied: Valid administrator credentials required.',
+    });
+    return false;
+  }
+  if (auth.admin.role === 'employee') {
+    sendJson(res, 403, {
+      success: false,
+      error: 'Access denied: Administrator privileges required. Employees are restricted strictly to Customer Orders Ledger.',
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Asserts that the requester is an authenticated staff member (Admin, Owner, or Employee).
+ */
+export function requireStaffRole(
+  auth: { authenticated: boolean; admin?: AdminRecord; error?: string; statusCode?: number },
+  res: Response
+): boolean {
+  if (!auth.authenticated || !auth.admin) {
+    sendJson(res, auth.statusCode || 401, {
+      success: false,
+      error: auth.error || 'Access denied: Staff authentication required.',
+    });
+    return false;
+  }
+  return true;
 }
 
 export const apiRouter = express.Router();
@@ -442,19 +484,20 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       return;
     }
 
-    // 1. Check if this is an administrator account in the persistent admins table
+    // 1. Check if this is an administrator or employee account in the persistent admins table
     const admin = await findAdminInDb(loginIdentifier);
     if (admin) {
       if (admin.status !== 'active') {
         sendJson(res, 403, {
           success: false,
-          error: 'Administrator account is deactivated. Please contact the project owner.',
+          error: `${admin.role === 'employee' ? 'Employee' : 'Administrator'} account is deactivated. Please contact the project owner.`,
         });
         return;
       }
 
       const isPasswordValid = await bcrypt.compare(password, admin.password_hash || '');
       if (isPasswordValid) {
+        const isEmployee = admin.role === 'employee';
         const token = signAdminToken({
           adminId: admin.admin_id,
           email: admin.email,
@@ -463,9 +506,27 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
           tokenVersion: admin.token_version,
         });
 
+        if (isEmployee) {
+          sendJson(res, 200, {
+            success: true,
+            role: 'employee',
+            userRole: 'EMPLOYEE',
+            employee: {
+              employeeId: admin.admin_id,
+              fullName: admin.full_name,
+              email: admin.email,
+              role: 'employee',
+              status: admin.status,
+            },
+            token,
+          });
+          return;
+        }
+
         sendJson(res, 200, {
           success: true,
           role: 'admin',
+          userRole: 'ADMIN',
           adminRole: admin.role,
           admin: {
             adminId: admin.admin_id,
@@ -573,6 +634,7 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
     sendJson(res, 200, {
       success: true,
       role: 'customer',
+      userRole: 'CUSTOMER',
       customer: sessionUser,
       token,
     });
@@ -864,6 +926,9 @@ apiRouter.get(['/api/products/:id', '/products/:id'], async (req: Request, res: 
  */
 apiRouter.post(['/api/products', '/products'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const productData = req.body;
     if (!productData?.title && !productData?.name) {
       sendJson(res, 400, { success: false, error: 'Product title is required.' });
@@ -886,6 +951,9 @@ apiRouter.post(['/api/products', '/products'], async (req: Request, res: Respons
  */
 apiRouter.put(['/api/products/:id', '/products/:id'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const productId = decodeURIComponent(req.params.id);
     const updates = req.body;
 
@@ -896,7 +964,7 @@ apiRouter.put(['/api/products/:id', '/products/:id'], async (req: Request, res: 
         newQty,
         updates.action || 'AUDIT_ADJUSTMENT',
         updates.notes || 'Updated via Admin portal',
-        updates.operator || 'Admin'
+        updates.operator || auth.admin?.full_name || 'Admin'
       );
     }
 
@@ -917,6 +985,9 @@ apiRouter.put(['/api/products/:id', '/products/:id'], async (req: Request, res: 
  */
 apiRouter.delete(['/api/products/:id', '/products/:id'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const productId = decodeURIComponent(req.params.id);
     const deleted = await deleteProductInDb(productId);
     if (!deleted) {
@@ -1280,9 +1351,13 @@ apiRouter.get('/api/orders/:id', async (req: Request, res: Response) => {
  * PUT /api/orders/:id/payment-status
  * POST /api/orders/:id/payment-status
  * Updates order payment status in MySQL (e.g. Confirm Cash on Delivery or Payment Verification).
+ * Restricted to administrators only; employees are not permitted to change payment status or confirm cash collection.
  */
 apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], async (req: Request, res: Response) => {
   try {
+    const adminAuth = await extractAdminAuth(req);
+    if (!requireAdminRole(adminAuth, res)) return;
+
     const orderId = decodeURIComponent(req.params.id);
     const { paymentStatus } = req.body || {};
     if (!paymentStatus) {
@@ -1290,7 +1365,6 @@ apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], 
       return;
     }
 
-    const adminAuth = await extractAdminAuth(req);
     const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
 
     const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, adminName);
@@ -1306,6 +1380,9 @@ apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], 
 
 apiRouter.post(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], async (req: Request, res: Response) => {
   try {
+    const adminAuth = await extractAdminAuth(req);
+    if (!requireAdminRole(adminAuth, res)) return;
+
     const orderId = decodeURIComponent(req.params.id);
     const { paymentStatus } = req.body || {};
     if (!paymentStatus) {
@@ -1313,7 +1390,6 @@ apiRouter.post(['/api/orders/:id/payment-status', '/orders/:id/payment-status'],
       return;
     }
 
-    const adminAuth = await extractAdminAuth(req);
     const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
 
     const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, adminName);
@@ -1329,7 +1405,7 @@ apiRouter.post(['/api/orders/:id/payment-status', '/orders/:id/payment-status'],
 
 /**
  * PUT /api/orders/:id/status
- * Updates order status.
+ * Updates order status (Accessible to Employees and Admins for delivery fulfillment).
  */
 apiRouter.put('/api/orders/:id/status', async (req: Request, res: Response) => {
   try {
@@ -1353,18 +1429,12 @@ apiRouter.put('/api/orders/:id/status', async (req: Request, res: Response) => {
 
 /**
  * DELETE /api/orders/:id
- * Deletes an order from MySQL (Admin only; customers must NOT be able to delete orders).
+ * Deletes an order from MySQL (Strictly Admin only; employees and customers cannot delete orders).
  */
 apiRouter.delete('/api/orders/:id', async (req: Request, res: Response) => {
   try {
     const adminAuth = await extractAdminAuth(req);
-    if (!adminAuth.authenticated) {
-      sendJson(res, 403, {
-        success: false,
-        error: 'Access denied: Only authorized administrators are permitted to delete orders.',
-      });
-      return;
-    }
+    if (!requireAdminRole(adminAuth, res)) return;
 
     const orderId = decodeURIComponent(req.params.id);
     const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
@@ -1423,10 +1493,13 @@ apiRouter.get(['/api/coupons', '/coupons'], async (_req: Request, res: Response)
 
 /**
  * POST /api/coupons
- * Creates a new coupon (Admin).
+ * Creates a new coupon (Strictly Admin only).
  */
 apiRouter.post(['/api/coupons', '/coupons'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const couponData = req.body;
     if (!couponData?.code || couponData.discountPercentage === undefined) {
       sendJson(res, 400, { success: false, error: 'Coupon code and discount percentage are required.' });
@@ -1446,10 +1519,13 @@ apiRouter.post(['/api/coupons', '/coupons'], async (req: Request, res: Response)
 
 /**
  * PUT /api/coupons/:code
- * Updates an existing coupon (Admin).
+ * Updates an existing coupon (Strictly Admin only).
  */
 apiRouter.put(['/api/coupons/:code', '/coupons/:code'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const code = decodeURIComponent(req.params.code);
     const updates = req.body;
     const updated = await updateCouponInDb(code, updates);
@@ -1465,10 +1541,13 @@ apiRouter.put(['/api/coupons/:code', '/coupons/:code'], async (req: Request, res
 
 /**
  * DELETE /api/coupons/:code
- * Deletes a coupon (Admin).
+ * Deletes a coupon (Strictly Admin only).
  */
 apiRouter.delete(['/api/coupons/:code', '/coupons/:code'], async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const code = decodeURIComponent(req.params.code);
     const deleted = await deleteCouponInDb(code);
     if (!deleted) {
@@ -1784,28 +1863,67 @@ apiRouter.post(['/api/admin/login', '/admin/login'], async (req: Request, res: R
 apiRouter.get(['/api/admin/me', '/admin/me'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated || !auth.admin) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Admin authentication required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     sendJson(res, 200, {
       success: true,
       admin: {
-        adminId: auth.admin.admin_id,
-        fullName: auth.admin.full_name,
-        email: auth.admin.email,
-        role: auth.admin.role,
-        status: auth.admin.status,
+        adminId: auth.admin!.admin_id,
+        fullName: auth.admin!.full_name,
+        email: auth.admin!.email,
+        role: auth.admin!.role,
+        status: auth.admin!.status,
       },
     });
   } catch (err: any) {
     sendJson(res, 500, {
       success: false,
       error: err?.message || 'Failed to retrieve admin profile.',
+    });
+  }
+});
+
+/**
+ * GET /api/employee/me
+ * Retrieves current verified employee profile.
+ * Strictly restricted to employee accounts.
+ */
+apiRouter.get(['/api/employee/me', '/employee/me'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: auth.error || 'Employee authentication required.',
+      });
+      return;
+    }
+    if (auth.admin.role !== 'employee') {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Forbidden: Access restricted to employee accounts.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      role: 'employee',
+      userRole: 'EMPLOYEE',
+      employee: {
+        employeeId: auth.admin.admin_id,
+        fullName: auth.admin.full_name,
+        email: auth.admin.email,
+        role: 'employee',
+        status: auth.admin.status,
+        createdAt: auth.admin.created_at,
+        updatedAt: auth.admin.updated_at,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to retrieve employee profile.',
     });
   }
 });
@@ -1818,13 +1936,7 @@ apiRouter.get(['/api/admin/me', '/admin/me'], async (req: Request, res: Response
 apiRouter.get(['/api/admin/users', '/admin/users'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Admin authentication required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     const admins = await getAdminsFromDb();
     const activeCount = await getActiveAdminCount();
@@ -1854,35 +1966,30 @@ apiRouter.get(['/api/admin/users', '/admin/users'], async (req: Request, res: Re
 
 /**
  * POST /api/admin/users
- * Adds a new authorized admin.
+ * Adds a new authorized admin or provisions an employee.
  * Strictly restricted to Project Owner.
  * Limits system to maximum of five active admin accounts.
  */
 apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated || !auth.admin) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Admin authentication required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
-    // Only owner-level administrator may add admins
-    if (auth.admin.role !== 'owner') {
+    // Only owner-level administrator may add staff
+    if (auth.admin!.role !== 'owner') {
       sendJson(res, 403, {
         success: false,
-        error: 'Forbidden: Only the project owner can add authorized administrators.',
+        error: 'Forbidden: Only the project owner can provision administrators or employees.',
       });
       return;
     }
 
-    const { fullName, email, password, adminId } = req.body || {};
+    const { fullName, email, password, adminId, role } = req.body || {};
     const trimmedName = typeof fullName === 'string' ? fullName.trim() : '';
     const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const trimmedPass = typeof password === 'string' ? password : '';
     const trimmedCustomId = typeof adminId === 'string' ? adminId.trim() : '';
+    const assignedRole = role === 'employee' ? 'employee' : 'admin';
 
     if (!trimmedName) {
       sendJson(res, 400, { success: false, error: 'Full name is required.' });
@@ -1899,14 +2006,16 @@ apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: R
       return;
     }
 
-    // Enforce 5 active admins limit
-    const activeCount = await getActiveAdminCount();
-    if (activeCount >= 5) {
-      sendJson(res, 400, {
-        success: false,
-        error: 'Active admin limit reached. A maximum of 5 active admin accounts are permitted.',
-      });
-      return;
+    // Enforce 5 active admins limit for admin accounts
+    if (assignedRole !== 'employee') {
+      const activeCount = await getActiveAdminCount();
+      if (activeCount >= 5) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Active admin limit reached. A maximum of 5 active admin accounts are permitted.',
+        });
+        return;
+      }
     }
 
     // Check duplicate email in admins table
@@ -1914,7 +2023,7 @@ apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: R
     if (existingEmail) {
       sendJson(res, 409, {
         success: false,
-        error: 'An administrator account with this email address already exists.',
+        error: `An account with this email address already exists (${existingEmail.role}).`,
       });
       return;
     }
@@ -1925,13 +2034,14 @@ apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: R
       if (existingId) {
         sendJson(res, 409, {
           success: false,
-          error: 'An administrator account with this Admin User ID already exists.',
+          error: 'An account with this User ID already exists.',
         });
         return;
       }
     }
 
-    const finalAdminId = trimmedCustomId || `adm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const prefix = assignedRole === 'employee' ? 'emp' : 'adm';
+    const finalAdminId = trimmedCustomId || `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const passwordHash = await bcrypt.hash(trimmedPass, 10);
 
     const created = await createAdminInDb({
@@ -1939,14 +2049,14 @@ apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: R
       fullName: trimmedName,
       email: trimmedEmail,
       passwordHash,
-      role: 'admin', // Normal admins are strictly created with 'admin' role, preventing self-promotion
+      role: assignedRole,
       status: 'active',
-      createdBy: auth.admin.admin_id,
+      createdBy: auth.admin!.admin_id,
     });
 
     sendJson(res, 201, {
       success: true,
-      message: 'Authorized administrator added successfully.',
+      message: `${assignedRole === 'employee' ? 'Employee' : 'Authorized administrator'} added successfully.`,
       admin: {
         adminId: created.admin_id,
         fullName: created.full_name,
@@ -1959,7 +2069,7 @@ apiRouter.post(['/api/admin/users', '/admin/users'], async (req: Request, res: R
   } catch (err: any) {
     sendJson(res, 500, {
       success: false,
-      error: err?.message || 'Failed to create authorized administrator.',
+      error: err?.message || 'Failed to create staff account.',
     });
   }
 });
@@ -2170,13 +2280,7 @@ apiRouter.post(['/api/admin/setup-owner', '/admin/setup-owner'], async (req: Req
 apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Access denied: Valid admin authentication required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     const products = await getProductsFromDb();
     const orders = await findOrdersForCustomerInDb();
@@ -2216,13 +2320,7 @@ apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, r
 apiRouter.get(['/api/admin/customers', '/admin/customers'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated || !auth.admin) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Access denied: Valid admin authentication token required to access customer accounts.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     const searchQuery = typeof req.query.search === 'string' ? req.query.search : undefined;
     const rawCustomers = await getCustomerAccountsFromDb(searchQuery);
@@ -2262,13 +2360,7 @@ apiRouter.get(['/api/admin/customers', '/admin/customers'], async (req: Request,
 apiRouter.get(['/api/admin/customers/:customerId', '/admin/customers/:customerId'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated || !auth.admin) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Access denied: Valid admin authentication token required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     const customerId = req.params.customerId;
     if (!customerId) {
@@ -2312,13 +2404,7 @@ apiRouter.get(['/api/admin/customers/:customerId', '/admin/customers/:customerId
 apiRouter.patch(['/api/admin/customers/:customerId/status', '/admin/customers/:customerId/status'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated || !auth.admin) {
-      sendJson(res, auth.statusCode || 401, {
-        success: false,
-        error: auth.error || 'Access denied: Valid admin authentication token required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     const customerId = req.params.customerId;
     const { status } = req.body || {};
@@ -2404,6 +2490,9 @@ apiRouter.get('/api/settings', async (_req: Request, res: Response) => {
  */
 apiRouter.post('/api/settings', async (req: Request, res: Response) => {
   try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
     const { deliveryChargeRules, deliveryCharges } = req.body;
 
     if (!deliveryChargeRules && deliveryCharges !== undefined) {
@@ -2539,6 +2628,9 @@ apiRouter.post(
   ],
   async (req: Request, res: Response) => {
     try {
+      const auth = await extractAdminAuth(req);
+      if (!requireAdminRole(auth, res)) return;
+
       const body = req.body || {};
       const rawUpiId = body.upiId !== undefined ? body.upiId : body.upi_id;
       const rawMerchantName = body.merchantName !== undefined ? body.merchantName : body.merchant_name;
@@ -3138,13 +3230,7 @@ apiRouter.get(
   async (req: Request, res: Response) => {
     try {
       const auth = await extractAdminAuth(req);
-      if (!auth.authenticated) {
-        sendJson(res, auth.statusCode || 403, {
-          success: false,
-          error: auth.error || 'Access denied: Admin access required.',
-        });
-        return;
-      }
+      if (!requireAdminRole(auth, res)) return;
 
       const payments = await getAllUpiPaymentsForVerification();
       sendJson(res, 200, { success: true, payments });
@@ -3166,13 +3252,7 @@ apiRouter.get(
 apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (req: Request, res: Response) => {
   try {
     const auth = await extractAdminAuth(req);
-    if (!auth.authenticated) {
-      sendJson(res, auth.statusCode || 403, {
-        success: false,
-        error: auth.error || 'Access denied: Admin access required.',
-      });
-      return;
-    }
+    if (!requireAdminRole(auth, res)) return;
 
     const { orderId, action, notes } = req.body || {};
     const trimmedOrderId = typeof orderId === 'string' ? orderId.trim() : '';
@@ -3320,13 +3400,7 @@ apiRouter.delete(
   async (req: Request, res: Response) => {
     try {
       const auth = await extractAdminAuth(req);
-      if (!auth.authenticated) {
-        sendJson(res, auth.statusCode || 403, {
-          success: false,
-          error: auth.error || 'Access denied: Admin access required.',
-        });
-        return;
-      }
+      if (!requireAdminRole(auth, res)) return;
 
       const orderId = decodeURIComponent(req.params.orderId || req.body?.orderId || '');
       if (!orderId.trim()) {
@@ -3381,13 +3455,7 @@ apiRouter.post(
   async (req: Request, res: Response) => {
     try {
       const auth = await extractAdminAuth(req);
-      if (!auth.authenticated) {
-        sendJson(res, auth.statusCode || 403, {
-          success: false,
-          error: auth.error || 'Access denied: Admin access required.',
-        });
-        return;
-      }
+      if (!requireAdminRole(auth, res)) return;
 
       const orderId = typeof req.body?.orderId === 'string' ? req.body.orderId.trim() : '';
       if (!orderId) {
@@ -3448,13 +3516,7 @@ apiRouter.post(
   async (req: Request, res: Response) => {
     try {
       const auth = await extractAdminAuth(req);
-      if (!auth.authenticated) {
-        sendJson(res, auth.statusCode || 403, {
-          success: false,
-          error: auth.error || 'Access denied: Admin access required.',
-        });
-        return;
-      }
+      if (!requireAdminRole(auth, res)) return;
 
       const { statusFilter, orderIds, deleteAll } = req.body || {};
 

@@ -18,13 +18,23 @@ import {
   STORAGE_CURRENT_USER_KEY,
 } from '../services/authService';
 import { AuthorizedAdmin } from '../services/adminService';
+import { AuthorizedEmployee } from '../services/employeeService';
+
+export interface AuthLoginResponse {
+  success: boolean;
+  role?: 'admin' | 'employee' | 'customer';
+  userRole?: 'ADMIN' | 'EMPLOYEE' | 'CUSTOMER';
+  admin?: AuthorizedAdmin;
+  employee?: AuthorizedEmployee;
+  error?: string;
+}
 
 interface AuthContextType {
   currentUser: Customer | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   orders: CustomerOrder[];
-  login: (identifier: string, pass: string) => Promise<{ success: boolean; role?: 'admin' | 'customer'; admin?: AuthorizedAdmin; error?: string }>;
+  login: (identifier: string, pass: string) => Promise<AuthLoginResponse>;
   register: (payload: RegisterPayload) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateProfile: (updates: Partial<Pick<Customer, 'name' | 'phone' | 'address'>>) => void;
@@ -138,18 +148,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     init();
   }, []);
 
-  const login = async (identifier: string, pass: string): Promise<{ success: boolean; role?: 'admin' | 'customer'; admin?: AuthorizedAdmin; error?: string }> => {
+  const login = async (identifier: string, pass: string): Promise<AuthLoginResponse> => {
     setIsLoading(true);
     try {
       const res = await loginShared(identifier, pass);
       if (res.success) {
+        if (res.role === 'employee' && res.employee) {
+          return {
+            success: true,
+            role: 'employee',
+            userRole: 'EMPLOYEE',
+            employee: res.employee,
+          };
+        }
         if (res.role === 'admin' && res.admin) {
-          return { success: true, role: 'admin', admin: res.admin };
+          return {
+            success: true,
+            role: 'admin',
+            userRole: 'ADMIN',
+            admin: res.admin,
+          };
         }
         if (res.customer) {
           setCurrentUser(res.customer);
           setOrders(getCustomerOrders(res.customer.id));
-          return { success: true, role: 'customer' };
+          return {
+            success: true,
+            role: 'customer',
+            userRole: 'CUSTOMER',
+          };
         }
       }
       return { success: false, error: res.error || 'Login failed' };

@@ -146,14 +146,15 @@ export interface CustomerOtpResult {
 }
 
 import { getStoredAdminToken } from './adminService';
+import { getStoredEmployeeToken } from './employeeService';
 
 /**
  * Queries safe order verification status from backend.
- * Admin passes { role: 'admin' } to verify.
+ * Staff passes { role: 'admin' | 'employee' } to verify.
  */
 export async function getOrderOtpStatus(
   orderId: string,
-  options?: { customerId?: string; role?: 'admin' | 'customer' }
+  options?: { customerId?: string; role?: 'admin' | 'employee' | 'customer' }
 ): Promise<OtpStatusResult | null> {
   try {
     const params = new URLSearchParams();
@@ -167,6 +168,12 @@ export async function getOrderOtpStatus(
       const adminToken = getStoredAdminToken();
       if (adminToken) {
         headers['Authorization'] = `Bearer ${adminToken}`;
+      }
+    } else if (options?.role === 'employee') {
+      headers['x-admin-role'] = 'employee';
+      const employeeToken = getStoredEmployeeToken();
+      if (employeeToken) {
+        headers['Authorization'] = `Bearer ${employeeToken}`;
       }
     }
 

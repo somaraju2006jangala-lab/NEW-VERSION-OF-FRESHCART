@@ -76,6 +76,8 @@ export const Header: React.FC<HeaderProps> = ({
         return t('navRetailStorefront');
       case 'admin':
         return t('navOpsPortal');
+      case 'employee':
+        return 'Employee Portal';
       case 'dashboard':
         return t('navCustomerPortal');
       case 'login':

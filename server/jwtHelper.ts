@@ -100,22 +100,24 @@ export interface AdminTokenPayload {
   adminId: string;
   email: string;
   fullName: string;
-  role: 'owner' | 'admin';
+  role: 'owner' | 'admin' | 'employee';
   tokenVersion: number;
   [key: string]: any;
 }
 
 /**
- * Signs a JWT token for an authorized administrator.
+ * Signs a JWT token for an authorized administrator or employee.
  */
 export function signAdminToken(
   payload: AdminTokenPayload,
   expiresIn: string = '7d'
 ): string {
+  const isEmployee = payload.role === 'employee';
   const normalizedPayload = {
     ...payload,
-    isAdmin: true,
-    tokenType: 'admin',
+    isAdmin: !isEmployee,
+    isEmployee,
+    tokenType: isEmployee ? 'employee' : 'admin',
   };
   return jwt.sign(normalizedPayload, JWT_SECRET, { expiresIn } as any);
 }

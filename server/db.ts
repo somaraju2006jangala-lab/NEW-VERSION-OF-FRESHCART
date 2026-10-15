@@ -1249,6 +1249,24 @@ export async function seedInitialDataIfDbEmpty(): Promise<void> {
       );
       console.log(`[MySQL] Initialized primary project owner admin: ${ownerEmail} (${ownerName})`);
     }
+
+    // 7. Seed Initial Employee Account if none exists
+    const [empRows] = await currentPool.query<RowDataPacket[]>(
+      'SELECT id FROM admins WHERE email = ? OR admin_id = ? LIMIT 1',
+      ['employee@freshcart.com', 'emp_001']
+    );
+    if (!empRows || empRows.length === 0) {
+      const empEmail = (process.env.EMPLOYEE_EMAIL || 'employee@freshcart.com').trim().toLowerCase();
+      const empPassword = process.env.EMPLOYEE_PASSWORD || 'FreshCartEmployee2026!';
+      const empName = process.env.EMPLOYEE_NAME || 'FreshCart Operations Employee';
+      const empPasswordHash = await bcrypt.hash(empPassword, 10);
+      await currentPool.query(
+        `INSERT INTO admins (admin_id, full_name, email, password_hash, role, status, token_version)
+         VALUES (?, ?, ?, ?, 'employee', 'active', 1)`,
+        ['emp_001', empName, empEmail, empPasswordHash]
+      );
+      console.log(`[MySQL] Initialized demo employee account: ${empEmail} (${empName})`);
+    }
   } catch (err: any) {
     console.warn('[MySQL Seed Error]:', err?.message);
   }
@@ -3975,7 +3993,7 @@ export interface AdminRecord {
   full_name: string;
   email: string;
   password_hash?: string;
-  role: 'owner' | 'admin';
+  role: 'owner' | 'admin' | 'employee';
   status: 'active' | 'inactive';
   token_version: number;
   created_by?: string | null;
@@ -4040,7 +4058,7 @@ export async function getAdminsFromDb(): Promise<Omit<AdminRecord, 'password_has
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, admin_id, full_name, email, role, status, token_version, created_by, created_at, updated_at
        FROM admins
-       ORDER BY CASE WHEN role = 'owner' THEN 0 ELSE 1 END, created_at ASC`
+       ORDER BY CASE WHEN role = 'owner' THEN 0 WHEN role = 'admin' THEN 1 ELSE 2 END, created_at ASC`
     );
     return rows as Omit<AdminRecord, 'password_hash'>[];
   } catch (err: any) {
@@ -4050,13 +4068,13 @@ export async function getAdminsFromDb(): Promise<Omit<AdminRecord, 'password_has
 }
 
 /**
- * Returns the current count of active administrators.
+ * Returns the current count of active administrators (excluding employees).
  */
 export async function getActiveAdminCount(): Promise<number> {
   const pool = getPool();
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT COUNT(*) as count FROM admins WHERE status = 'active'`
+      `SELECT COUNT(*) as count FROM admins WHERE status = 'active' AND role != 'employee'`
     );
     return Number(rows[0]?.count || 0);
   } catch (err: any) {
@@ -4066,15 +4084,15 @@ export async function getActiveAdminCount(): Promise<number> {
 }
 
 /**
- * Inserts a new authorized admin into the persistent MySQL database.
- * Strictly limits total active admins to 5.
+ * Inserts a new authorized admin or employee into the persistent MySQL database.
+ * Strictly limits total active admins to 5 (employees do not count towards the 5 admin limit).
  */
 export async function createAdminInDb(params: {
   adminId: string;
   fullName: string;
   email: string;
   passwordHash: string;
-  role?: 'owner' | 'admin';
+  role?: 'owner' | 'admin' | 'employee';
   createdBy?: string;
   status?: 'active' | 'inactive';
 }): Promise<AdminRecord> {
@@ -4082,8 +4100,8 @@ export async function createAdminInDb(params: {
   const role = params.role || 'admin';
   const status = params.status || 'active';
 
-  // Limit check: maximum 5 active admin accounts
-  if (status === 'active') {
+  // Limit check: maximum 5 active admin accounts (only enforced for non-employee admin roles)
+  if (status === 'active' && role !== 'employee') {
     const activeCount = await getActiveAdminCount();
     if (activeCount >= 5) {
       throw new Error('Active admin limit reached. A maximum of 5 active admin accounts are permitted.');

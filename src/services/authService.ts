@@ -12,6 +12,7 @@ export const DEMO_CUSTOMER_PASSWORD = 'FreshCart2026!';
 
 import { hashPassword, generateSalt } from '../utils/crypto';
 import { AuthorizedAdmin, saveAdminSession, loginAdmin, getStoredAdminToken } from './adminService';
+import { AuthorizedEmployee, saveEmployeeSession } from './employeeService';
 
 export { hashPassword, generateSalt };
 
@@ -496,15 +497,17 @@ export function generateClientAuthToken(customer: Partial<Customer>): string {
  */
 export interface SharedLoginResult {
   success: boolean;
-  role?: 'admin' | 'customer';
+  role?: 'admin' | 'employee' | 'customer';
+  userRole?: 'ADMIN' | 'EMPLOYEE' | 'CUSTOMER';
   customer?: Customer;
   admin?: AuthorizedAdmin;
+  employee?: AuthorizedEmployee;
   token?: string;
   error?: string;
 }
 
 /**
- * Shared authentication for both customers and administrators.
+ * Shared authentication for customers, employees, and administrators.
  * Authenticates against backend, verifies role, and saves session.
  */
 export async function loginShared(
@@ -537,8 +540,24 @@ export async function loginShared(
     const data = await res.json().catch(() => null);
 
     if (res.ok && data?.success) {
+      // Employee account
+      if (data.role === 'employee' || data.userRole === 'EMPLOYEE' || data.employee) {
+        const employee: AuthorizedEmployee = data.employee;
+        const token = data.token;
+        if (token && employee) {
+          saveEmployeeSession(token, employee);
+        }
+        return {
+          success: true,
+          role: 'employee',
+          userRole: 'EMPLOYEE',
+          employee,
+          token,
+        };
+      }
+
       // Administrator account
-      if (data.role === 'admin' || data.admin) {
+      if (data.role === 'admin' || data.userRole === 'ADMIN' || data.admin) {
         const admin: AuthorizedAdmin = data.admin;
         const token = data.token;
         if (token && admin) {
@@ -547,13 +566,14 @@ export async function loginShared(
         return {
           success: true,
           role: 'admin',
+          userRole: 'ADMIN',
           admin,
           token,
         };
       }
 
       // Customer account
-      if (data.role === 'customer' || data.customer) {
+      if (data.role === 'customer' || data.userRole === 'CUSTOMER' || data.customer) {
         const token = data.token || generateClientAuthToken(data.customer);
         const sessionUser: Customer = {
           ...data.customer,
@@ -568,6 +588,7 @@ export async function loginShared(
         return {
           success: true,
           role: 'customer',
+          userRole: 'CUSTOMER',
           customer: sessionUser,
           token,
         };

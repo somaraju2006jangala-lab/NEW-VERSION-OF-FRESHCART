@@ -23,6 +23,14 @@ import {
   fetchAdminProfile,
   clearAdminSession,
 } from './services/adminService';
+import {
+  AuthorizedEmployee,
+  getStoredEmployeeUser,
+  getStoredEmployeeToken,
+  fetchEmployeeProfile,
+  clearEmployeeSession,
+} from './services/employeeService';
+import { EmployeePortal } from './components/EmployeePortal';
 
 import { CustomerDashboard } from './components/CustomerDashboard';
 import { TrustBanner } from './components/TrustBanner';
@@ -101,6 +109,10 @@ function FreshCartStore() {
   const [currentAdmin, setCurrentAdmin] = useState<AuthorizedAdmin | null>(() => getStoredAdminUser());
   const [isAdminVerifying, setIsAdminVerifying] = useState<boolean>(() => !!getStoredAdminToken());
 
+  // Authorized Employee Authentication & Session State
+  const [currentEmployee, setCurrentEmployee] = useState<AuthorizedEmployee | null>(() => getStoredEmployeeUser());
+  const [isEmployeeVerifying, setIsEmployeeVerifying] = useState<boolean>(() => !!getStoredEmployeeToken());
+
   useEffect(() => {
     const verifyAdmin = async () => {
       const token = getStoredAdminToken();
@@ -125,15 +137,51 @@ function FreshCartStore() {
     verifyAdmin();
   }, []);
 
+  useEffect(() => {
+    const verifyEmployee = async () => {
+      const token = getStoredEmployeeToken();
+      if (token) {
+        try {
+          const res = await fetchEmployeeProfile();
+          if (res.success && res.employee) {
+            setCurrentEmployee(res.employee);
+          } else {
+            clearEmployeeSession();
+            setCurrentEmployee(null);
+          }
+        } catch {
+          // Network issue: keep cached employee
+        }
+      } else {
+        clearEmployeeSession();
+        setCurrentEmployee(null);
+      }
+      setIsEmployeeVerifying(false);
+    };
+    verifyEmployee();
+  }, []);
+
   const handleAdminLogout = () => {
     clearAdminSession();
     setCurrentAdmin(null);
     navigateToView('login');
   };
 
-  const handleSharedLoginSuccess = (role: 'admin' | 'customer', admin?: AuthorizedAdmin) => {
-    if (role === 'admin' && admin) {
-      setCurrentAdmin(admin);
+  const handleEmployeeLogout = () => {
+    clearEmployeeSession();
+    setCurrentEmployee(null);
+    navigateToView('login');
+  };
+
+  const handleSharedLoginSuccess = (
+    role: 'admin' | 'employee' | 'customer',
+    data?: { admin?: AuthorizedAdmin; employee?: AuthorizedEmployee }
+  ) => {
+    if (role === 'employee' && data?.employee) {
+      setCurrentEmployee(data.employee);
+      navigateToView('employee');
+    } else if (role === 'admin' && data?.admin) {
+      setCurrentAdmin(data.admin);
       navigateToView('admin');
     } else {
       navigateToView('storefront');
@@ -323,7 +371,7 @@ function FreshCartStore() {
 
   // Synchronize URL Hash routing with currentView and enforce route protection
   useEffect(() => {
-    if (isLoading || isAdminVerifying) return;
+    if (isLoading || isAdminVerifying || isEmployeeVerifying) return;
 
     const handleHashChange = () => {
       const hash = window.location.hash.toLowerCase();
@@ -339,10 +387,10 @@ function FreshCartStore() {
         return;
       }
 
-      if (!currentUser && !currentAdmin) {
+      if (!currentUser && !currentAdmin && !currentEmployee) {
         // UNAUTHENTICATED USERS:
         // Only the shared 'login' and customer 'register' pages are accessible.
-        // Direct access to protected routes (#/admin, #/storefront, #/dashboard, etc.) redirects to shared login.
+        // Direct access to protected routes (#/admin, #/employee, #/storefront, #/dashboard, etc.) redirects to shared login.
         if (hash === '#/register' || hash === '#register') {
           setCurrentView('register');
         } else {
@@ -351,10 +399,29 @@ function FreshCartStore() {
             window.location.hash = '#/login';
           }
         }
+      } else if (currentEmployee) {
+        // AUTHENTICATED EMPLOYEE:
+        // Employees are strictly restricted to the Employee Portal (Customer Orders Ledger) and storefront preview
+        if (hash === '#/storefront' || hash === '#storefront') {
+          setCurrentView('storefront');
+        } else if (hash === '#/admin' || hash === '#admin') {
+          // STRICT RBAC: Employees cannot access Admin Portal! Redirect to Employee Portal.
+          setCurrentView('employee');
+          window.location.hash = '#/employee';
+        } else {
+          setCurrentView('employee');
+          if (hash !== '#/employee' && hash !== '#employee') {
+            window.location.hash = '#/employee';
+          }
+        }
       } else if (currentAdmin) {
         // AUTHENTICATED ADMINISTRATOR:
         if (hash === '#/storefront' || hash === '#storefront') {
           setCurrentView('storefront');
+        } else if (hash === '#/employee' || hash === '#employee') {
+          // Admins redirected to Admin Portal
+          setCurrentView('admin');
+          window.location.hash = '#/admin';
         } else {
           setCurrentView('admin');
           if (hash !== '#/admin' && hash !== '#admin') {
@@ -363,8 +430,8 @@ function FreshCartStore() {
         }
       } else if (currentUser) {
         // AUTHENTICATED CUSTOMERS:
-        // Customer accounts cannot open Admin Portal (#/admin)
-        if (hash === '#/admin' || hash === '#admin') {
+        // Customer accounts cannot open Admin Portal (#/admin) or Employee Portal (#/employee)
+        if (hash === '#/admin' || hash === '#admin' || hash === '#/employee' || hash === '#employee') {
           setCurrentView('storefront');
           window.location.hash = '#/storefront';
         } else if (hash === '#/dashboard' || hash === '#dashboard' || hash.startsWith('#/dashboard?') || hash.startsWith('#dashboard?')) {
@@ -415,11 +482,11 @@ function FreshCartStore() {
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [currentUser, currentAdmin, isLoading, isAdminVerifying]);
+  }, [currentUser, currentAdmin, currentEmployee, isLoading, isAdminVerifying, isEmployeeVerifying]);
 
   const navigateToView = (view: ViewType, param?: string) => {
-    // If trying to open admin without active admin authorization, redirect to shared login or storefront
-    if (view === 'admin' && !currentAdmin) {
+    // If trying to open employee portal without active employee authorization, redirect to login
+    if (view === 'employee' && !currentEmployee) {
       if (currentUser) {
         setCurrentView('storefront');
         window.location.hash = '#/storefront';
@@ -431,8 +498,38 @@ function FreshCartStore() {
       return;
     }
 
-    // Route guard: if trying to open storefront, dashboard, search, category, cart, or checkout without auth, redirect to login
-    if (!currentUser && !currentAdmin && (view === 'storefront' || view === 'dashboard' || view === 'search' || view === 'category' || view === 'cart' || view === 'checkout')) {
+    // If trying to open admin without active admin authorization, redirect to authorized portal or login
+    if (view === 'admin' && !currentAdmin) {
+      if (currentEmployee) {
+        setCurrentView('employee');
+        window.location.hash = '#/employee';
+        return;
+      }
+      if (currentUser) {
+        setCurrentView('storefront');
+        window.location.hash = '#/storefront';
+        return;
+      }
+      setCurrentView('login');
+      window.location.hash = '#/login';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    // Route guard: if trying to open protected views without auth, redirect to login
+    if (
+      !currentUser &&
+      !currentAdmin &&
+      !currentEmployee &&
+      (view === 'storefront' ||
+        view === 'dashboard' ||
+        view === 'search' ||
+        view === 'category' ||
+        view === 'cart' ||
+        view === 'checkout' ||
+        view === 'admin' ||
+        view === 'employee')
+    ) {
       setCurrentView('login');
       window.location.hash = '#/login';
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -853,6 +950,21 @@ function FreshCartStore() {
               onUpdateDeliveryCharges={handleUpdateDeliveryCharges}
               deliveryRules={deliveryRules}
               onUpdateDeliveryRules={handleUpdateDeliveryRules}
+            />
+          ) : (
+            <LoginPage
+              onNavigateToRegister={() => navigateToView('register')}
+              onLoginSuccess={handleSharedLoginSuccess}
+            />
+          )
+        ) : currentView === 'employee' ? (
+          currentEmployee ? (
+            <EmployeePortal
+              currentEmployee={currentEmployee}
+              customerOrders={customerOrders}
+              onBackToStorefront={() => navigateToView(currentUser ? 'storefront' : 'login')}
+              onEmployeeLogout={handleEmployeeLogout}
+              onUpdateOrderStatus={handleUpdateOrderStatus}
             />
           ) : (
             <LoginPage
