@@ -129,8 +129,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     return null;
   }
 
-  const activeOrders = orders.filter((o) => o.status !== 'Delivered');
-  const pastOrders = orders.filter((o) => o.status === 'Delivered');
+  const activeOrders = orders.filter((o) => o.status?.toLowerCase() !== 'delivered');
+  const pastOrders = orders.filter((o) => o.status?.toLowerCase() === 'delivered');
 
   // Order Handover OTP State for Customer Orders
   const [customerOrderOtps, setCustomerOrderOtps] = useState<
@@ -237,7 +237,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   useEffect(() => {
     if (!currentUser?.id) return;
 
-    activeOrders.forEach((order) => {
+    orders.forEach((order) => {
+      const isDelivered = order.status?.toLowerCase() === 'delivered';
       const isCod =
         order.paymentMethod?.toLowerCase().includes('cash') ||
         order.paymentMethod === 'COD' ||
@@ -246,7 +247,17 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         order.paymentStatus?.toUpperCase() === 'PAID' ||
         order.paymentStatus?.toUpperCase() === 'COMPLETED';
 
-      const isDelivered = order.status?.toLowerCase() === 'delivered';
+      // If order is delivered, clean up any active OTP state
+      if (isDelivered) {
+        if (customerOrderOtps[order.id]) {
+          setCustomerOrderOtps((prev) => {
+            const next = { ...prev };
+            delete next[order.id];
+            return next;
+          });
+        }
+        return;
+      }
 
       // Delivery OTP is fetched only after admin confirms PAID/COMPLETED for online orders, or for eligible COD orders
       if ((isPaid || isCod) && !isDelivered && !customerOrderOtps[order.id]) {
@@ -267,6 +278,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                   isExpired: false,
                 },
               }));
+            } else if (res.status === 'USED' || res.message?.toLowerCase().includes('delivered')) {
+              setCustomerOrderOtps((prev) => {
+                const next = { ...prev };
+                delete next[order.id];
+                return next;
+              });
+              refreshOrders();
             } else if (res.isExpired || res.status === 'EXPIRED') {
               setCustomerOrderOtps((prev) => ({
                 ...prev,
@@ -315,14 +333,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
     const pollInterval = setInterval(() => {
       // Automatically poll orders from database so admin verification or delivery changes update live
-      const needsPolling = activeOrders.some(
-        (o) =>
-          o.status === 'Picking' ||
-          o.status === 'Pending' ||
-          (o.paymentMethod?.toLowerCase().includes('upi') &&
-            o.paymentStatus?.toUpperCase() !== 'COMPLETED' &&
-            o.paymentStatus?.toUpperCase() !== 'PAID')
-      );
+      const needsPolling = orders.some((o) => o.status?.toLowerCase() !== 'delivered');
       if (needsPolling) {
         refreshOrders();
       }
@@ -334,7 +345,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
       window.removeEventListener('focus', handleCustomSync);
       clearInterval(pollInterval);
     };
-  }, [activeOrders, refreshOrders]);
+  }, [orders, refreshOrders]);
 
   const handleCustomerResendOtp = async (orderId: string, phone?: string) => {
     if (resendingOtp[orderId] || !currentUser?.id) return;
@@ -406,6 +417,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             error: undefined,
           },
         }));
+      } else if (res.status === 'USED' || res.message?.toLowerCase().includes('delivered')) {
+        setCustomerOrderOtps((prev) => {
+          const next = { ...prev };
+          delete next[orderId];
+          return next;
+        });
+        refreshOrders();
       } else if (res.isExpired || res.status === 'EXPIRED') {
         setCustomerOrderOtps((prev) => ({
           ...prev,
@@ -877,7 +895,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                 </div>
               </div>
 
-              {activeOrders.length === 0 ? (
+              {orders.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-[#e2e8f0] p-10 text-center space-y-3">
                   <div className="w-12 h-12 rounded-full bg-[#eff4ff] text-[#006b2c] flex items-center justify-center mx-auto">
                     <Package className="w-6 h-6" />
@@ -894,7 +912,10 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                   </button>
                 </div>
               ) : (
-                activeOrders.map((order) => (
+                orders.map((order) => {
+                  const isDelivered = order.status?.toLowerCase() === 'delivered';
+
+                  return (
                   <div
                     key={order.id}
                     className="bg-white rounded-2xl border border-[#e2e8f0] p-5 sm:p-6 shadow-xs space-y-5"
@@ -906,8 +927,14 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           <span className="text-[16px] font-bold text-[#0b1c30] font-display">
                             Order {order.id.startsWith('#') ? order.id : `#${order.id}`}
                           </span>
-                          <span className="px-2.5 py-0.5 rounded-full bg-[#dcfce7] text-[#15803d] text-[11px] font-bold animate-pulse">
-                            ● {getStatusLabel(order.status)}
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              isDelivered
+                                ? 'bg-[#dcfce7] text-[#15803d]'
+                                : 'bg-[#dcfce7] text-[#15803d] animate-pulse'
+                            }`}
+                          >
+                            {isDelivered ? '✓' : '●'} {getStatusLabel(order.status)}
                           </span>
                           <span
                             id={`order-payment-method-badge-${order.id.replace('#', '')}`}
@@ -1187,8 +1214,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                       );
                     })()}
 
-                    {/* Dedicated Delivery OTP Card (Only after online payment approval or for eligible COD) */}
-                    {order.status?.toLowerCase() !== 'delivered' &&
+                    {/* Dedicated Delivery OTP Card (Only after online payment approval or for eligible COD, removed once Delivered) */}
+                    {!isDelivered &&
                       ((order.paymentStatus?.toUpperCase() === 'PAID' ||
                         order.paymentStatus?.toUpperCase() === 'COMPLETED') ||
                         order.paymentMethod?.toLowerCase().includes('cash') ||
@@ -1353,8 +1380,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
                     {/* Multi-step Live Tracking Progress Bar */}
                     {(() => {
-                      const hasOtp = Boolean(customerOrderOtps[order.id]?.otp);
-                      const isDelivered = order.status === 'Delivered';
+                      const hasOtp = !isDelivered && Boolean(customerOrderOtps[order.id]?.otp);
 
                       return (
                         <div className="bg-[#f8fafc] p-4 rounded-xl border border-[#e2e8f0] space-y-4">
@@ -1443,7 +1469,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                                   isDelivered ? 'font-bold text-[#006b2c]' : 'text-[#565e74]'
                                 }`}
                               >
-                                {isDelivered ? 'OTP Verified' : 'Delivered'}
+                                Delivered
                               </span>
                             </div>
                           </div>
@@ -1504,8 +1530,9 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                       </div>
                     </div>
                   </div>
-                ))
-              )}
+                );
+              })
+            )}
             </div>
           )}
 

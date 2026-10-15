@@ -4,7 +4,6 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { LanguageSelector } from './LanguageSelector';
 import {
-  BRAND_LOGO_URL,
   AISLE_CATEGORIES,
 } from '../data/products';
 import {
@@ -124,21 +123,18 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-2.5 shrink-0">
             <button
               onClick={() => onToggleView('storefront')}
-              className="flex items-center gap-2 text-left focus:outline-hidden group cursor-pointer"
+              className="flex items-center text-left focus:outline-hidden group cursor-pointer"
               id="brand-logo-btn"
             >
-              <img
-                src={BRAND_LOGO_URL}
-                alt="FreshCart Brand Logo"
-                className="h-8 w-auto object-contain transition-transform group-hover:scale-105"
-              />
               <span className="text-[20px] font-extrabold tracking-tight text-[#006b2c] font-display">
                 FreshCart
               </span>
             </button>
-            <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-white/35 backdrop-blur-xs text-[#565e74] text-[11px] font-semibold tracking-wide border border-white/50">
-              {getViewBadgeLabel()}
-            </span>
+            {currentView !== 'dashboard' && (
+              <span className="hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-white/35 backdrop-blur-xs text-[#565e74] text-[11px] font-semibold tracking-wide border border-white/50">
+                {getViewBadgeLabel()}
+              </span>
+            )}
           </div>
 
 

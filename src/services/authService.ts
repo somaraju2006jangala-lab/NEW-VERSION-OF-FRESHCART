@@ -938,6 +938,9 @@ export function updateOrderStatus(
         : o
     );
     localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(updated));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+    }
   } catch (err) {
     console.error('Failed to update order status:', err);
   }
