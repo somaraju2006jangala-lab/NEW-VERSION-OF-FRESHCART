@@ -16,7 +16,6 @@ import {
   Copy,
   Check,
   CalendarDays,
-  ArrowRight,
   TrendingUp,
   Receipt,
   Eye,
@@ -198,14 +197,6 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
     setSelectedDate(`${newYear}-${String(viewMonth).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`);
   };
 
-  // Jump to today
-  const handleGoToToday = () => {
-    const today = getTodayStr();
-    const [y, m] = today.split('-').map(Number);
-    setViewYear(y);
-    setViewMonth(m);
-    setSelectedDate(today);
-  };
 
   // Select a specific date
   const handleSelectDate = (dateStr: string) => {
@@ -432,18 +423,15 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                     Live Audit Ledger
                   </span>
                 </h2>
-                <p className="text-[12px] text-[#94a3b8] mt-0.5">
-                  Inspect daily order counts, verified UPI payments, confirmed COD collections, and individual transaction records.
-                </p>
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-2.5 shrink-0">
             {/* Quick Date Picker */}
-            <div className="flex items-center gap-1.5 bg-black/50 border border-white/15 px-3 py-1.5 rounded-xl">
+            <div className="flex items-center gap-1.5 bg-black/50 border border-white/15 px-3 rounded-xl h-9 shrink-0">
               <CalendarDays className="w-4 h-4 text-emerald-400 shrink-0" />
-              <label htmlFor="admin-calendar-date-input" className="text-[11px] text-[#94a3b8] font-medium shrink-0">
+              <label htmlFor="admin-calendar-date-input" className="text-[11px] text-[#94a3b8] font-medium shrink-0 cursor-pointer">
                 Jump to Date:
               </label>
               <input
@@ -455,17 +443,6 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
               />
             </div>
 
-            {/* Jump to Today button */}
-            <button
-              id="admin-calendar-today-btn"
-              type="button"
-              onClick={handleGoToToday}
-              className="px-3.5 py-1.5 rounded-xl text-[12px] font-semibold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 transition-all cursor-pointer flex items-center gap-1.5"
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>Today</span>
-            </button>
-
             {/* Refresh Data button */}
             <button
               id="admin-calendar-refresh-btn"
@@ -475,7 +452,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                 loadDailyReport(selectedDate);
               }}
               disabled={isLoadingReport}
-              className="px-3.5 py-1.5 rounded-xl text-[12px] font-semibold bg-white/5 hover:bg-white/10 text-slate-200 border border-white/15 transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              className="h-9 px-3.5 rounded-xl text-[12px] font-semibold bg-white/5 hover:bg-white/10 text-slate-200 border border-white/15 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoadingReport ? 'animate-spin text-emerald-400' : ''}`} />
               <span>Refresh</span>
@@ -593,20 +570,22 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                       )}
                     </div>
 
-                    {/* Order count pill / badge */}
-                    {hasOrders && (
-                      <div className="mt-1 w-full">
+                    {/* Order count badge (only displayed when date has orders) */}
+                    {hasOrders ? (
+                      <div className="w-full flex items-center justify-center mt-1">
                         <span
-                          className={`inline-block px-1.5 py-0.2 rounded-full text-[9px] font-extrabold truncate max-w-full ${
+                          className={`inline-flex items-center justify-center min-w-[20px] h-[19px] px-1.5 rounded-full text-[11px] font-extrabold tracking-tight ${
                             cell.isSelected
-                              ? 'bg-black/40 text-emerald-200 border border-emerald-300/40'
-                              : 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+                              ? 'bg-white text-emerald-900 shadow-sm'
+                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_6px_rgba(16,185,129,0.25)]'
                           }`}
                           title={`${cell.orderCount} order${cell.orderCount === 1 ? '' : 's'} placed on ${cell.dateStr}`}
                         >
-                          {cell.orderCount} ord{cell.orderCount === 1 ? '' : 's'}
+                          {cell.orderCount}
                         </span>
                       </div>
+                    ) : (
+                      <div className="h-[19px] mt-1" />
                     )}
                   </button>
                 );
@@ -616,8 +595,10 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
             {/* Calendar Legend */}
             <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between text-[11px] text-[#94a3b8] gap-2">
               <div className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]" />
-                <span>Has Orders</span>
+                <span className="inline-flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold">
+                  5
+                </span>
+                <span>Order Count</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
@@ -936,16 +917,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
               There were no customer orders placed on <strong className="text-white">{humanSelectedDate}</strong>. All
               daily counts and transaction totals are shown as zero.
             </p>
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={handleGoToToday}
-                className="px-4 py-2 rounded-xl text-[12px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer inline-flex items-center gap-2"
-              >
-                <span>Jump to Today</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
+
           </div>
         )}
 
