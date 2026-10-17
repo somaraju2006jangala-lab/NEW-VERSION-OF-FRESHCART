@@ -68,6 +68,8 @@ import {
   deleteAdminFromDb,
   revokeAdminSessionsInDb,
   confirmCodCashCollectionInDb,
+  getDailyReportFromDb,
+  getMonthCalendarActivityFromDb,
   type AdminRecord,
 } from './db.ts';
 
@@ -2478,6 +2480,77 @@ apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, r
     });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve admin overview.' });
+  }
+});
+
+// =============================================================================
+// ADMIN DAILY ORDERS & TRANSACTIONS CALENDAR REPORTS
+// =============================================================================
+
+/**
+ * GET /api/admin/reports/daily
+ * Authoritative daily orders and payment transactions report for a specific date (YYYY-MM-DD).
+ * Requires authorized admin role ('admin' | 'owner'). Employees and unauthorized users are blocked.
+ */
+apiRouter.get(['/api/admin/reports/daily', '/admin/reports/daily'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const dateParam = ((req.query.date as string) || '').trim();
+    if (!dateParam) {
+      sendJson(res, 400, { success: false, error: 'Query parameter "date" (YYYY-MM-DD) is required.' });
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      sendJson(res, 400, { success: false, error: 'Invalid date format. Expected YYYY-MM-DD.' });
+      return;
+    }
+
+    const report = await getDailyReportFromDb(dateParam);
+    sendJson(res, 200, {
+      success: true,
+      report,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve daily report.' });
+  }
+});
+
+/**
+ * GET /api/admin/reports/calendar-month
+ * Monthly summary of active days with orders for the admin calendar.
+ * Requires authorized admin role ('admin' | 'owner').
+ */
+apiRouter.get(['/api/admin/reports/calendar-month', '/admin/reports/calendar-month'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const now = new Date();
+    const yearParam = parseInt((req.query.year as string) || String(now.getFullYear()), 10);
+    const monthParam = parseInt((req.query.month as string) || String(now.getMonth() + 1), 10);
+
+    if (isNaN(yearParam) || yearParam < 2000 || yearParam > 2100) {
+      sendJson(res, 400, { success: false, error: 'Invalid year parameter.' });
+      return;
+    }
+
+    if (isNaN(monthParam) || monthParam < 1 || monthParam > 12) {
+      sendJson(res, 400, { success: false, error: 'Invalid month parameter (1-12).' });
+      return;
+    }
+
+    const days = await getMonthCalendarActivityFromDb(yearParam, monthParam);
+    sendJson(res, 200, {
+      success: true,
+      year: yearParam,
+      month: monthParam,
+      days,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve calendar month summary.' });
   }
 });
 

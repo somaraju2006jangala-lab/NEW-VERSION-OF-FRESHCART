@@ -4350,5 +4350,346 @@ export async function revokeAdminSessionsInDb(adminId: string): Promise<void> {
   );
 }
 
+export interface DailyReportOrder {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  deliveryAddress: string;
+  deliveryTimeSlot?: string;
+  subtotal: number;
+  discount: number;
+  total: number;
+  couponCode?: string;
+  paymentId?: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  status: string;
+  screenshotUrl?: string;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  createdAt: string;
+}
+
+export interface DailyReportResult {
+  selectedDate: string;
+  totalOrders: number;
+  upiOrdersCount: number;
+  codOrdersCount: number;
+  totalUpiTransactions: number;
+  totalCodCollections: number;
+  totalCollectedAmount: number;
+  pendingUpiCount: number;
+  pendingUpiAmount: number;
+  rejectedUpiCount: number;
+  rejectedUpiAmount: number;
+  pendingCodCount: number;
+  pendingCodAmount: number;
+  orders: DailyReportOrder[];
+}
+
+export interface MonthDayActivity {
+  date: string;
+  orderCount: number;
+  hasOrders: boolean;
+}
+
+/**
+ * Generates an authoritative Daily Orders and Transactions report for a specific date (YYYY-MM-DD).
+ * 
+ * Rules:
+ * - Total orders: Counted based on order creation date (orders.created_at), regardless of payment method or payment status.
+ * - UPI orders: Counted based on order creation date where payment method is UPI/Online.
+ * - COD orders: Counted based on order creation date where payment method is Cash on Delivery.
+ * - Total UPI Transactions: Amount of successful, verified UPI payments whose actual verification/transaction timestamp occurred on the selected date (payment_status IN ('PAID', 'COMPLETED')). Excludes pending and rejected payments.
+ * - Total COD Collections: Amount of cash actually collected whose cash-collection confirmation timestamp occurred on the selected date (payment_status = 'COLLECTED'). Excludes uncollected orders.
+ * - Total Collected Amount: Total UPI Transactions + Total COD Collections, without double-counting any transaction.
+ * - Pending/Rejected counts & amounts: Calculated for orders created on the selected date.
+ * - Orders list: Detailed list of orders created on the selected date.
+ */
+export async function getDailyReportFromDb(dateStr: string): Promise<DailyReportResult> {
+  const pool = getPool();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    throw new Error('Invalid date format. Expected YYYY-MM-DD.');
+  }
+
+  // 1. Fetch all orders created on the selected date
+  const [createdOrderRows] = await pool.query<RowDataPacket[]>(
+    `SELECT order_id as id, customer_id as customerId, customer_name as customerName,
+            email as customerEmail, mobile as customerPhone, delivery_address as deliveryAddress,
+            delivery_time_slot as deliveryTimeSlot, subtotal, discount, total,
+            coupon_code as couponCode, status, payment_id as paymentId,
+            payment_method as paymentMethod, payment_status as paymentStatus,
+            screenshot_url as screenshotUrl, verified_at as verifiedAt, verified_by as verifiedBy,
+            created_at as createdAt
+     FROM orders
+     WHERE DATE_FORMAT(created_at, '%Y-%m-%d') = ?
+     ORDER BY created_at DESC`,
+    [dateStr]
+  );
+
+  // 2. Fetch corresponding payments for created orders to ensure authoritative payment method and status
+  const orderIds = createdOrderRows.map((r) => r.id);
+  const cleanIds = orderIds.map((id) => String(id).replace(/^#/, ''));
+  const payMap = new Map<string, RowDataPacket>();
+
+  if (orderIds.length > 0) {
+    const [pRows] = await pool.query<RowDataPacket[]>(
+      `SELECT payment_id, order_id, customer_id, payment_method, payment_status, amount, paid_at, verified_at, verified_by, screenshot_path
+       FROM payments
+       WHERE order_id IN (?) OR order_id IN (?)`,
+      [orderIds, cleanIds]
+    );
+    for (const p of pRows) {
+      const key1 = String(p.order_id || '');
+      const key2 = key1.replace(/^#/, '');
+      payMap.set(key1, p);
+      payMap.set(key2, p);
+    }
+  }
+
+  let upiOrdersCount = 0;
+  let codOrdersCount = 0;
+  let pendingUpiCount = 0;
+  let pendingUpiAmount = 0;
+  let rejectedUpiCount = 0;
+  let rejectedUpiAmount = 0;
+  let pendingCodCount = 0;
+  let pendingCodAmount = 0;
+
+  const formattedOrders: DailyReportOrder[] = [];
+
+  for (const ord of createdOrderRows) {
+    const cleanId = String(ord.id || '').replace(/^#/, '');
+    const p = payMap.get(ord.id) || payMap.get(cleanId);
+
+    const rawMethod = (p?.payment_method || ord.paymentMethod || 'COD').trim();
+    const isCod =
+      !rawMethod ||
+      rawMethod.toLowerCase().includes('cash') ||
+      rawMethod.toUpperCase() === 'COD' ||
+      rawMethod === 'Cash on Delivery';
+
+    const pStatus = String(p?.payment_status || '').toUpperCase();
+    const oStatus = String(ord.paymentStatus || '').toUpperCase();
+    const total = Number(ord.total) || 0;
+
+    let harmonizedStatus: string;
+    if (isCod) {
+      codOrdersCount++;
+      const isCollected =
+        pStatus === 'COLLECTED' ||
+        oStatus === 'COLLECTED' ||
+        pStatus === 'COMPLETED' ||
+        oStatus === 'COMPLETED' ||
+        pStatus === 'PAID' ||
+        oStatus === 'PAID';
+
+      if (isCollected) {
+        harmonizedStatus = 'COLLECTED';
+      } else {
+        harmonizedStatus = 'PENDING_COLLECTION';
+        pendingCodCount++;
+        pendingCodAmount += total;
+      }
+    } else {
+      upiOrdersCount++;
+      const isPaid =
+        pStatus === 'PAID' ||
+        pStatus === 'COMPLETED' ||
+        oStatus === 'PAID' ||
+        oStatus === 'COMPLETED';
+      const isRejected = pStatus === 'REJECTED' || oStatus === 'REJECTED';
+
+      if (isPaid) {
+        harmonizedStatus = 'COMPLETED';
+      } else if (isRejected) {
+        harmonizedStatus = 'REJECTED';
+        rejectedUpiCount++;
+        rejectedUpiAmount += total;
+      } else {
+        harmonizedStatus = 'PENDING_VERIFICATION';
+        pendingUpiCount++;
+        pendingUpiAmount += total;
+      }
+    }
+
+    formattedOrders.push({
+      id: ord.id,
+      customerId: ord.customerId,
+      customerName: ord.customerName,
+      customerEmail: ord.customerEmail || undefined,
+      customerPhone: ord.customerPhone || undefined,
+      deliveryAddress: ord.deliveryAddress,
+      deliveryTimeSlot: ord.deliveryTimeSlot || undefined,
+      subtotal: Number(ord.subtotal) || 0,
+      discount: Number(ord.discount) || 0,
+      total,
+      couponCode: ord.couponCode || undefined,
+      paymentId: ord.paymentId || (p?.payment_id as string) || undefined,
+      paymentMethod: isCod ? 'Cash on Delivery' : (p?.payment_method || ord.paymentMethod || 'UPI'),
+      paymentStatus: harmonizedStatus,
+      status: ord.status,
+      screenshotUrl: ord.screenshotUrl || (p?.screenshot_path ? `/api/payments/screenshot/${encodeURIComponent(cleanId)}` : undefined),
+      verifiedAt: ord.verifiedAt ? new Date(ord.verifiedAt).toISOString() : (p?.verified_at ? new Date(p.verified_at).toISOString() : null),
+      verifiedBy: ord.verifiedBy || (p?.verified_by as string) || null,
+      createdAt: ord.createdAt ? new Date(ord.createdAt).toISOString() : new Date().toISOString(),
+    });
+  }
+
+  // 3. Transactions completed on dateStr (based on actual verification/confirmation timestamp)
+  // Queries both orders and payments where verification/confirmation date is dateStr,
+  // harmonizing by normalized orderId to strictly prevent duplicate counting.
+  const [verifiedOrderRows] = await pool.query<RowDataPacket[]>(
+    `SELECT order_id, payment_method, payment_status, total, verified_at, verified_by
+     FROM orders
+     WHERE DATE_FORMAT(verified_at, '%Y-%m-%d') = ?`,
+    [dateStr]
+  );
+
+  const [verifiedPaymentRows] = await pool.query<RowDataPacket[]>(
+    `SELECT payment_id, order_id, customer_id, payment_method, payment_status, amount, paid_at, verified_at, verified_by
+     FROM payments
+     WHERE DATE_FORMAT(COALESCE(verified_at, paid_at), '%Y-%m-%d') = ?`,
+    [dateStr]
+  );
+
+  const uniqueTxnMap = new Map<string, {
+    orderId: string;
+    paymentMethod: string;
+    paymentStatus: string;
+    amount: number;
+    verifiedAt: string;
+  }>();
+
+  for (const o of verifiedOrderRows) {
+    const normId = String(o.order_id || '').replace(/^#/, '');
+    uniqueTxnMap.set(normId, {
+      orderId: o.order_id,
+      paymentMethod: o.payment_method || 'COD',
+      paymentStatus: String(o.payment_status || '').toUpperCase(),
+      amount: Number(o.total) || 0,
+      verifiedAt: o.verified_at,
+    });
+  }
+
+  for (const p of verifiedPaymentRows) {
+    const normId = String(p.order_id || '').replace(/^#/, '');
+    const existing = uniqueTxnMap.get(normId);
+    uniqueTxnMap.set(normId, {
+      orderId: existing?.orderId || p.order_id,
+      paymentMethod: p.payment_method || existing?.paymentMethod || 'COD',
+      paymentStatus: String(p.payment_status || existing?.paymentStatus || '').toUpperCase(),
+      amount: Number(p.amount) || Number(existing?.amount) || 0,
+      verifiedAt: p.verified_at || p.paid_at || existing?.verifiedAt,
+    });
+  }
+
+  // Also include orders placed on dateStr that were marked PAID/COMPLETED at placement with no separate verified_at
+  for (const ord of formattedOrders) {
+    const normId = String(ord.id || '').replace(/^#/, '');
+    if (!uniqueTxnMap.has(normId)) {
+      const isCod =
+        !ord.paymentMethod ||
+        ord.paymentMethod.toLowerCase().includes('cash') ||
+        ord.paymentMethod.toUpperCase() === 'COD' ||
+        ord.paymentMethod === 'Cash on Delivery';
+      const isVerified = isCod
+        ? ord.paymentStatus === 'COLLECTED'
+        : (ord.paymentStatus === 'COMPLETED' || ord.paymentStatus === 'PAID');
+      if (isVerified) {
+        uniqueTxnMap.set(normId, {
+          orderId: ord.id,
+          paymentMethod: ord.paymentMethod,
+          paymentStatus: ord.paymentStatus,
+          amount: ord.total,
+          verifiedAt: ord.verifiedAt || ord.createdAt,
+        });
+      }
+    }
+  }
+
+  let totalUpiTransactions = 0;
+  let totalCodCollections = 0;
+
+  for (const [_, txn] of uniqueTxnMap.entries()) {
+    const rawMethod = (txn.paymentMethod || '').trim();
+    const isCod =
+      !rawMethod ||
+      rawMethod.toLowerCase().includes('cash') ||
+      rawMethod.toUpperCase() === 'COD' ||
+      rawMethod === 'Cash on Delivery';
+
+    const status = txn.paymentStatus;
+    if (isCod) {
+      if (status === 'COLLECTED' || status === 'COMPLETED' || status === 'PAID') {
+        totalCodCollections += txn.amount;
+      }
+    } else {
+      if (status === 'PAID' || status === 'COMPLETED') {
+        totalUpiTransactions += txn.amount;
+      }
+    }
+  }
+
+  const totalCollectedAmount = totalUpiTransactions + totalCodCollections;
+
+  return {
+    selectedDate: dateStr,
+    totalOrders: formattedOrders.length,
+    upiOrdersCount,
+    codOrdersCount,
+    totalUpiTransactions: Number(totalUpiTransactions.toFixed(2)),
+    totalCodCollections: Number(totalCodCollections.toFixed(2)),
+    totalCollectedAmount: Number(totalCollectedAmount.toFixed(2)),
+    pendingUpiCount,
+    pendingUpiAmount: Number(pendingUpiAmount.toFixed(2)),
+    rejectedUpiCount,
+    rejectedUpiAmount: Number(rejectedUpiAmount.toFixed(2)),
+    pendingCodCount,
+    pendingCodAmount: Number(pendingCodAmount.toFixed(2)),
+    orders: formattedOrders,
+  };
+}
+
+/**
+ * Returns a monthly summary map of which dates have orders in a given month.
+ */
+export async function getMonthCalendarActivityFromDb(
+  year: number,
+  month: number
+): Promise<Record<string, MonthDayActivity>> {
+  const pool = getPool();
+  const padMonth = String(month).padStart(2, '0');
+  const startDate = `${year}-${padMonth}-01`;
+  const nextMonthYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const endDate = `${nextMonthYear}-${String(nextMonth).padStart(2, '0')}-01`;
+
+  const [orderRows] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') as dt, COUNT(*) as orderCount
+     FROM orders
+     WHERE created_at >= ? AND created_at < ?
+     GROUP BY dt`,
+    [startDate, endDate]
+  );
+
+  const result: Record<string, MonthDayActivity> = {};
+  for (const row of orderRows) {
+    const dt = String(row.dt);
+    const count = Number(row.orderCount) || 0;
+    result[dt] = {
+      date: dt,
+      orderCount: count,
+      hasOrders: count > 0,
+    };
+  }
+
+  return result;
+}
+
+
 
 

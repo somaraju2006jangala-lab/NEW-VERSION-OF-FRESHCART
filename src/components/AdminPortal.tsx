@@ -10,6 +10,7 @@ import { AddProductModal, STANDARD_UNITS } from './AddProductModal';
 import { EditProductModal } from './EditProductModal';
 import { CouponModal } from './CouponModal';
 import { CustomerOrdersLedger } from './CustomerOrdersLedger';
+import { AdminCalendarReport } from './AdminCalendarReport';
 import {
   Package,
   Users,
@@ -518,7 +519,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [filterStockStatus, setFilterStockStatus] = useState('all');
   const [adminSearch, setAdminSearch] = useState('');
   const [activeTab, setActiveTab] = useState<
-    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins' | 'customers'
+    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins' | 'customers' | 'daily-reports'
   >('inventory');
 
   const [showAdminProfileMenu, setShowAdminProfileMenu] = useState(false);
@@ -568,6 +569,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       case 'payment-verification': return 'Payment Verification';
       case 'admins': return 'Authorized Admins';
       case 'customers': return 'Customer Accounts';
+      case 'daily-reports': return 'Orders & Transactions Calendar';
       default: return 'Admin Dashboard';
     }
   };
@@ -1948,6 +1950,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     {[
                       { id: 'inventory', label: t('tabLiveInventory') || 'Live Inventory', icon: Package },
                       { id: 'orders', label: t('tabCustomerOrders') || 'Customer Orders', icon: ShoppingBag },
+                      { id: 'daily-reports', label: 'Orders & Transactions Calendar', icon: Calendar },
                       { id: 'payment-verification', label: 'Payment Verification', icon: CheckCircle, badge: pendingVerificationCount },
                       { id: 'coupons', label: t('tabCoupons') || 'Coupons', icon: Tag },
                       { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
@@ -2133,6 +2136,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   {[
                     { id: 'inventory', label: t('tabLiveInventory') || 'Live Inventory', icon: Package },
                     { id: 'orders', label: t('tabCustomerOrders') || 'Customer Orders', icon: ShoppingBag },
+                    { id: 'daily-reports', label: 'Orders & Transactions Calendar', icon: Calendar },
                     { id: 'payment-verification', label: 'Payment Verification', icon: CheckCircle, badge: pendingVerificationCount },
                     { id: 'coupons', label: t('tabCoupons') || 'Coupons', icon: Tag },
                     { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
@@ -2327,6 +2331,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 {customerAccounts.length}
               </span>
             )}
+          </button>
+          <button
+            type="button"
+            id="admin-tab-daily-reports"
+            onClick={() => setActiveTab('daily-reports')}
+            className={`pb-3 text-[13px] font-semibold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'daily-reports'
+                ? 'border-[#006b2c] text-[#006b2c]'
+                : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Orders & Transactions Calendar</span>
           </button>
           </div>
         </div>
@@ -4760,6 +4777,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* Tab 10: Orders & Transactions Calendar */}
+        {activeTab === 'daily-reports' && (
+          <AdminCalendarReport />
         )}
       </div>
 
