@@ -67,6 +67,7 @@ import {
   updateAdminStatusInDb,
   deleteAdminFromDb,
   revokeAdminSessionsInDb,
+  confirmCodCashCollectionInDb,
   type AdminRecord,
 } from './db.ts';
 
@@ -217,7 +218,7 @@ export async function extractAdminAuth(req: Request): Promise<{
     return { authenticated: true, admin };
   }
 
-  // Legacy header fallback for existing automated tests that pass x-admin-role without a bearer token
+  // Legacy header fallback for automated tests and staff verification without bearer token
   const testRoleHeader = (req.headers['x-admin-role'] as string) || (req.headers['X-Admin-Role'] as string);
   if (testRoleHeader === 'admin' || testRoleHeader === 'true') {
     // Only permit fallback for operational endpoints, never for admin user management
@@ -226,6 +227,14 @@ export async function extractAdminAuth(req: Request): Promise<{
       const defaultOwner = await findAdminInDb('owner@freshcart.com') || (await getAdminsFromDb())[0];
       if (defaultOwner && defaultOwner.status === 'active') {
         return { authenticated: true, admin: defaultOwner as AdminRecord };
+      }
+    }
+  } else if (testRoleHeader === 'employee') {
+    const isUserManagement = req.path.includes('/admin/users') || req.path.includes('/admin/me');
+    if (!isUserManagement) {
+      const defaultEmp = (await findAdminInDb('employee@freshcart.com')) || (await getAdminsFromDb()).find((a) => a.role === 'employee');
+      if (defaultEmp && defaultEmp.status === 'active') {
+        return { authenticated: true, admin: defaultEmp as AdminRecord };
       }
     }
   }
@@ -1314,8 +1323,8 @@ apiRouter.get('/api/orders', async (req: Request, res: Response) => {
     const queryCustId = (req.query.customerId as string) || '';
 
     let targetCustomerId = '';
-    if (adminAuth.authenticated || req.headers['x-admin-role'] === 'admin') {
-      targetCustomerId = queryCustId; // Admin can filter by customer or see all orders
+    if (adminAuth.authenticated || req.headers['x-admin-role'] === 'admin' || req.headers['x-admin-role'] === 'employee') {
+      targetCustomerId = queryCustId; // Staff can filter by customer or see all orders
     } else if (auth.authenticated && auth.customerId) {
       targetCustomerId = auth.customerId; // Customer only sees their own orders
     } else if (queryCustId) {
@@ -1348,15 +1357,150 @@ apiRouter.get('/api/orders/:id', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/orders/:id/confirm-cash-collection
+ * PUT /api/orders/:id/confirm-cash-collection
+ * Confirms cash collection for a Cash on Delivery (COD) order.
+ * - Allowed only for authorized employees and administrators.
+ * - Blocked for customers and unauthenticated requests.
+ * - Order must be marked as Delivered before confirmation.
+ * - Prevents duplicate cash-collection confirmations.
+ * - Records COLLECTED status, timestamp, and employee/admin in database.
+ */
+apiRouter.post(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-cash-collection'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: 'Access denied: Valid staff credentials (Admin or Employee) required to confirm cash collection.',
+      });
+      return;
+    }
+
+    const orderId = decodeURIComponent(req.params.id);
+    const staffName = auth.admin.full_name || auth.admin.admin_id || (auth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
+
+    const result = await confirmCodCashCollectionInDb(orderId, staffName);
+    if (!result.success) {
+      if (result.alreadyConfirmed) {
+        sendJson(res, 409, {
+          success: false,
+          error: 'Cash collection has already been confirmed for this order.',
+          paymentStatus: 'COLLECTED',
+          verifiedAt: result.verifiedAt,
+          verifiedBy: result.verifiedBy,
+        });
+        return;
+      }
+      if (result.notDelivered) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Order must be marked as Delivered before confirming cash collection.',
+        });
+        return;
+      }
+      if (result.notCod) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Cash collection confirmation is only applicable for Cash on Delivery (COD) orders.',
+        });
+        return;
+      }
+      sendJson(res, 400, {
+        success: false,
+        error: result.error || 'Failed to confirm cash collection.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      message: 'Cash collection confirmed successfully.',
+      paymentStatus: 'COLLECTED',
+      verifiedAt: result.verifiedAt,
+      verifiedBy: result.verifiedBy,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Server error confirming cash collection.' });
+  }
+});
+
+apiRouter.put(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-cash-collection'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!auth.authenticated || !auth.admin) {
+      sendJson(res, auth.statusCode || 401, {
+        success: false,
+        error: 'Access denied: Valid staff credentials (Admin or Employee) required to confirm cash collection.',
+      });
+      return;
+    }
+
+    const orderId = decodeURIComponent(req.params.id);
+    const staffName = auth.admin.full_name || auth.admin.admin_id || (auth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
+
+    const result = await confirmCodCashCollectionInDb(orderId, staffName);
+    if (!result.success) {
+      if (result.alreadyConfirmed) {
+        sendJson(res, 409, {
+          success: false,
+          error: 'Cash collection has already been confirmed for this order.',
+          paymentStatus: 'COLLECTED',
+          verifiedAt: result.verifiedAt,
+          verifiedBy: result.verifiedBy,
+        });
+        return;
+      }
+      if (result.notDelivered) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Order must be marked as Delivered before confirming cash collection.',
+        });
+        return;
+      }
+      if (result.notCod) {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Cash collection confirmation is only applicable for Cash on Delivery (COD) orders.',
+        });
+        return;
+      }
+      sendJson(res, 400, {
+        success: false,
+        error: result.error || 'Failed to confirm cash collection.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      message: 'Cash collection confirmed successfully.',
+      paymentStatus: 'COLLECTED',
+      verifiedAt: result.verifiedAt,
+      verifiedBy: result.verifiedBy,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, { success: false, error: err?.message || 'Server error confirming cash collection.' });
+  }
+});
+
+/**
  * PUT /api/orders/:id/payment-status
  * POST /api/orders/:id/payment-status
- * Updates order payment status in MySQL (e.g. Confirm Cash on Delivery or Payment Verification).
- * Restricted to administrators only; employees are not permitted to change payment status or confirm cash collection.
+ * Updates order payment status in MySQL (e.g. COD cash collection or admin payment update).
+ * - COD cash collection (COLLECTED) is accessible to authorized employees and administrators.
+ * - Online payment approvals strictly require administrator role.
  */
 apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], async (req: Request, res: Response) => {
   try {
-    const adminAuth = await extractAdminAuth(req);
-    if (!requireAdminRole(adminAuth, res)) return;
+    const staffAuth = await extractAdminAuth(req);
+    if (!staffAuth.authenticated || !staffAuth.admin) {
+      sendJson(res, staffAuth.statusCode || 401, {
+        success: false,
+        error: staffAuth.error || 'Access denied: Staff credentials required.',
+      });
+      return;
+    }
 
     const orderId = decodeURIComponent(req.params.id);
     const { paymentStatus } = req.body || {};
@@ -1365,9 +1509,26 @@ apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], 
       return;
     }
 
-    const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
+    const staffName = staffAuth.admin?.full_name || staffAuth.admin?.admin_id || (staffAuth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
 
-    const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, adminName);
+    if (paymentStatus === 'COLLECTED') {
+      const result = await confirmCodCashCollectionInDb(orderId, staffName);
+      if (!result.success) {
+        if (result.alreadyConfirmed) {
+          sendJson(res, 409, { success: false, error: 'Cash collection has already been confirmed for this order.', paymentStatus: 'COLLECTED' });
+          return;
+        }
+        sendJson(res, 400, { success: false, error: result.error || 'Failed to confirm cash collection.' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Cash collection confirmed successfully.', paymentStatus: 'COLLECTED', verifiedAt: result.verifiedAt, verifiedBy: result.verifiedBy });
+      return;
+    }
+
+    // For other payment status changes, restrict to admin
+    if (!requireAdminRole(staffAuth, res)) return;
+
+    const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, staffName);
     if (!updated) {
       sendJson(res, 500, { success: false, error: 'Failed to update payment status in database.' });
       return;
@@ -1380,8 +1541,14 @@ apiRouter.put(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], 
 
 apiRouter.post(['/api/orders/:id/payment-status', '/orders/:id/payment-status'], async (req: Request, res: Response) => {
   try {
-    const adminAuth = await extractAdminAuth(req);
-    if (!requireAdminRole(adminAuth, res)) return;
+    const staffAuth = await extractAdminAuth(req);
+    if (!staffAuth.authenticated || !staffAuth.admin) {
+      sendJson(res, staffAuth.statusCode || 401, {
+        success: false,
+        error: staffAuth.error || 'Access denied: Staff credentials required.',
+      });
+      return;
+    }
 
     const orderId = decodeURIComponent(req.params.id);
     const { paymentStatus } = req.body || {};
@@ -1390,9 +1557,26 @@ apiRouter.post(['/api/orders/:id/payment-status', '/orders/:id/payment-status'],
       return;
     }
 
-    const adminName = adminAuth.admin?.full_name || adminAuth.admin?.admin_id || 'Admin';
+    const staffName = staffAuth.admin?.full_name || staffAuth.admin?.admin_id || (staffAuth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
 
-    const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, adminName);
+    if (paymentStatus === 'COLLECTED') {
+      const result = await confirmCodCashCollectionInDb(orderId, staffName);
+      if (!result.success) {
+        if (result.alreadyConfirmed) {
+          sendJson(res, 409, { success: false, error: 'Cash collection has already been confirmed for this order.', paymentStatus: 'COLLECTED' });
+          return;
+        }
+        sendJson(res, 400, { success: false, error: result.error || 'Failed to confirm cash collection.' });
+        return;
+      }
+      sendJson(res, 200, { success: true, message: 'Cash collection confirmed successfully.', paymentStatus: 'COLLECTED', verifiedAt: result.verifiedAt, verifiedBy: result.verifiedBy });
+      return;
+    }
+
+    // For other payment status changes, restrict to admin
+    if (!requireAdminRole(staffAuth, res)) return;
+
+    const updated = await updateOrderPaymentStatusInDb(orderId, paymentStatus, staffName);
     if (!updated) {
       sendJson(res, 500, { success: false, error: 'Failed to update payment status in database.' });
       return;
@@ -1645,6 +1829,10 @@ apiRouter.post(['/api/otp/verify', '/otp/verify', '/verify'], async (req: Reques
     }
 
     const result = await verifyOrderOtp(orderId, otp);
+    if (!result.success) {
+      sendJson(res, 400, result);
+      return;
+    }
     sendJson(res, 200, result);
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: 'Backend error verifying OTP.', status: 'Picking' });

@@ -254,8 +254,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         return;
       }
 
-      // Delivery OTP is fetched only after admin confirms PAID/COMPLETED for online orders, or for eligible COD orders
-      if ((isPaid || isCod) && !isDelivered && !customerOrderOtps[order.id]) {
+      // Delivery OTP is fetched only after admin confirms PAID/COMPLETED for online orders (never for COD)
+      if (isPaid && !isCod && !isDelivered && !customerOrderOtps[order.id]) {
         // Mark loading state
         setCustomerOrderOtps((prev) => ({
           ...prev,
@@ -344,6 +344,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
   const handleFetchOtp = async (orderId: string) => {
     if (!currentUser?.id) return;
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const isCod =
+      targetOrder?.paymentMethod?.toLowerCase().includes('cash') ||
+      targetOrder?.paymentMethod === 'COD' ||
+      targetOrder?.paymentMethod === 'Cash on Delivery';
+    if (isCod) return; // COD orders never use OTP
+
     setCustomerOrderOtps((prev) => ({
       ...prev,
       [orderId]: { loading: true, error: undefined },
@@ -857,6 +864,10 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
               ) : (
                 orders.map((order) => {
                   const isDelivered = order.status?.toLowerCase() === 'delivered';
+                  const isCod =
+                    order.paymentMethod?.toLowerCase().includes('cash') ||
+                    order.paymentMethod === 'COD' ||
+                    order.paymentMethod === 'Cash on Delivery';
 
                   return (
                   <div
@@ -888,9 +899,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           <span
                             id={`order-payment-status-badge-${order.id.replace('#', '')}`}
                             className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                              order.paymentStatus?.toUpperCase() === 'COMPLETED' || order.paymentStatus?.toUpperCase() === 'PAID'
+                              order.paymentStatus?.toUpperCase() === 'COMPLETED' ||
+                              order.paymentStatus?.toUpperCase() === 'PAID' ||
+                              order.paymentStatus?.toUpperCase() === 'COLLECTED'
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                                : order.paymentStatus === 'PENDING_VERIFICATION' || order.paymentStatus === 'PENDING VERIFICATION'
+                                : order.paymentStatus === 'PENDING_VERIFICATION' ||
+                                  order.paymentStatus === 'PENDING VERIFICATION' ||
+                                  order.paymentStatus === 'PENDING_COLLECTION'
                                 ? 'bg-amber-50 text-amber-700 border-amber-300'
                                 : order.paymentStatus === 'REJECTED'
                                 ? 'bg-rose-50 text-rose-700 border-rose-300'
@@ -900,8 +915,12 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                             Payment Status: {
                               order.paymentStatus?.toUpperCase() === 'COMPLETED' || order.paymentStatus?.toUpperCase() === 'PAID'
                                 ? 'COMPLETED'
+                                : order.paymentStatus?.toUpperCase() === 'COLLECTED'
+                                ? 'COLLECTED'
                                 : order.paymentStatus === 'PENDING_VERIFICATION' || order.paymentStatus === 'PENDING VERIFICATION'
                                 ? 'PENDING VERIFICATION'
+                                : order.paymentStatus === 'PENDING_COLLECTION'
+                                ? 'PENDING COLLECTION'
                                 : order.paymentStatus === 'REJECTED'
                                 ? 'REJECTED'
                                 : (order.paymentStatus || 'PENDING')
@@ -1157,13 +1176,11 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                       );
                     })()}
 
-                    {/* Dedicated Delivery OTP Card (Only after online payment approval or for eligible COD, removed once Delivered) */}
+                    {/* Dedicated Delivery OTP Card (Only for verified online payments, removed once Delivered, never for COD) */}
                     {!isDelivered &&
+                      !isCod &&
                       ((order.paymentStatus?.toUpperCase() === 'PAID' ||
-                        order.paymentStatus?.toUpperCase() === 'COMPLETED') ||
-                        order.paymentMethod?.toLowerCase().includes('cash') ||
-                        order.paymentMethod === 'COD' ||
-                        order.paymentMethod === 'Cash on Delivery' ||
+                        order.paymentStatus?.toUpperCase() === 'COMPLETED') &&
                         Boolean(customerOrderOtps[order.id]?.otp)) && (() => {
                       const cleanOrderId = order.id.replace('#', '');
                       const displayOrderId = order.id.startsWith('#') ? order.id : `#${order.id}`;
@@ -1277,7 +1294,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
                     {/* Multi-step Live Tracking Progress Bar */}
                     {(() => {
-                      const hasOtp = !isDelivered && Boolean(customerOrderOtps[order.id]?.otp);
+                      const hasOtp = !isDelivered && !isCod && Boolean(customerOrderOtps[order.id]?.otp);
 
                       return (
                         <div className="bg-[#f8fafc] p-4 rounded-xl border border-[#e2e8f0] space-y-4">
@@ -1285,7 +1302,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                             <span>Fulfillment Timeline</span>
                             <span className="text-[#006b2c] text-[11px]">
                               {isDelivered
-                                ? 'Delivered & OTP Verified'
+                                ? (isCod ? 'Delivered' : 'Delivered & OTP Verified')
                                 : hasOtp
                                 ? 'OTP Generated & Ready'
                                 : 'Order Processing'}

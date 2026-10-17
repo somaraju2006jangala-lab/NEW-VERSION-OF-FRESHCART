@@ -2188,7 +2188,12 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
   const couponCode = orderData.couponCode || null;
   const status = orderData.status || 'Picking';
   const paymentMethod = orderData.paymentMethod || 'COD';
-  const paymentStatus = orderData.paymentStatus || 'PENDING';
+  const isCodMethod =
+    !paymentMethod ||
+    paymentMethod.toLowerCase().includes('cash') ||
+    paymentMethod.toUpperCase() === 'COD' ||
+    paymentMethod === 'Cash on Delivery';
+  const paymentStatus = orderData.paymentStatus || (isCodMethod ? 'PENDING_COLLECTION' : 'PENDING');
   const paymentId = orderData.paymentId || `PAY-${orderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
 
   const connection = await pool.getConnection();
@@ -2384,6 +2389,21 @@ export async function findOrderInDb(orderId: string): Promise<any | null> {
     order.discount = Number(order.discount);
     order.total = Number(order.total);
 
+    const isCod =
+      !order.paymentMethod ||
+      order.paymentMethod.toLowerCase().includes('cash') ||
+      order.paymentMethod.toUpperCase() === 'COD' ||
+      order.paymentMethod === 'Cash on Delivery';
+
+    if (isCod) {
+      const pStatus = String(order.paymentStatus || '').toUpperCase();
+      if (pStatus === 'COLLECTED' || pStatus === 'COMPLETED' || pStatus === 'PAID') {
+        order.paymentStatus = 'COLLECTED';
+      } else {
+        order.paymentStatus = 'PENDING_COLLECTION';
+      }
+    }
+
     return order;
   } catch (err: any) {
     console.warn('[MySQL] Error finding order:', err?.message);
@@ -2444,23 +2464,51 @@ export async function findOrdersForCustomerInDb(customerId?: string): Promise<an
           if (p.payment_method && (!ord.paymentMethod || ord.paymentMethod === 'COD')) {
             ord.paymentMethod = p.payment_method;
           }
-          // Harmonize status: if either indicates completed/paid, mark completed/paid
           const pStatus = String(p.payment_status || '').toUpperCase();
           const oStatus = String(ord.paymentStatus || '').toUpperCase();
-          if (pStatus === 'PAID' || pStatus === 'COMPLETED' || oStatus === 'PAID' || oStatus === 'COMPLETED') {
-            ord.paymentStatus = 'COMPLETED';
-          } else if (pStatus === 'PENDING_VERIFICATION' || oStatus === 'PENDING_VERIFICATION') {
-            ord.paymentStatus = 'PENDING_VERIFICATION';
-          } else if (pStatus === 'REJECTED' || oStatus === 'REJECTED') {
-            ord.paymentStatus = 'REJECTED';
-          } else if (pStatus) {
-            ord.paymentStatus = p.payment_status;
+          const isCodOrd =
+            !ord.paymentMethod ||
+            ord.paymentMethod.toLowerCase().includes('cash') ||
+            ord.paymentMethod.toUpperCase() === 'COD' ||
+            ord.paymentMethod === 'Cash on Delivery';
+
+          if (isCodOrd) {
+            if (pStatus === 'COLLECTED' || oStatus === 'COLLECTED' || pStatus === 'COMPLETED' || oStatus === 'COMPLETED' || pStatus === 'PAID' || oStatus === 'PAID') {
+              ord.paymentStatus = 'COLLECTED';
+            } else {
+              ord.paymentStatus = 'PENDING_COLLECTION';
+            }
+          } else {
+            // Harmonize status: if either indicates completed/paid, mark completed/paid
+            if (pStatus === 'PAID' || pStatus === 'COMPLETED' || oStatus === 'PAID' || oStatus === 'COMPLETED') {
+              ord.paymentStatus = 'COMPLETED';
+            } else if (pStatus === 'PENDING_VERIFICATION' || oStatus === 'PENDING_VERIFICATION') {
+              ord.paymentStatus = 'PENDING_VERIFICATION';
+            } else if (pStatus === 'REJECTED' || oStatus === 'REJECTED') {
+              ord.paymentStatus = 'REJECTED';
+            } else if (pStatus) {
+              ord.paymentStatus = p.payment_status;
+            }
           }
           if (!ord.screenshotUrl && p.screenshot_path) {
             ord.screenshotUrl = `/api/payments/screenshot/${encodeURIComponent(cleanId)}`;
           }
           ord.verifiedAt = ord.verifiedAt || p.verified_at;
           ord.verifiedBy = ord.verifiedBy || p.verified_by;
+        } else {
+          const isCodOrd =
+            !ord.paymentMethod ||
+            ord.paymentMethod.toLowerCase().includes('cash') ||
+            ord.paymentMethod.toUpperCase() === 'COD' ||
+            ord.paymentMethod === 'Cash on Delivery';
+          if (isCodOrd) {
+            const oStatus = String(ord.paymentStatus || '').toUpperCase();
+            if (oStatus === 'COLLECTED' || oStatus === 'COMPLETED' || oStatus === 'PAID') {
+              ord.paymentStatus = 'COLLECTED';
+            } else {
+              ord.paymentStatus = 'PENDING_COLLECTION';
+            }
+          }
         }
       }
     }
@@ -2513,6 +2561,137 @@ export async function updateOrderStatusInDb(
   } catch (err: any) {
     console.error('[MySQL] Error updating order status:', err?.message);
     return false;
+  }
+}
+
+/**
+ * Confirms cash collection for a Cash on Delivery (COD) order.
+ * - Allowed for authorized staff (employee or admin).
+ * - Only permitted for COD orders that have been marked Delivered.
+ * - Prevents duplicate cash collection confirmation.
+ * - Records COLLECTED status, timestamp, and confirming employee/admin in database.
+ */
+export async function confirmCodCashCollectionInDb(
+  orderId: string,
+  staffUsername: string = 'Staff'
+): Promise<{
+  success: boolean;
+  error?: string;
+  alreadyConfirmed?: boolean;
+  notDelivered?: boolean;
+  notCod?: boolean;
+  paymentStatus?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+}> {
+  const pool = getPool();
+  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+
+  try {
+    const [orderRows] = await pool.query<RowDataPacket[]>(
+      `SELECT order_id, customer_id, payment_method, payment_status, status, total, verified_at, verified_by
+       FROM orders WHERE order_id IN (?, ?) LIMIT 1`,
+      [orderId, altId]
+    );
+
+    if (!orderRows || orderRows.length === 0) {
+      return { success: false, error: 'Order not found.' };
+    }
+
+    const order = orderRows[0];
+    const actualOrderId = order.order_id;
+    const rawMethod = String(order.payment_method || '').trim();
+    const isCod =
+      !rawMethod ||
+      rawMethod.toLowerCase().includes('cash') ||
+      rawMethod.toUpperCase() === 'COD' ||
+      rawMethod === 'Cash on Delivery';
+
+    if (!isCod) {
+      return {
+        success: false,
+        notCod: true,
+        error: 'Cash collection confirmation is only applicable for Cash on Delivery (COD) orders.',
+      };
+    }
+
+    if (order.status !== 'Delivered') {
+      return {
+        success: false,
+        notDelivered: true,
+        error: 'Order must be delivered before cash collection can be confirmed.',
+      };
+    }
+
+    const currentPStatus = String(order.payment_status || '').toUpperCase();
+    if (currentPStatus === 'COLLECTED') {
+      return {
+        success: false,
+        alreadyConfirmed: true,
+        error: 'Cash collection has already been confirmed for this order.',
+        paymentStatus: 'COLLECTED',
+        verifiedAt: order.verified_at,
+        verifiedBy: order.verified_by,
+      };
+    }
+
+    const verifiedAtStr = new Date().toISOString();
+
+    await pool.query(
+      `UPDATE orders
+       SET payment_status = 'COLLECTED',
+           verified_at = NOW(),
+           verified_by = ?
+       WHERE order_id IN (?, ?)`,
+      [staffUsername, orderId, altId]
+    );
+
+    const [payRows] = await pool.query<RowDataPacket[]>(
+      `SELECT payment_id FROM payments WHERE order_id IN (?, ?)`,
+      [orderId, altId]
+    );
+
+    if (payRows.length > 0) {
+      await pool.query(
+        `UPDATE payments
+         SET payment_status = 'COLLECTED',
+             paid_at = NOW(),
+             verified_at = NOW(),
+             verified_by = ?
+         WHERE order_id IN (?, ?)`,
+        [staffUsername, orderId, altId]
+      );
+    } else {
+      try {
+        const [custRows] = await pool.query<RowDataPacket[]>(
+          `SELECT customer_id FROM customers WHERE customer_id = ? LIMIT 1`,
+          [order.customer_id]
+        );
+        if (custRows.length > 0) {
+          const payId = `PAY-${actualOrderId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+          await pool.query(
+            `INSERT INTO payments (
+               payment_id, order_id, customer_id, payment_method, payment_status,
+               amount, currency, paid_at, verified_at, verified_by
+             )
+             VALUES (?, ?, ?, 'COD', 'COLLECTED', ?, 'INR', NOW(), NOW(), ?)`,
+            [payId, actualOrderId, order.customer_id, order.total || 0, staffUsername]
+          );
+        }
+      } catch (payInsertErr: any) {
+        console.warn('[MySQL] Non-critical warning inserting payments row:', payInsertErr?.message);
+      }
+    }
+
+    return {
+      success: true,
+      paymentStatus: 'COLLECTED',
+      verifiedAt: verifiedAtStr,
+      verifiedBy: staffUsername,
+    };
+  } catch (err: any) {
+    console.error('[MySQL] Error confirming COD cash collection:', err?.message);
+    return { success: false, error: err?.message || 'Database error confirming cash collection.' };
   }
 }
 

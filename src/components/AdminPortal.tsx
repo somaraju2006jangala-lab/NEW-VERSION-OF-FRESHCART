@@ -266,7 +266,7 @@ interface AdminPortalProps {
  */
 export function getDisplayPaymentInfo(order: CustomerOrder): {
   paymentMethod: string;
-  paymentStatus: 'COMPLETED' | 'PENDING VERIFICATION' | 'REJECTED' | 'UNPAID' | 'COD';
+  paymentStatus: 'COLLECTED' | 'PENDING_COLLECTION' | 'COMPLETED' | 'PENDING VERIFICATION' | 'REJECTED' | 'UNPAID' | 'COD';
   badgeStyle: {
     bg: string;
     text: string;
@@ -284,29 +284,34 @@ export function getDisplayPaymentInfo(order: CustomerOrder): {
     rawMethod.toUpperCase() === 'COD';
 
   if (isCod) {
-    const isCompleted =
+    const isCollected =
+      rawStatus === 'COLLECTED' ||
       rawStatus === 'COMPLETED' ||
-      rawStatus === 'PAID' ||
-      rawStatus === 'CONFIRMED' ||
-      rawStatus === 'COLLECTED';
+      rawStatus === 'PAID';
 
-    const status: 'COMPLETED' | 'COD' = isCompleted ? 'COMPLETED' : 'COD';
+    if (isCollected) {
+      return {
+        paymentMethod: 'Cash on Delivery',
+        paymentStatus: rawStatus === 'COMPLETED' ? 'COMPLETED' : 'COLLECTED',
+        badgeStyle: {
+          bg: 'bg-emerald-500/15',
+          text: 'text-[#10b981]',
+          border: 'border-emerald-500/30',
+          dot: 'bg-[#10b981]',
+        },
+      };
+    }
+
+    const uncollectedStatus = rawStatus === 'COD' ? 'COD' : 'PENDING_COLLECTION';
     return {
       paymentMethod: 'Cash on Delivery',
-      paymentStatus: status,
-      badgeStyle: isCompleted
-        ? {
-            bg: 'bg-emerald-500/15',
-            text: 'text-[#10b981]',
-            border: 'border-emerald-500/30',
-            dot: 'bg-[#10b981]',
-          }
-        : {
-            bg: 'bg-amber-500/15',
-            text: 'text-[#f59e0b]',
-            border: 'border-amber-500/30',
-            dot: 'bg-[#f59e0b]',
-          },
+      paymentStatus: uncollectedStatus,
+      badgeStyle: {
+        bg: 'bg-amber-500/15',
+        text: 'text-[#f59e0b]',
+        border: 'border-amber-500/30',
+        dot: 'bg-[#f59e0b]',
+      },
     };
   }
 

@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Banknote,
   RotateCcw,
+  Truck,
 } from 'lucide-react';
 import {
   generateOrderOtp,
@@ -35,7 +36,9 @@ import {
   getCustomerPhoneForOrder,
   confirmCodCashCollection,
   fetchAllOrdersFromBackend,
+  getStoredAdminToken,
 } from '../services/authService';
+import { getStoredEmployeeToken } from '../services/employeeService';
 import {
   formatIndianDisplayNumber,
   validateIndianMobileNumber,
@@ -83,6 +86,7 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
   // Orders list state & synchronization
   const [ordersList, setOrdersList] = useState<CustomerOrder[]>(customerOrders || []);
   const [isConfirmingCash, setIsConfirmingCash] = useState<Record<string, boolean>>({});
+  const [isDeliveringOrder, setIsDeliveringOrder] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (customerOrders && customerOrders.length > 0) {
@@ -165,9 +169,10 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
         !o.paymentMethod ||
         o.paymentMethod.toLowerCase().includes('cash') ||
         o.paymentMethod.toUpperCase() === 'COD';
+      if (isCod) return false; // COD orders never use OTP
       const isCompleted =
         o.paymentStatus === 'COMPLETED' || o.paymentStatus === 'PAID';
-      return isCod || isCompleted;
+      return isCompleted;
     });
 
     eligibleOrders.forEach((o) => {
@@ -376,33 +381,80 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
     }
   };
 
+  const handleDeliverCodOrder = async (order: CustomerOrder) => {
+    if (order.status === 'Delivered') return;
+    setIsDeliveringOrder((prev) => ({ ...prev, [order.id]: true }));
+    try {
+      const cleanId = order.id.replace(/^#/, '');
+      const adminToken = getStoredAdminToken();
+      const employeeToken = getStoredEmployeeToken();
+      const token = adminToken || employeeToken;
+      const role = userRole || (adminToken ? 'admin' : (employeeToken ? 'employee' : 'employee'));
+
+      await fetch(`/api/orders/${encodeURIComponent(cleanId)}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-role': role,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: 'Delivered' }),
+      }).catch(() => {});
+
+      if (onUpdateOrderStatus) {
+        onUpdateOrderStatus(order.id, 'Delivered');
+      }
+
+      setOrdersList((prev) =>
+        prev.map((o) =>
+          o.id === order.id ? { ...o, status: 'Delivered' } : o
+        )
+      );
+    } finally {
+      setIsDeliveringOrder((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
   const handleConfirmCashCollection = async (orderId: string) => {
-    if (userRole !== 'admin') return; // Strict role guard: only admin can confirm cash collection
+    if (userRole !== 'admin' && userRole !== 'employee') return; // Authorized employee or admin only
+    const target = ordersList.find(
+      (o) => o.id === orderId || o.id.replace(/^#/, '') === orderId.replace(/^#/, '')
+    );
+    if (target && (target.paymentStatus === 'COLLECTED' || getDisplayPaymentInfo(target).paymentStatus === 'COLLECTED')) {
+      return; // Prevent duplicate cash-collection confirmations
+    }
+
     setIsConfirmingCash((prev) => ({ ...prev, [orderId]: true }));
     try {
-      await confirmCodCashCollection(orderId);
-      const verifiedAt = new Date().toISOString();
-      const adminName = currentUserName || 'Admin';
-      setOrdersList((prev) =>
-        prev.map((o) => {
-          const oClean = o.id.replace(/^#/, '');
-          const cleanId = orderId.replace(/^#/, '');
-          return oClean === cleanId
-            ? {
-                ...o,
-                paymentStatus: 'COMPLETED',
-                verifiedAt,
-                verifiedBy: adminName,
-              }
-            : o;
-        })
-      );
-      if (onUpdateOrderStatus) {
-        const found = ordersList.find(
-          (o) => o.id === orderId || o.id.replace(/^#/, '') === orderId.replace(/^#/, '')
+      const res = await confirmCodCashCollection(orderId);
+      if (res.success) {
+        const verifiedAt = res.verifiedAt || new Date().toISOString();
+        const staffName = res.verifiedBy || currentUserName || (userRole === 'employee' ? 'Operations Employee' : 'Admin');
+        setOrdersList((prev) =>
+          prev.map((o) => {
+            const oClean = o.id.replace(/^#/, '');
+            const cleanId = orderId.replace(/^#/, '');
+            return oClean === cleanId
+              ? {
+                  ...o,
+                  paymentStatus: 'COLLECTED',
+                  verifiedAt,
+                  verifiedBy: staffName,
+                }
+              : o;
+          })
         );
-        if (found) {
-          onUpdateOrderStatus(orderId, found.status, { paymentStatus: 'COMPLETED' } as any);
+        if (onUpdateOrderStatus) {
+          const found = ordersList.find(
+            (o) => o.id === orderId || o.id.replace(/^#/, '') === orderId.replace(/^#/, '')
+          );
+          if (found) {
+            onUpdateOrderStatus(orderId, found.status, {
+              paymentStatus: 'COLLECTED',
+              verifiedAt,
+              verifiedBy: staffName,
+            } as any);
+          }
         }
       }
     } finally {
@@ -1026,9 +1078,11 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
               paymentInfo.paymentStatus !== 'PENDING VERIFICATION' &&
               paymentInfo.paymentStatus !== 'REJECTED' &&
               paymentInfo.paymentStatus !== 'UNPAID' &&
-              paymentInfo.paymentStatus !== 'COD';
+              paymentInfo.paymentStatus !== 'COD' &&
+              paymentInfo.paymentStatus !== 'PENDING_COLLECTION' &&
+              paymentInfo.paymentStatus !== 'COLLECTED';
 
-            const isOtpEligible = isCod || (isOnlineMethod && isCompletedPayment);
+            const isOtpEligible = !isCod && isOnlineMethod && isCompletedPayment;
 
             const textLines: string[] = [
               `Customer: ${order.customerName}`,
@@ -1111,19 +1165,37 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
                       )}
                     </button>
 
-                    {/* Cash Collection Confirmation: Only visible for ADMIN role */}
-                    {userRole === 'admin' && isCod && paymentInfo.paymentStatus === 'COD' && (
+                    {/* Mark Delivered Button: For COD orders when not yet delivered */}
+                    {isCod && order.status !== 'Delivered' && (
                       <button
                         type="button"
-                        id={`confirm-cash-btn-${cleanOrderId}`}
-                        onClick={() => handleConfirmCashCollection(order.id)}
-                        disabled={isConfirmingCash[order.id]}
-                        title={`Confirm cash collection of ${formatINR(order.total)} for Order ${displayOrderId}`}
+                        id={`order-deliver-cod-btn-${cleanOrderId}`}
+                        onClick={() => handleDeliverCodOrder(order)}
+                        disabled={isDeliveringOrder[order.id]}
+                        title={`Mark Order ${displayOrderId} as Delivered`}
                         className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs backdrop-blur-xs disabled:opacity-50"
                       >
-                        <Banknote className="w-3.5 h-3.5 text-[#10b981]" />
-                        <span>{isConfirmingCash[order.id] ? 'Saving...' : 'Confirm Cash Collection'}</span>
+                        <Truck className="w-3.5 h-3.5 text-[#10b981]" />
+                        <span>{isDeliveringOrder[order.id] ? 'Delivering...' : 'Mark as Delivered'}</span>
                       </button>
+                    )}
+
+                    {/* Cash Collection Confirmation: Only visible for authorized employee or admin when COD is delivered and not yet collected */}
+                    {(userRole === 'admin' || userRole === 'employee') &&
+                      isCod &&
+                      order.status === 'Delivered' &&
+                      paymentInfo.paymentStatus !== 'COLLECTED' && (
+                        <button
+                          type="button"
+                          id={`confirm-cash-btn-${cleanOrderId}`}
+                          onClick={() => handleConfirmCashCollection(order.id)}
+                          disabled={isConfirmingCash[order.id]}
+                          title={`Confirm cash collection of ${formatINR(order.total)} for Order ${displayOrderId}`}
+                          className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs backdrop-blur-xs disabled:opacity-50"
+                        >
+                          <Banknote className="w-3.5 h-3.5 text-[#10b981]" />
+                          <span>{isConfirmingCash[order.id] ? 'Saving...' : 'Confirm Cash Collection'}</span>
+                        </button>
                     )}
 
                     {/* OTP Status & Trigger Buttons */}

@@ -707,9 +707,10 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             : 'Cash on Delivery';
 
         // Online order with proof stays PENDING_VERIFICATION until admin approval
+        // COD order stays PENDING_COLLECTION until cash collection is confirmed
         const orderPaymentStatus = isOnline
           ? 'PENDING_VERIFICATION'
-          : 'Pending';
+          : 'PENDING_COLLECTION';
 
         // Save order to customer account history
         const newCustomerOrder: CustomerOrder = {

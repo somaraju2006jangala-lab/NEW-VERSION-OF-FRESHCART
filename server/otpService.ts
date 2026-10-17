@@ -212,20 +212,31 @@ export async function generateOrderOtp(
     dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
 
+  // Cash on Delivery orders never use or generate OTP
+  if (isCod) {
+    return {
+      success: false,
+      orderId,
+      maskedPhone: 'Not available',
+      expiresAt: 0,
+      otp: '',
+      message: 'OTP generation is not applicable for Cash on Delivery (COD) orders.',
+      error: 'OTP generation is not applicable for Cash on Delivery (COD) orders.',
+    };
+  }
+
   // For online payments: require COMPLETED or PAID status before generating delivery OTP
-  if (!isCod) {
-    const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
-    if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
-      return {
-        success: false,
-        orderId,
-        maskedPhone: 'Not available',
-        expiresAt: 0,
-        otp: '',
-        message: 'OTP can only be generated for online orders with COMPLETED payment status.',
-        error: 'OTP can only be generated for online orders with COMPLETED payment status.',
-      };
-    }
+  const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+  if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+    return {
+      success: false,
+      orderId,
+      maskedPhone: 'Not available',
+      expiresAt: 0,
+      otp: '',
+      message: 'OTP can only be generated for online orders with COMPLETED payment status.',
+      error: 'OTP can only be generated for online orders with COMPLETED payment status.',
+    };
   }
 
   // 3. Customer contact channel validation
@@ -372,17 +383,25 @@ export async function resendOrderOtp(
     dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
 
+  // Cash on Delivery orders never use or resend OTP
+  if (isCod) {
+    return {
+      success: false,
+      orderId,
+      message: 'OTP is not applicable for Cash on Delivery (COD) orders.',
+      error: 'OTP is not applicable for Cash on Delivery (COD) orders.',
+    };
+  }
+
   // For online payments: require COMPLETED or PAID status
-  if (!isCod) {
-    const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
-    if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
-      return {
-        success: false,
-        orderId,
-        message: 'OTP can only be resent for online orders with COMPLETED payment status.',
-        error: 'OTP can only be resent for online orders with COMPLETED payment status.',
-      };
-    }
+  const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
+  if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
+    return {
+      success: false,
+      orderId,
+      message: 'OTP can only be resent for online orders with COMPLETED payment status.',
+      error: 'OTP can only be resent for online orders with COMPLETED payment status.',
+    };
   }
 
   const existing = otpStore.get(orderId) || otpStore.get(altId);
@@ -512,6 +531,20 @@ export async function verifyOrderOtp(
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
   const dbOrder = (await findOrderInDb(orderId)) || (await findOrderInDb(altId));
+  const isCod =
+    !dbOrder?.paymentMethod ||
+    dbOrder?.paymentMethod?.toLowerCase().includes('cash') ||
+    dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
+    dbOrder?.paymentMethod === 'Cash on Delivery';
+
+  if (isCod) {
+    return {
+      success: false,
+      error: 'OTP verification is not used for Cash on Delivery (COD) orders.',
+      message: 'OTP verification is not used for Cash on Delivery (COD) orders.',
+      status: dbOrder?.status || 'Picking',
+    };
+  }
 
   const dbOtp = await findOtpRecordInDb(orderId);
   const localRecord = otpStore.get(orderId) || otpStore.get(altId);
@@ -738,8 +771,20 @@ export async function getCustomerOrderOtp(
     dbOrder?.paymentMethod?.toUpperCase() === 'COD' ||
     dbOrder?.paymentMethod === 'Cash on Delivery';
 
+  // Cash on Delivery orders never require or expose OTP
+  if (isCod) {
+    return {
+      success: false,
+      orderId,
+      expiresAt: 0,
+      isExpired: false,
+      status: 'NOT_FOUND',
+      error: 'OTP is not required or applicable for Cash on Delivery (COD) orders.',
+    };
+  }
+
   // For online orders: require COMPLETED or PAID status before releasing delivery OTP
-  if (!isCod && dbOrder) {
+  if (dbOrder) {
     const pStatus = String(dbOrder?.paymentStatus || '').toUpperCase();
     if (pStatus !== 'PAID' && pStatus !== 'COMPLETED') {
       return {

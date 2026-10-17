@@ -12,9 +12,9 @@ export const DEMO_CUSTOMER_PASSWORD = 'FreshCart2026!';
 
 import { hashPassword, generateSalt } from '../utils/crypto';
 import { AuthorizedAdmin, saveAdminSession, loginAdmin, getStoredAdminToken } from './adminService';
-import { AuthorizedEmployee, saveEmployeeSession } from './employeeService';
+import { AuthorizedEmployee, saveEmployeeSession, getStoredEmployeeToken } from './employeeService';
 
-export { hashPassword, generateSalt };
+export { hashPassword, generateSalt, getStoredAdminToken, getStoredEmployeeToken };
 
 // Initial seed orders for demo customers
 const INITIAL_DEMO_ORDERS: CustomerOrder[] = [
@@ -972,13 +972,13 @@ export function updateOrderStatus(
  */
 export function updateOrderPaymentStatus(
   orderId: string,
-  paymentStatus: 'Pending' | 'Pending Verification' | 'PENDING_VERIFICATION' | 'Paid' | 'PAID' | 'Failed' | 'REJECTED' | 'COMPLETED' | 'COD' | string,
+  paymentStatus: 'Pending' | 'Pending Verification' | 'PENDING_VERIFICATION' | 'Paid' | 'PAID' | 'Failed' | 'REJECTED' | 'COMPLETED' | 'COLLECTED' | 'PENDING_COLLECTION' | 'COD' | string,
   meta?: { screenshotUrl?: string; verifiedAt?: string; verifiedBy?: string; verificationNotes?: string }
 ): void {
   try {
     const raw = localStorage.getItem(STORAGE_CUSTOMER_ORDERS_KEY);
     const orders: CustomerOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
-    const isPaid = paymentStatus.toUpperCase() === 'PAID' || paymentStatus.toUpperCase() === 'COMPLETED';
+    const isPaid = paymentStatus.toUpperCase() === 'PAID' || paymentStatus.toUpperCase() === 'COMPLETED' || paymentStatus.toUpperCase() === 'COLLECTED';
     const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
     const updated = orders.map((o) =>
       o.id === orderId || o.id === altId
@@ -1014,35 +1014,59 @@ export function updateOrderPaymentStatus(
 
 /**
  * Confirms cash collection for a Cash on Delivery (COD) order.
- * Saves COMPLETED status to MySQL database and updates local state.
+ * - Allowed for authorized employees and administrators.
+ * - Saves COLLECTED status and confirmation metadata (timestamp, confirmed by) to MySQL.
+ * - Prevents duplicate cash collection confirmation.
  */
 export async function confirmCodCashCollection(
   orderId: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; paymentStatus?: string; verifiedAt?: string; verifiedBy?: string }> {
   try {
-    const verifiedAt = new Date().toISOString();
-    updateOrderPaymentStatus(orderId, 'COMPLETED', {
-      verifiedAt,
-      verifiedBy: 'Admin',
-    });
-
     const cleanId = orderId.replace(/^#/, '');
     const adminToken = getStoredAdminToken();
-    const res = await fetch(`/api/orders/${encodeURIComponent(cleanId)}/payment-status`, {
-      method: 'PUT',
+    const employeeToken = getStoredEmployeeToken();
+    const token = adminToken || employeeToken;
+    const role = adminToken ? 'admin' : (employeeToken ? 'employee' : 'admin');
+
+    const res = await fetch(`/api/orders/${encodeURIComponent(cleanId)}/confirm-cash-collection`, {
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-admin-role': 'admin',
-        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+        'x-admin-role': role,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ paymentStatus: 'COMPLETED' }),
     });
 
     const data = await res.json().catch(() => null);
+
     if (res.ok && data?.success) {
-      return { success: true };
+      const verifiedAt = data.verifiedAt || new Date().toISOString();
+      const verifiedBy = data.verifiedBy || (role === 'employee' ? 'Operations Employee' : 'Admin');
+
+      updateOrderPaymentStatus(orderId, 'COLLECTED', {
+        verifiedAt,
+        verifiedBy,
+      });
+
+      return {
+        success: true,
+        paymentStatus: 'COLLECTED',
+        verifiedAt,
+        verifiedBy,
+      };
     }
-    return { success: true }; // Local state updated
+
+    if (res.status === 409) {
+      return {
+        success: false,
+        error: data?.error || 'Cash collection has already been confirmed for this order.',
+      };
+    }
+
+    return {
+      success: false,
+      error: data?.error || 'Failed to confirm cash collection.',
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to confirm cash collection.' };
   }

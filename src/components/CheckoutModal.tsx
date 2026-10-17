@@ -169,6 +169,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         status: 'Picking',
         createdAt: new Date().toISOString(),
         paymentMethod: 'Cash on Delivery',
+        paymentStatus: 'PENDING_COLLECTION',
       };
       addOrder(newCustomerOrder);
 
