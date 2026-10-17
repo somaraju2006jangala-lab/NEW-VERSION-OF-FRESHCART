@@ -11,6 +11,7 @@ import { EditProductModal } from './EditProductModal';
 import { CouponModal } from './CouponModal';
 import { CustomerOrdersLedger } from './CustomerOrdersLedger';
 import { AdminCalendarReport } from './AdminCalendarReport';
+import { AdminEmployeeManagement } from './AdminEmployeeManagement';
 import {
   Package,
   Users,
@@ -519,7 +520,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [filterStockStatus, setFilterStockStatus] = useState('all');
   const [adminSearch, setAdminSearch] = useState('');
   const [activeTab, setActiveTab] = useState<
-    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins' | 'customers' | 'daily-reports'
+    'inventory' | 'logs' | 'coupons' | 'orders' | 'settings' | 'payment-settings' | 'payment-verification' | 'admins' | 'employees' | 'customers' | 'daily-reports'
   >('inventory');
 
   const [showAdminProfileMenu, setShowAdminProfileMenu] = useState(false);
@@ -568,6 +569,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       case 'payment-settings': return 'UPI Settings';
       case 'payment-verification': return 'Payment Verification';
       case 'admins': return 'Authorized Admins';
+      case 'employees': return 'Employee Management';
       case 'customers': return 'Customer Accounts';
       case 'daily-reports': return 'Orders & Transactions Calendar';
       default: return 'Admin Dashboard';
@@ -1956,6 +1958,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
                       { id: 'payment-settings', label: 'UPI Settings', icon: CreditCard },
                       { id: 'admins', label: 'Authorized Admins', icon: ShieldCheck },
+                      { id: 'employees', label: 'Employee Management', icon: UserCheck },
                       { id: 'customers', label: 'Customer Accounts', icon: Users },
                       { id: 'logs', label: t('tabCdcLogs') || 'CDC Logs', icon: History },
                     ].map((item) => {
@@ -2142,6 +2145,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
                     { id: 'payment-settings', label: 'UPI Settings', icon: CreditCard },
                     { id: 'admins', label: 'Authorized Admins', icon: ShieldCheck },
+                    { id: 'employees', label: 'Employee Management', icon: UserCheck },
                     { id: 'customers', label: 'Customer Accounts', icon: Users },
                     { id: 'logs', label: t('tabCdcLogs') || 'CDC Logs', icon: History },
                   ].map((item) => {
@@ -2310,6 +2314,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             >
               {activeAdminsCount}/{maxAdminsLimit}
             </span>
+          </button>
+          <button
+            type="button"
+            id="admin-tab-employee-management"
+            onClick={() => setActiveTab('employees')}
+            className={`pb-3 text-[13px] font-semibold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'employees'
+                ? 'border-[#006b2c] text-[#006b2c]'
+                : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'
+            }`}
+          >
+            <UserCheck className="w-4 h-4" />
+            <span>Employee Management</span>
           </button>
           <button
             type="button"
@@ -4442,6 +4459,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
             </div>
           </div>
+        )}
+
+        {/* Tab 8b: Employee Management */}
+        {activeTab === 'employees' && (
+          <AdminEmployeeManagement currentAdmin={currentAdmin} />
         )}
 
         {/* Tab 9: Customer Accounts Management */}

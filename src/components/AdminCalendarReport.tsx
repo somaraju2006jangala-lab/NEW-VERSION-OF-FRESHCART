@@ -53,14 +53,45 @@ const MONTH_NAMES = [
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initialDate }) => {
-  // Format local date YYYY-MM-DD helper
-  const getTodayStr = () => {
+  // Format local date YYYY-MM-DD helper (respects user's configured local timezone)
+  const getTodayStr = useCallback(() => {
     const now = new Date();
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
     const d = String(now.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
-  };
+  }, []);
+
+  // Today's date state (tracks actual current date in local timezone)
+  const [todayDateStr, setTodayDateStr] = useState<string>(getTodayStr);
+
+  // Keep todayDateStr synchronized across midnight in user's local timezone
+  useEffect(() => {
+    const updateToday = () => {
+      const latest = getTodayStr();
+      setTodayDateStr((prev) => (prev !== latest ? latest : prev));
+    };
+
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+    const msUntilMidnight = Math.max(1000, nextMidnight.getTime() - now.getTime());
+
+    let timeoutId: NodeJS.Timeout;
+    const scheduleMidnight = (delay: number) => {
+      timeoutId = setTimeout(() => {
+        updateToday();
+        scheduleMidnight(24 * 60 * 60 * 1000);
+      }, delay);
+    };
+
+    scheduleMidnight(msUntilMidnight);
+    const intervalId = setInterval(updateToday, 30000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(intervalId);
+    };
+  }, [getTodayStr]);
 
   const initialParsedDate = initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate) ? initialDate : getTodayStr();
 
@@ -239,8 +270,6 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
       orderCount: number;
     }> = [];
 
-    const todayStr = getTodayStr();
-
     // Leading days from previous month
     for (let i = firstDayIndex - 1; i >= 0; i--) {
       const dayNum = daysInPrevMonth - i;
@@ -252,7 +281,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
         dayNumber: dayNum,
         isCurrentMonth: false,
         isSelected: dateStr === selectedDate,
-        isToday: dateStr === todayStr,
+        isToday: dateStr === todayDateStr,
         orderCount: 0,
       });
     }
@@ -267,7 +296,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
         dayNumber: day,
         isCurrentMonth: true,
         isSelected: dateStr === selectedDate,
-        isToday: dateStr === todayStr,
+        isToday: dateStr === todayDateStr,
         orderCount,
       });
     }
@@ -284,13 +313,13 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
         dayNumber: day,
         isCurrentMonth: false,
         isSelected: dateStr === selectedDate,
-        isToday: dateStr === todayStr,
+        isToday: dateStr === todayDateStr,
         orderCount: 0,
       });
     }
 
     return cells;
-  }, [viewYear, viewMonth, selectedDate, monthActivity]);
+  }, [viewYear, viewMonth, selectedDate, monthActivity, todayDateStr]);
 
   // Formatted selected date for human display
   const humanSelectedDate = useMemo(() => {
@@ -562,9 +591,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                       </span>
                       {cell.isToday && (
                         <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            cell.isSelected ? 'bg-amber-300' : 'bg-emerald-400'
-                          }`}
+                          className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)] shrink-0"
                           title="Today"
                         />
                       )}

@@ -895,6 +895,12 @@ export async function initializeDatabase(): Promise<void> {
     await currentPool.query('ALTER TABLE customers ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT "Active" AFTER loyalty_tier');
   } catch {}
   try {
+    await currentPool.query('ALTER TABLE admins ADD COLUMN mobile VARCHAR(32) NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE admins ADD COLUMN username VARCHAR(64) NULL');
+  } catch {}
+  try {
     await currentPool.query(`
       UPDATE payments p
       JOIN orders o ON (
@@ -4163,6 +4169,8 @@ export interface AdminRecord {
   admin_id: string;
   full_name: string;
   email: string;
+  mobile?: string | null;
+  username?: string | null;
   password_hash?: string;
   role: 'owner' | 'admin' | 'employee';
   status: 'active' | 'inactive';
@@ -4173,7 +4181,7 @@ export interface AdminRecord {
 }
 
 /**
- * Finds an admin by identifier (email or admin_id) in the persistent MySQL database.
+ * Finds an admin by identifier (email, admin_id, username, or mobile) in the persistent MySQL database.
  */
 export async function findAdminInDb(identifier: string): Promise<AdminRecord | null> {
   if (!identifier || typeof identifier !== 'string') return null;
@@ -4183,11 +4191,11 @@ export async function findAdminInDb(identifier: string): Promise<AdminRecord | n
 
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT id, admin_id, full_name, email, password_hash, role, status, token_version, created_by, created_at, updated_at
+      `SELECT id, admin_id, full_name, email, mobile, username, password_hash, role, status, token_version, created_by, created_at, updated_at
        FROM admins
-       WHERE admin_id = ? OR LOWER(email) = ? OR LOWER(admin_id) = ?
+       WHERE admin_id = ? OR LOWER(email) = ? OR LOWER(admin_id) = ? OR mobile = ? OR LOWER(username) = ?
        LIMIT 1`,
-      [clean, cleanLower, cleanLower]
+      [clean, cleanLower, cleanLower, clean, cleanLower]
     );
     if (!rows || rows.length === 0) return null;
     return rows[0] as AdminRecord;
@@ -4205,7 +4213,7 @@ export async function findAdminByIdInDb(adminId: string): Promise<AdminRecord | 
   const pool = getPool();
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT id, admin_id, full_name, email, password_hash, role, status, token_version, created_by, created_at, updated_at
+      `SELECT id, admin_id, full_name, email, mobile, username, password_hash, role, status, token_version, created_by, created_at, updated_at
        FROM admins
        WHERE admin_id = ?
        LIMIT 1`,
@@ -4689,6 +4697,150 @@ export async function getMonthCalendarActivityFromDb(
 
   return result;
 }
+
+/**
+ * Returns all registered employees from MySQL database.
+ * Omits password_hash for security.
+ */
+export async function getEmployeesFromDb(): Promise<Omit<AdminRecord, 'password_hash'>[]> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, admin_id, full_name, email, mobile, username, role, status, token_version, created_by, created_at, updated_at
+       FROM admins
+       WHERE role = 'employee'
+       ORDER BY created_at DESC`
+    );
+    return rows as Omit<AdminRecord, 'password_hash'>[];
+  } catch (err: any) {
+    console.error('[MySQL] Error getting employee list:', err?.message);
+    return [];
+  }
+}
+
+/**
+ * Inserts a new employee record into MySQL database.
+ */
+export async function createEmployeeInDb(params: {
+  employeeId: string;
+  fullName: string;
+  email: string;
+  mobile?: string | null;
+  username?: string | null;
+  passwordHash: string;
+  status?: 'active' | 'inactive';
+  createdBy?: string | null;
+}): Promise<AdminRecord> {
+  const pool = getPool();
+  const status = params.status || 'active';
+  const mobile = params.mobile?.trim() || null;
+  const username = params.username?.trim().toLowerCase() || null;
+
+  await pool.query(
+    `INSERT INTO admins (admin_id, full_name, email, mobile, username, password_hash, role, status, token_version, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'employee', ?, 1, ?)`,
+    [
+      params.employeeId.trim(),
+      params.fullName.trim(),
+      params.email.trim().toLowerCase(),
+      mobile,
+      username,
+      params.passwordHash,
+      status,
+      params.createdBy || null,
+    ]
+  );
+
+  const created = await findAdminByIdInDb(params.employeeId);
+  if (!created) {
+    throw new Error('Failed to retrieve newly created employee record.');
+  }
+  return created;
+}
+
+/**
+ * Updates an employee's details (fullName, email, mobile, username, status).
+ */
+export async function updateEmployeeInDb(
+  employeeId: string,
+  data: {
+    fullName?: string;
+    email?: string;
+    mobile?: string | null;
+    username?: string | null;
+    status?: 'active' | 'inactive';
+  }
+): Promise<AdminRecord | null> {
+  const pool = getPool();
+  const existing = await findAdminByIdInDb(employeeId);
+  if (!existing || existing.role !== 'employee') return null;
+
+  const fullName = data.fullName !== undefined ? data.fullName.trim() : existing.full_name;
+  const email = data.email !== undefined ? data.email.trim().toLowerCase() : existing.email;
+  const mobile = data.mobile !== undefined ? (data.mobile ? data.mobile.trim() : null) : (existing.mobile || null);
+  const username = data.username !== undefined ? (data.username ? data.username.trim().toLowerCase() : null) : (existing.username || null);
+  const status = data.status !== undefined ? data.status : existing.status;
+
+  // If status is changed to inactive, increment token_version to invalidate JWT sessions immediately
+  const incrementToken = status === 'inactive' && existing.status === 'active';
+  const sql = incrementToken
+    ? `UPDATE admins
+       SET full_name = ?, email = ?, mobile = ?, username = ?, status = ?, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP
+       WHERE admin_id = ? AND role = 'employee'`
+    : `UPDATE admins
+       SET full_name = ?, email = ?, mobile = ?, username = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE admin_id = ? AND role = 'employee'`;
+
+  await pool.query(sql, [fullName, email, mobile, username, status, employeeId]);
+  return await findAdminByIdInDb(employeeId);
+}
+
+/**
+ * Resets an employee's password and invalidates previous sessions by incrementing token_version.
+ */
+export async function resetEmployeePasswordInDb(
+  employeeId: string,
+  newPasswordHash: string
+): Promise<boolean> {
+  const pool = getPool();
+  const [result] = await pool.query<ResultSetHeader>(
+    `UPDATE admins
+     SET password_hash = ?, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP
+     WHERE admin_id = ? AND role = 'employee'`,
+    [newPasswordHash, employeeId]
+  );
+  return result.affectedRows > 0;
+}
+
+/**
+ * Toggles an employee's active/inactive status.
+ * Automatically increments token_version upon deactivation to revoke active sessions.
+ */
+export async function toggleEmployeeStatusInDb(
+  employeeId: string,
+  status: 'active' | 'inactive'
+): Promise<boolean> {
+  const pool = getPool();
+  const incrementToken = status === 'inactive';
+  const sql = incrementToken
+    ? `UPDATE admins SET status = ?, token_version = token_version + 1, updated_at = CURRENT_TIMESTAMP WHERE admin_id = ? AND role = 'employee'`
+    : `UPDATE admins SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE admin_id = ? AND role = 'employee'`;
+  const [result] = await pool.query<ResultSetHeader>(sql, [status, employeeId]);
+  return result.affectedRows > 0;
+}
+
+/**
+ * Permanently removes an employee account from the database.
+ */
+export async function deleteEmployeeFromDb(employeeId: string): Promise<boolean> {
+  const pool = getPool();
+  const [result] = await pool.query<ResultSetHeader>(
+    `DELETE FROM admins WHERE admin_id = ? AND role = 'employee'`,
+    [employeeId]
+  );
+  return result.affectedRows > 0;
+}
+
 
 
 

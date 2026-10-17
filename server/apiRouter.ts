@@ -70,6 +70,12 @@ import {
   confirmCodCashCollectionInDb,
   getDailyReportFromDb,
   getMonthCalendarActivityFromDb,
+  getEmployeesFromDb,
+  createEmployeeInDb,
+  updateEmployeeInDb,
+  resetEmployeePasswordInDb,
+  toggleEmployeeStatusInDb,
+  deleteEmployeeFromDb,
   type AdminRecord,
 } from './db.ts';
 
@@ -223,8 +229,8 @@ export async function extractAdminAuth(req: Request): Promise<{
   // Legacy header fallback for automated tests and staff verification without bearer token
   const testRoleHeader = (req.headers['x-admin-role'] as string) || (req.headers['X-Admin-Role'] as string);
   if (testRoleHeader === 'admin' || testRoleHeader === 'true') {
-    // Only permit fallback for operational endpoints, never for admin user management
-    const isUserManagement = req.path.includes('/admin/users') || req.path.includes('/admin/me');
+    // Only permit fallback for operational endpoints, never for admin user or employee management
+    const isUserManagement = req.path.includes('/admin/users') || req.path.includes('/admin/me') || req.path.includes('/admin/employees');
     if (!isUserManagement) {
       const defaultOwner = await findAdminInDb('owner@freshcart.com') || (await getAdminsFromDb())[0];
       if (defaultOwner && defaultOwner.status === 'active') {
@@ -232,7 +238,7 @@ export async function extractAdminAuth(req: Request): Promise<{
       }
     }
   } else if (testRoleHeader === 'employee') {
-    const isUserManagement = req.path.includes('/admin/users') || req.path.includes('/admin/me');
+    const isUserManagement = req.path.includes('/admin/users') || req.path.includes('/admin/me') || req.path.includes('/admin/employees');
     if (!isUserManagement) {
       const defaultEmp = (await findAdminInDb('employee@freshcart.com')) || (await getAdminsFromDb()).find((a) => a.role === 'employee');
       if (defaultEmp && defaultEmp.status === 'active') {
@@ -526,6 +532,8 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
               employeeId: admin.admin_id,
               fullName: admin.full_name,
               email: admin.email,
+              mobile: admin.mobile || '',
+              username: admin.username || '',
               role: 'employee',
               status: admin.status,
             },
@@ -2090,6 +2098,8 @@ apiRouter.get(['/api/employee/me', '/employee/me'], async (req: Request, res: Re
         employeeId: auth.admin.admin_id,
         fullName: auth.admin.full_name,
         email: auth.admin.email,
+        mobile: auth.admin.mobile || '',
+        username: auth.admin.username || '',
         role: 'employee',
         status: auth.admin.status,
         createdAt: auth.admin.created_at,
@@ -2119,16 +2129,18 @@ apiRouter.get(['/api/admin/users', '/admin/users'], async (req: Request, res: Re
 
     sendJson(res, 200, {
       success: true,
-      admins: admins.map((a) => ({
-        adminId: a.admin_id,
-        fullName: a.full_name,
-        email: a.email,
-        role: a.role,
-        status: a.status,
-        createdBy: a.created_by,
-        createdAt: a.created_at,
-        updatedAt: a.updated_at,
-      })),
+      admins: admins
+        .filter((a) => a.role !== 'employee')
+        .map((a) => ({
+          adminId: a.admin_id,
+          fullName: a.full_name,
+          email: a.email,
+          role: a.role,
+          status: a.status,
+          createdBy: a.created_by,
+          createdAt: a.created_at,
+          updatedAt: a.updated_at,
+        })),
       activeCount,
       maxLimit: 5,
     });
@@ -2441,6 +2453,355 @@ apiRouter.post(['/api/admin/setup-owner', '/admin/setup-owner'], async (req: Req
     sendJson(res, 500, {
       success: false,
       error: err?.message || 'Failed to initialize owner account.',
+    });
+  }
+});
+
+// =============================================================================
+// EMPLOYEE MANAGEMENT ENDPOINTS (Strictly Authorized Admins Only)
+// =============================================================================
+
+/**
+ * GET /api/admin/employees
+ * Returns all registered employee accounts from MySQL.
+ * Strictly restricted to authorized administrators (Admin & Owner).
+ */
+apiRouter.get(['/api/admin/employees', '/admin/employees'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const rawEmployees = await getEmployeesFromDb();
+    const employees = rawEmployees.map((emp) => ({
+      employeeId: emp.admin_id,
+      fullName: emp.full_name,
+      email: emp.email,
+      mobile: emp.mobile || '',
+      username: emp.username || '',
+      role: 'employee',
+      status: emp.status,
+      createdBy: emp.created_by,
+      createdAt: emp.created_at,
+      updatedAt: emp.updated_at,
+    }));
+
+    sendJson(res, 200, {
+      success: true,
+      employees,
+      totalCount: employees.length,
+      activeCount: employees.filter((e) => e.status === 'active').length,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to retrieve employee directory.',
+    });
+  }
+});
+
+/**
+ * POST /api/admin/employees
+ * Provisions a new employee account in MySQL with secure password hashing.
+ * Strictly restricted to authorized administrators.
+ */
+apiRouter.post(['/api/admin/employees', '/admin/employees'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const { fullName, email, mobile, username, password, employeeId, status } = req.body || {};
+    const trimmedName = typeof fullName === 'string' ? fullName.trim() : '';
+    const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const trimmedMobile = typeof mobile === 'string' ? mobile.trim() : '';
+    const trimmedUsername = typeof username === 'string' ? username.trim().toLowerCase() : '';
+    const trimmedPassword = typeof password === 'string' ? password : '';
+    const trimmedId = typeof employeeId === 'string' ? employeeId.trim() : '';
+    const accountStatus = status === 'inactive' ? 'inactive' : 'active';
+
+    if (!trimmedName) {
+      sendJson(res, 400, { success: false, error: 'Full name is required.' });
+      return;
+    }
+
+    if (!trimmedEmail || !trimmedEmail.includes('@')) {
+      sendJson(res, 400, { success: false, error: 'A valid email address is required.' });
+      return;
+    }
+
+    if (!trimmedPassword || trimmedPassword.length < 6) {
+      sendJson(res, 400, { success: false, error: 'Assigned password must be at least 6 characters long.' });
+      return;
+    }
+
+    // Check email uniqueness
+    const existingEmail = await findAdminInDb(trimmedEmail);
+    if (existingEmail) {
+      sendJson(res, 409, {
+        success: false,
+        error: `An account with email "${trimmedEmail}" already exists.`,
+      });
+      return;
+    }
+
+    // Generate or validate employee ID
+    let finalEmpId = trimmedId;
+    if (finalEmpId) {
+      const existingId = await findAdminByIdInDb(finalEmpId);
+      if (existingId) {
+        sendJson(res, 409, {
+          success: false,
+          error: `An account with Employee ID "${finalEmpId}" already exists.`,
+        });
+        return;
+      }
+    } else {
+      finalEmpId = `EMP-${Math.floor(1000 + Math.random() * 9000)}`;
+      while (await findAdminByIdInDb(finalEmpId)) {
+        finalEmpId = `EMP-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+    }
+
+    // Check username uniqueness if provided
+    if (trimmedUsername) {
+      const existingUser = await findAdminInDb(trimmedUsername);
+      if (existingUser) {
+        sendJson(res, 409, {
+          success: false,
+          error: `Username "${trimmedUsername}" is already taken. Please choose another username.`,
+        });
+        return;
+      }
+    }
+
+    const passwordHash = await bcrypt.hash(trimmedPassword, 10);
+    const created = await createEmployeeInDb({
+      employeeId: finalEmpId,
+      fullName: trimmedName,
+      email: trimmedEmail,
+      mobile: trimmedMobile || null,
+      username: trimmedUsername || null,
+      passwordHash,
+      status: accountStatus,
+      createdBy: auth.admin!.admin_id,
+    });
+
+    sendJson(res, 201, {
+      success: true,
+      message: `Employee ${created.full_name} (${created.admin_id}) registered successfully.`,
+      employee: {
+        employeeId: created.admin_id,
+        fullName: created.full_name,
+        email: created.email,
+        mobile: created.mobile || '',
+        username: created.username || '',
+        role: 'employee',
+        status: created.status,
+        createdBy: created.created_by,
+        createdAt: created.created_at,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to create employee account.',
+    });
+  }
+});
+
+/**
+ * PUT /api/admin/employees/:employeeId
+ * Updates employee details (Full Name, Email, Mobile, Username, Status).
+ * Strictly restricted to authorized administrators.
+ */
+apiRouter.put(['/api/admin/employees/:employeeId', '/admin/employees/:employeeId'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const { employeeId } = req.params;
+    const target = await findAdminByIdInDb(employeeId);
+    if (!target || target.role !== 'employee') {
+      sendJson(res, 404, { success: false, error: 'Employee account not found.' });
+      return;
+    }
+
+    const { fullName, email, mobile, username, status } = req.body || {};
+    const trimmedName = typeof fullName === 'string' ? fullName.trim() : undefined;
+    const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : undefined;
+    const trimmedMobile = typeof mobile === 'string' ? mobile.trim() : undefined;
+    const trimmedUsername = typeof username === 'string' ? username.trim().toLowerCase() : undefined;
+    const newStatus = status === 'active' || status === 'inactive' ? status : undefined;
+
+    if (trimmedName !== undefined && !trimmedName) {
+      sendJson(res, 400, { success: false, error: 'Full name cannot be empty.' });
+      return;
+    }
+
+    if (trimmedEmail !== undefined) {
+      if (!trimmedEmail || !trimmedEmail.includes('@')) {
+        sendJson(res, 400, { success: false, error: 'Valid email address is required.' });
+        return;
+      }
+      if (trimmedEmail !== target.email.toLowerCase()) {
+        const duplicateEmail = await findAdminInDb(trimmedEmail);
+        if (duplicateEmail && duplicateEmail.admin_id !== employeeId) {
+          sendJson(res, 409, { success: false, error: `Email "${trimmedEmail}" is already registered to another account.` });
+          return;
+        }
+      }
+    }
+
+    if (trimmedUsername !== undefined && trimmedUsername && trimmedUsername !== (target.username || '').toLowerCase()) {
+      const duplicateUser = await findAdminInDb(trimmedUsername);
+      if (duplicateUser && duplicateUser.admin_id !== employeeId) {
+        sendJson(res, 409, { success: false, error: `Username "${trimmedUsername}" is already taken.` });
+        return;
+      }
+    }
+
+    const updated = await updateEmployeeInDb(employeeId, {
+      fullName: trimmedName,
+      email: trimmedEmail,
+      mobile: trimmedMobile,
+      username: trimmedUsername,
+      status: newStatus,
+    });
+
+    if (!updated) {
+      sendJson(res, 500, { success: false, error: 'Failed to update employee details.' });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      message: `Employee details for ${updated.full_name} updated successfully.`,
+      employee: {
+        employeeId: updated.admin_id,
+        fullName: updated.full_name,
+        email: updated.email,
+        mobile: updated.mobile || '',
+        username: updated.username || '',
+        role: 'employee',
+        status: updated.status,
+        updatedAt: updated.updated_at,
+      },
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to update employee details.',
+    });
+  }
+});
+
+/**
+ * PATCH /api/admin/employees/:employeeId/status
+ * Activates or deactivates an employee account.
+ * Immediately invalidates active sessions on deactivation.
+ */
+apiRouter.patch(['/api/admin/employees/:employeeId/status', '/admin/employees/:employeeId/status'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const { employeeId } = req.params;
+    const { status } = req.body || {};
+
+    if (status !== 'active' && status !== 'inactive') {
+      sendJson(res, 400, { success: false, error: 'Status must be either "active" or "inactive".' });
+      return;
+    }
+
+    const target = await findAdminByIdInDb(employeeId);
+    if (!target || target.role !== 'employee') {
+      sendJson(res, 404, { success: false, error: 'Employee account not found.' });
+      return;
+    }
+
+    await toggleEmployeeStatusInDb(employeeId, status);
+
+    sendJson(res, 200, {
+      success: true,
+      message: `Employee account status set to ${status}.`,
+      status,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to change employee status.',
+    });
+  }
+});
+
+/**
+ * POST /api/admin/employees/:employeeId/reset-password
+ * Resets an employee password with secure bcrypt hashing.
+ * Invalidates prior sessions immediately by updating token_version.
+ */
+apiRouter.post(['/api/admin/employees/:employeeId/reset-password', '/admin/employees/:employeeId/reset-password'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const { employeeId } = req.params;
+    const { newPassword } = req.body || {};
+    const trimmedPass = typeof newPassword === 'string' ? newPassword : '';
+
+    if (!trimmedPass || trimmedPass.length < 6) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'New password must be at least 6 characters long.',
+      });
+      return;
+    }
+
+    const target = await findAdminByIdInDb(employeeId);
+    if (!target || target.role !== 'employee') {
+      sendJson(res, 404, { success: false, error: 'Employee account not found.' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(trimmedPass, 10);
+    await resetEmployeePasswordInDb(employeeId, passwordHash);
+
+    sendJson(res, 200, {
+      success: true,
+      message: `Password for employee ${target.full_name} (${employeeId}) has been reset securely.`,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to reset employee password.',
+    });
+  }
+});
+
+/**
+ * DELETE /api/admin/employees/:employeeId
+ * Permanently removes an employee account.
+ */
+apiRouter.delete(['/api/admin/employees/:employeeId', '/admin/employees/:employeeId'], async (req: Request, res: Response) => {
+  try {
+    const auth = await extractAdminAuth(req);
+    if (!requireAdminRole(auth, res)) return;
+
+    const { employeeId } = req.params;
+    const target = await findAdminByIdInDb(employeeId);
+    if (!target || target.role !== 'employee') {
+      sendJson(res, 404, { success: false, error: 'Employee account not found.' });
+      return;
+    }
+
+    await deleteEmployeeFromDb(employeeId);
+
+    sendJson(res, 200, {
+      success: true,
+      message: `Employee account ${target.full_name} (${employeeId}) deleted successfully.`,
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Failed to delete employee account.',
     });
   }
 });

@@ -1,9 +1,14 @@
+import { getStoredAdminToken } from './adminService';
+
 export interface AuthorizedEmployee {
   employeeId: string;
   fullName: string;
   email: string;
+  mobile?: string;
+  username?: string;
   role: 'employee';
   status: 'active' | 'inactive';
+  createdBy?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -103,5 +108,277 @@ export async function fetchEmployeeProfile(): Promise<{
     return { success: false, error: 'Employee record not found.' };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Network error verifying employee session.' };
+  }
+}
+
+/**
+ * Fetches all registered employees from backend. Admin only.
+ */
+export async function fetchRegisteredEmployees(): Promise<{
+  success: boolean;
+  employees: AuthorizedEmployee[];
+  totalCount: number;
+  activeCount: number;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch('/api/admin/employees', {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        employees: [],
+        totalCount: 0,
+        activeCount: 0,
+        error: data.error || 'Failed to load employees from MySQL database.',
+      };
+    }
+
+    return {
+      success: true,
+      employees: Array.isArray(data.employees) ? data.employees : [],
+      totalCount: typeof data.totalCount === 'number' ? data.totalCount : 0,
+      activeCount: typeof data.activeCount === 'number' ? data.activeCount : 0,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      employees: [],
+      totalCount: 0,
+      activeCount: 0,
+      error: err?.message || 'Network error fetching registered employees.',
+    };
+  }
+}
+
+/**
+ * Provisions a new employee in MySQL. Admin only.
+ */
+export async function createEmployee(data: {
+  fullName: string;
+  email: string;
+  mobile?: string;
+  username?: string;
+  password: string;
+  employeeId?: string;
+  status?: 'active' | 'inactive';
+}): Promise<{
+  success: boolean;
+  employee?: AuthorizedEmployee;
+  message?: string;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch('/api/admin/employees', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) {
+      return {
+        success: false,
+        error: result.error || 'Failed to create employee account.',
+      };
+    }
+
+    return {
+      success: true,
+      employee: result.employee,
+      message: result.message,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error creating employee account.',
+    };
+  }
+}
+
+/**
+ * Updates employee details (name, email, mobile, username, status). Admin only.
+ */
+export async function updateEmployee(
+  employeeId: string,
+  data: {
+    fullName?: string;
+    email?: string;
+    mobile?: string;
+    username?: string;
+    status?: 'active' | 'inactive';
+  }
+): Promise<{
+  success: boolean;
+  employee?: AuthorizedEmployee;
+  message?: string;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(data),
+    });
+
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) {
+      return {
+        success: false,
+        error: result.error || 'Failed to update employee details.',
+      };
+    }
+
+    return {
+      success: true,
+      employee: result.employee,
+      message: result.message,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error updating employee details.',
+    };
+  }
+}
+
+/**
+ * Activates or deactivates an employee account. Admin only.
+ */
+export async function toggleEmployeeStatus(
+  employeeId: string,
+  status: 'active' | 'inactive'
+): Promise<{
+  success: boolean;
+  status?: string;
+  message?: string;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ status }),
+    });
+
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) {
+      return {
+        success: false,
+        error: result.error || 'Failed to update employee status.',
+      };
+    }
+
+    return {
+      success: true,
+      status: result.status,
+      message: result.message,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error updating employee status.',
+    };
+  }
+}
+
+/**
+ * Resets an employee password with secure bcrypt hashing. Admin only.
+ */
+export async function resetEmployeePassword(
+  employeeId: string,
+  newPassword: string
+): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}/reset-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ newPassword }),
+    });
+
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) {
+      return {
+        success: false,
+        error: result.error || 'Failed to reset employee password.',
+      };
+    }
+
+    return {
+      success: true,
+      message: result.message,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error resetting employee password.',
+    };
+  }
+}
+
+/**
+ * Permanently removes an employee account. Admin only.
+ */
+export async function deleteEmployee(
+  employeeId: string
+): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const token = getStoredAdminToken();
+  try {
+    const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok || !result.success) {
+      return {
+        success: false,
+        error: result.error || 'Failed to delete employee account.',
+      };
+    }
+
+    return {
+      success: true,
+      message: result.message,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error deleting employee account.',
+    };
   }
 }
