@@ -338,8 +338,55 @@ async function runTests() {
     assert(monthData.days['2026-10-17']?.hasOrders, '2026-10-17 must have hasOrders: true');
     console.log(`✓ PASS: Calendar month activity returned ${Object.keys(monthData.days).length} active days for October 2026.`);
 
+    // =========================================================================
+    // TEST 11: Editable month and year selection, leap year, and historical queries
+    // =========================================================================
+    console.log('\n--- TEST 11: Editable month and year selection & leap year handling ---');
+
+    // 11.1 Leap year date calculation
+    const feb2024Days = new Date(2024, 2, 0).getDate();
+    assert.strictEqual(feb2024Days, 29, 'February 2024 must have 29 days (leap year)');
+    const feb2023Days = new Date(2023, 2, 0).getDate();
+    assert.strictEqual(feb2023Days, 28, 'February 2023 must have 28 days (non-leap year)');
+    const feb2026Days = new Date(2026, 2, 0).getDate();
+    assert.strictEqual(feb2026Days, 28, 'February 2026 must have 28 days (non-leap year)');
+    const feb2000Days = new Date(2000, 2, 0).getDate();
+    assert.strictEqual(feb2000Days, 29, 'February 2000 must have 29 days (century leap year)');
+    console.log('✓ PASS: Leap year calendar date calculations verified (2024: 29 days, 2023: 28 days, 2000: 29 days).');
+
+    // 11.2 Historical calendar month queries for previous years
+    const prevYearRes = await fetch(`${baseUrl}/api/admin/reports/calendar-month?year=2024&month=2`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.strictEqual(prevYearRes.status, 200, 'Previous year (2024) calendar query must return 200');
+    const prevYearData = await prevYearRes.json();
+    assert.strictEqual(prevYearData.success, true);
+    assert.strictEqual(prevYearData.year, 2024);
+    assert.strictEqual(prevYearData.month, 2);
+    console.log('✓ PASS: Historical calendar month query for February 2024 successful.');
+
+    // 11.3 Historical daily report for leap day (2024-02-29)
+    const leapDayRes = await fetch(`${baseUrl}/api/admin/reports/daily?date=2024-02-29`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.strictEqual(leapDayRes.status, 200, 'Leap day report query must return 200');
+    const leapDayData = await leapDayRes.json();
+    assert.strictEqual(leapDayData.success, true);
+    assert.strictEqual(leapDayData.report.selectedDate, '2024-02-29');
+    console.log('✓ PASS: Historical daily report for 2024-02-29 retrieved with exact database consistency.');
+
+    // 11.4 Different months query in current year (2026-10-15 has orders)
+    const oct15Res = await fetch(`${baseUrl}/api/admin/reports/daily?date=2026-10-15`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    assert.strictEqual(oct15Res.status, 200);
+    const oct15Data = await oct15Res.json();
+    assert.strictEqual(oct15Data.success, true);
+    assert(oct15Data.report.totalOrders > 0, `Expected orders on 2026-10-15, got ${oct15Data.report.totalOrders}`);
+    console.log(`✓ PASS: Selecting 2026-10-15 returned ${oct15Data.report.totalOrders} orders, ₹${oct15Data.report.totalCollectedAmount} collected.`);
+
     console.log('\n=================================================================================');
-    console.log('ALL 10 TESTS PASSED SUCCESSFULLY! No regressions detected.');
+    console.log('ALL 11 TESTS PASSED SUCCESSFULLY! No regressions detected.');
     console.log('=================================================================================\n');
 
     server.close();

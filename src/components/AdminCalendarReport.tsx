@@ -132,24 +132,70 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
     loadDailyReport(selectedDate);
   }, [selectedDate, loadDailyReport]);
 
+  // Available years for dropdown selection (past years, current year, future years)
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const startYear = Math.min(2015, viewYear - 5);
+    const endYear = Math.max(currentYear + 6, viewYear + 5);
+    const years: number[] = [];
+    for (let y = startYear; y <= endYear; y++) {
+      years.push(y);
+    }
+    return years;
+  }, [viewYear]);
+
   // Navigate to previous month
   const handlePrevMonth = () => {
-    if (viewMonth === 1) {
-      setViewYear((prev) => prev - 1);
-      setViewMonth(12);
-    } else {
-      setViewMonth((prev) => prev - 1);
+    let nextY = viewYear;
+    let nextM = viewMonth - 1;
+    if (nextM < 1) {
+      nextY = viewYear - 1;
+      nextM = 12;
     }
+    setViewYear(nextY);
+    setViewMonth(nextM);
+    const parts = selectedDate.split('-');
+    const currentDay = parseInt(parts[2] || '1', 10);
+    const maxDays = new Date(nextY, nextM, 0).getDate();
+    const clampedDay = Math.min(currentDay, maxDays);
+    setSelectedDate(`${nextY}-${String(nextM).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`);
   };
 
   // Navigate to next month
   const handleNextMonth = () => {
-    if (viewMonth === 12) {
-      setViewYear((prev) => prev + 1);
-      setViewMonth(1);
-    } else {
-      setViewMonth((prev) => prev + 1);
+    let nextY = viewYear;
+    let nextM = viewMonth + 1;
+    if (nextM > 12) {
+      nextY = viewYear + 1;
+      nextM = 1;
     }
+    setViewYear(nextY);
+    setViewMonth(nextM);
+    const parts = selectedDate.split('-');
+    const currentDay = parseInt(parts[2] || '1', 10);
+    const maxDays = new Date(nextY, nextM, 0).getDate();
+    const clampedDay = Math.min(currentDay, maxDays);
+    setSelectedDate(`${nextY}-${String(nextM).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`);
+  };
+
+  // Handle month change from dropdown
+  const handleMonthChange = (newMonth: number) => {
+    setViewMonth(newMonth);
+    const parts = selectedDate.split('-');
+    const currentDay = parseInt(parts[2] || '1', 10);
+    const maxDays = new Date(viewYear, newMonth, 0).getDate();
+    const clampedDay = Math.min(currentDay, maxDays);
+    setSelectedDate(`${viewYear}-${String(newMonth).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`);
+  };
+
+  // Handle year change from dropdown
+  const handleYearChange = (newYear: number) => {
+    setViewYear(newYear);
+    const parts = selectedDate.split('-');
+    const currentDay = parseInt(parts[2] || '1', 10);
+    const maxDays = new Date(newYear, viewMonth, 0).getDate();
+    const clampedDay = Math.min(currentDay, maxDays);
+    setSelectedDate(`${newYear}-${String(viewMonth).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`);
   };
 
   // Jump to today
@@ -443,12 +489,41 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
         {/* Left Column: Monthly Calendar (5 cols on xl) */}
         <div className="xl:col-span-5 space-y-4">
           <div className="bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl p-5">
-            {/* Calendar Month Header with Nav */}
-            <div className="flex items-center justify-between pb-4 border-b border-white/10">
+            {/* Calendar Month Header with Month/Year Selectors and Nav */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-white/10">
               <div className="flex items-center gap-2">
-                <span className="text-[16px] font-bold text-white font-display">
-                  {MONTH_NAMES[viewMonth - 1]} {viewYear}
-                </span>
+                {/* Month Dropdown */}
+                <select
+                  id="admin-calendar-month-select"
+                  aria-label="Select Month"
+                  value={viewMonth}
+                  onChange={(e) => handleMonthChange(parseInt(e.target.value, 10))}
+                  className="bg-black/60 hover:bg-black/80 border border-white/15 hover:border-emerald-500/50 rounded-xl px-2.5 py-1.5 text-[13px] font-bold text-white focus:outline-hidden focus:border-emerald-500 cursor-pointer shadow-xs transition-colors"
+                  style={{ backgroundColor: 'rgba(10, 15, 24, 0.95)' }}
+                >
+                  {MONTH_NAMES.map((m, idx) => (
+                    <option key={m} value={idx + 1} style={{ backgroundColor: '#0b1c30', color: '#ffffff' }}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Year Dropdown */}
+                <select
+                  id="admin-calendar-year-select"
+                  aria-label="Select Year"
+                  value={viewYear}
+                  onChange={(e) => handleYearChange(parseInt(e.target.value, 10))}
+                  className="bg-black/60 hover:bg-black/80 border border-white/15 hover:border-emerald-500/50 rounded-xl px-2.5 py-1.5 text-[13px] font-bold text-white font-mono focus:outline-hidden focus:border-emerald-500 cursor-pointer shadow-xs transition-colors"
+                  style={{ backgroundColor: 'rgba(10, 15, 24, 0.95)' }}
+                >
+                  {availableYears.map((yr) => (
+                    <option key={yr} value={yr} style={{ backgroundColor: '#0b1c30', color: '#ffffff' }}>
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+
                 {isLoadingMonth && <RefreshCw className="w-3.5 h-3.5 text-emerald-400 animate-spin" />}
               </div>
 
@@ -458,6 +533,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                   type="button"
                   onClick={handlePrevMonth}
                   aria-label="Previous Month"
+                  title="Previous Month"
                   className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 transition-all cursor-pointer"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -467,6 +543,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                   type="button"
                   onClick={handleNextMonth}
                   aria-label="Next Month"
+                  title="Next Month"
                   className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 transition-all cursor-pointer"
                 >
                   <ChevronRight className="w-4 h-4" />

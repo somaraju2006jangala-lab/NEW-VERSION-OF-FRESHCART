@@ -2532,8 +2532,8 @@ apiRouter.get(['/api/admin/reports/calendar-month', '/admin/reports/calendar-mon
     const yearParam = parseInt((req.query.year as string) || String(now.getFullYear()), 10);
     const monthParam = parseInt((req.query.month as string) || String(now.getMonth() + 1), 10);
 
-    if (isNaN(yearParam) || yearParam < 2000 || yearParam > 2100) {
-      sendJson(res, 400, { success: false, error: 'Invalid year parameter.' });
+    if (isNaN(yearParam) || yearParam < 1970 || yearParam > 2100) {
+      sendJson(res, 400, { success: false, error: 'Invalid year parameter (1970-2100).' });
       return;
     }
 
