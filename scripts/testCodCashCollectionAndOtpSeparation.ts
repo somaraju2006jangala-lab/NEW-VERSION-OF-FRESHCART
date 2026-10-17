@@ -152,30 +152,8 @@ async function runTests() {
     assert.strictEqual(custCodOtpRes.success, false, 'Customer cannot get OTP for COD orders');
     console.log(`✓ PASS: Customer cannot retrieve OTP for COD order: "${custCodOtpRes.error}"`);
 
-    // 1.6 Advance COD order to 'Delivered' without cash collection
-    console.log('\nTest 1.6: Mark COD order as "Delivered" without confirming cash collection');
-    const updateDeliveredRes = await fetch(`${baseUrl}/api/orders/${codOrderId}/status`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${employeeToken}`,
-      },
-      body: JSON.stringify({ status: 'Delivered' }),
-    });
-    assert(updateDeliveredRes.ok, 'Marking order as Delivered must succeed');
-
-    // Verify paymentStatus remains PENDING_COLLECTION (NOT automatically confirmed on delivery)
-    const deliveredCodDb = await findOrderInDb(codOrderId);
-    assert.strictEqual(deliveredCodDb?.status, 'Delivered', 'Order status must be Delivered');
-    assert.strictEqual(
-      deliveredCodDb?.paymentStatus,
-      'PENDING_COLLECTION',
-      'paymentStatus must NOT automatically become COLLECTED when order is delivered'
-    );
-    console.log(`✓ PASS: COD Order delivered but paymentStatus remains "${deliveredCodDb?.paymentStatus}"`);
-
-    // 1.7 Customer attempts to confirm cash collection -> MUST BE FORBIDDEN (401/403)
-    console.log('\nTest 1.7: Customer attempts to confirm cash collection -> Must be blocked (401/403)');
+    // 1.6 Customer attempts to confirm cash collection -> MUST BE FORBIDDEN (401/403)
+    console.log('\nTest 1.6: Customer attempts to confirm cash collection -> Must be blocked (401/403)');
     const customerConfirmRes = await fetch(`${baseUrl}/api/orders/${codOrderId}/confirm-cash-collection`, {
       method: 'POST',
       headers: {
@@ -189,7 +167,18 @@ async function runTests() {
     );
     console.log(`✓ PASS: Customer blocked from confirming cash collection (HTTP ${customerConfirmRes.status})`);
 
-    // 1.8 Authorized Employee confirms cash collection -> MUST SUCCEED
+    // 1.7 Advance order delivery status to 'Out for Delivery'
+    console.log('\nTest 1.7: Advance COD order delivery status to "Out for Delivery"');
+    await fetch(`${baseUrl}/api/orders/${codOrderId}/status`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${employeeToken}`,
+      },
+      body: JSON.stringify({ status: 'Out for Delivery' }),
+    });
+
+    // 1.8 Authorized Employee confirms cash collection on COD order -> MUST SUCCEED
     console.log('\nTest 1.8: Authorized Employee confirms cash collection -> Must succeed and update to COLLECTED');
     const empConfirmRes = await fetch(`${baseUrl}/api/orders/${codOrderId}/confirm-cash-collection`, {
       method: 'POST',
@@ -205,15 +194,21 @@ async function runTests() {
     assert(empConfirmData.verifiedAt, 'verifiedAt timestamp must be recorded');
     assert(empConfirmData.verifiedBy, 'verifiedBy employee must be recorded');
 
-    // Verify in database directly
+    // 1.9 Verify in database: payment_status is COLLECTED, but delivery status is STILL 'Out for Delivery'
+    console.log('\nTest 1.9: Verify delivery status was NOT changed merely because cash was collected');
     const collectedDb = await findOrderInDb(codOrderId);
     assert.strictEqual(collectedDb?.paymentStatus, 'COLLECTED', 'DB payment_status must be COLLECTED');
+    assert.strictEqual(
+      collectedDb?.status,
+      'Out for Delivery',
+      'Order delivery status must be kept separate and not marked as delivered merely because cash was collected'
+    );
     assert(collectedDb?.verifiedAt, 'DB verified_at timestamp must be present');
     assert(collectedDb?.verifiedBy, 'DB verified_by must record the confirming staff name');
-    console.log(`✓ PASS: Employee confirmed cash collection in DB: status = ${collectedDb?.paymentStatus}, by = "${collectedDb?.verifiedBy}", at = "${collectedDb?.verifiedAt}"`);
+    console.log(`✓ PASS: Cash collection recorded in DB: paymentStatus = "${collectedDb?.paymentStatus}", deliveryStatus = "${collectedDb?.status}" (kept separate!)`);
 
-    // 1.9 Prevent duplicate cash collection confirmation -> MUST RETURN 409 CONFLICT
-    console.log('\nTest 1.9: Attempt duplicate cash collection confirmation -> Must be rejected with 409 Conflict');
+    // 1.10 Prevent duplicate cash collection confirmation -> MUST RETURN 409 CONFLICT
+    console.log('\nTest 1.10: Attempt duplicate cash collection confirmation -> Must be rejected with 409 Conflict');
     const dupConfirmRes = await fetch(`${baseUrl}/api/orders/${codOrderId}/confirm-cash-collection`, {
       method: 'POST',
       headers: {
@@ -229,40 +224,6 @@ async function runTests() {
       `Expected error about already confirmed, got: ${dupConfirmData.error}`
     );
     console.log(`✓ PASS: Duplicate cash collection confirmation prevented (HTTP 409: "${dupConfirmData.error}")`);
-
-    // 1.10 Cash collection on un-delivered COD order -> MUST BE REJECTED
-    console.log('\nTest 1.10: Confirm cash collection on an un-delivered COD order -> Must be rejected (400)');
-    const unDeliveredCodId = `FC-COD-UNDEL-${timestamp}`;
-    await fetch(`${baseUrl}/api/orders`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${customerToken}`,
-      },
-      body: JSON.stringify({
-        id: unDeliveredCodId,
-        customerId,
-        customerName: 'Aarav Patel',
-        deliveryAddress: '42 MG Road, Bengaluru',
-        total: 300,
-        subtotal: 300,
-        paymentMethod: 'COD',
-        paymentStatus: 'PENDING_COLLECTION',
-        status: 'Out for Delivery',
-        items: [{ product: { id: 'prod_1', title: 'Item', price: 300 }, quantity: 1 }],
-      }),
-    });
-    const unDeliveredConfirmRes = await fetch(`${baseUrl}/api/orders/${unDeliveredCodId}/confirm-cash-collection`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${employeeToken}`,
-      },
-    });
-    assert.strictEqual(unDeliveredConfirmRes.status, 400, 'Must return 400 if order is not delivered');
-    const unDeliveredData = await unDeliveredConfirmRes.json();
-    assert(unDeliveredData.error?.includes('Delivered'), `Expected delivered requirement error, got: ${unDeliveredData.error}`);
-    console.log(`✓ PASS: Rejected cash collection on un-delivered order: "${unDeliveredData.error}"`);
 
     // =========================================================================
     // SECTION 2: Online Payments & OTP Flow

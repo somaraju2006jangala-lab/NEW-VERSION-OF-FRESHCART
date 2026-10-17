@@ -2615,14 +2615,6 @@ export async function confirmCodCashCollectionInDb(
       };
     }
 
-    if (order.status !== 'Delivered') {
-      return {
-        success: false,
-        notDelivered: true,
-        error: 'Order must be delivered before cash collection can be confirmed.',
-      };
-    }
-
     const currentPStatus = String(order.payment_status || '').toUpperCase();
     if (currentPStatus === 'COLLECTED') {
       return {

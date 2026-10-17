@@ -22,7 +22,6 @@ import {
   ChevronDown,
   Banknote,
   RotateCcw,
-  Truck,
 } from 'lucide-react';
 import {
   generateOrderOtp,
@@ -86,7 +85,6 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
   // Orders list state & synchronization
   const [ordersList, setOrdersList] = useState<CustomerOrder[]>(customerOrders || []);
   const [isConfirmingCash, setIsConfirmingCash] = useState<Record<string, boolean>>({});
-  const [isDeliveringOrder, setIsDeliveringOrder] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (customerOrders && customerOrders.length > 0) {
@@ -378,40 +376,6 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
       }));
     } finally {
       setIsSendingOtp((prev) => ({ ...prev, [order.id]: false }));
-    }
-  };
-
-  const handleDeliverCodOrder = async (order: CustomerOrder) => {
-    if (order.status === 'Delivered') return;
-    setIsDeliveringOrder((prev) => ({ ...prev, [order.id]: true }));
-    try {
-      const cleanId = order.id.replace(/^#/, '');
-      const adminToken = getStoredAdminToken();
-      const employeeToken = getStoredEmployeeToken();
-      const token = adminToken || employeeToken;
-      const role = userRole || (adminToken ? 'admin' : (employeeToken ? 'employee' : 'employee'));
-
-      await fetch(`/api/orders/${encodeURIComponent(cleanId)}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-role': role,
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ status: 'Delivered' }),
-      }).catch(() => {});
-
-      if (onUpdateOrderStatus) {
-        onUpdateOrderStatus(order.id, 'Delivered');
-      }
-
-      setOrdersList((prev) =>
-        prev.map((o) =>
-          o.id === order.id ? { ...o, status: 'Delivered' } : o
-        )
-      );
-    } finally {
-      setIsDeliveringOrder((prev) => ({ ...prev, [order.id]: false }));
     }
   };
 
@@ -1165,25 +1129,9 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
                       )}
                     </button>
 
-                    {/* Mark Delivered Button: For COD orders when not yet delivered */}
-                    {isCod && order.status !== 'Delivered' && (
-                      <button
-                        type="button"
-                        id={`order-deliver-cod-btn-${cleanOrderId}`}
-                        onClick={() => handleDeliverCodOrder(order)}
-                        disabled={isDeliveringOrder[order.id]}
-                        title={`Mark Order ${displayOrderId} as Delivered`}
-                        className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs backdrop-blur-xs disabled:opacity-50"
-                      >
-                        <Truck className="w-3.5 h-3.5 text-[#10b981]" />
-                        <span>{isDeliveringOrder[order.id] ? 'Delivering...' : 'Mark as Delivered'}</span>
-                      </button>
-                    )}
-
-                    {/* Cash Collection Confirmation: Only visible for authorized employee or admin when COD is delivered and not yet collected */}
+                    {/* Confirm Cash Collection: Only visible for authorized employee or admin on COD orders whose cash collection is still pending */}
                     {(userRole === 'admin' || userRole === 'employee') &&
                       isCod &&
-                      order.status === 'Delivered' &&
                       paymentInfo.paymentStatus !== 'COLLECTED' && (
                         <button
                           type="button"

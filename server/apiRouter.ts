@@ -1392,13 +1392,6 @@ apiRouter.post(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-
         });
         return;
       }
-      if (result.notDelivered) {
-        sendJson(res, 400, {
-          success: false,
-          error: 'Order must be marked as Delivered before confirming cash collection.',
-        });
-        return;
-      }
       if (result.notCod) {
         sendJson(res, 400, {
           success: false,
@@ -1448,13 +1441,6 @@ apiRouter.put(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-c
           paymentStatus: 'COLLECTED',
           verifiedAt: result.verifiedAt,
           verifiedBy: result.verifiedBy,
-        });
-        return;
-      }
-      if (result.notDelivered) {
-        sendJson(res, 400, {
-          success: false,
-          error: 'Order must be marked as Delivered before confirming cash collection.',
         });
         return;
       }
