@@ -950,16 +950,38 @@ export function updateOrderStatus(
     const raw = localStorage.getItem(STORAGE_CUSTOMER_ORDERS_KEY);
     const orders: CustomerOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
     const targetClean = String(orderId || '').replace(/^#/, '').toLowerCase();
+    let found = false;
     const updated = orders.map((o) => {
       const oClean = String(o.id || '').replace(/^#/, '').toLowerCase();
-      return (o.id === orderId || oClean === targetClean)
-        ? {
-            ...o,
-            status: newStatus as any,
-            ...(extraMeta || {}),
-          }
-        : o;
+      if (o.id === orderId || oClean === targetClean) {
+        found = true;
+        return {
+          ...o,
+          status: newStatus as any,
+          ...(extraMeta || {}),
+        };
+      }
+      return o;
     });
+    if (!found) {
+      updated.unshift({
+        id: orderId.startsWith('#') ? orderId : `#${orderId}`,
+        customerId: 'customer',
+        customerName: 'Customer',
+        customerPhone: '',
+        deliveryAddress: '',
+        deliveryTimeSlot: '',
+        items: [],
+        subtotal: 0,
+        discount: 0,
+        total: 0,
+        status: newStatus as any,
+        createdAt: new Date().toISOString(),
+        paymentMethod: 'UPI',
+        paymentStatus: 'COMPLETED',
+        ...(extraMeta || {}),
+      });
+    }
     localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(updated));
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
@@ -1038,7 +1060,7 @@ export function updateOrderPaymentStatus(
  */
 export async function confirmCodCashCollection(
   orderId: string
-): Promise<{ success: boolean; error?: string; paymentStatus?: string; verifiedAt?: string; verifiedBy?: string }> {
+): Promise<{ success: boolean; error?: string; paymentStatus?: string; status?: string; verifiedAt?: string; verifiedBy?: string }> {
   try {
     const cleanId = orderId.replace(/^#/, '');
     const adminToken = getStoredAdminToken();
@@ -1066,9 +1088,16 @@ export async function confirmCodCashCollection(
         verifiedBy,
       });
 
+      if (data.status === 'Delivered') {
+        updateOrderStatus(orderId, 'Delivered', {
+          paymentStatus: 'COLLECTED',
+        });
+      }
+
       return {
         success: true,
         paymentStatus: 'COLLECTED',
+        status: data.status,
         verifiedAt,
         verifiedBy,
       };

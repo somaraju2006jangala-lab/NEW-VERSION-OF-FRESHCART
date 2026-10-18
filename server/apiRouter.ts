@@ -39,6 +39,7 @@ import {
   upsertOrderInDb,
   findOrderInDb,
   findOrdersForCustomerInDb,
+  getOrdersToDeliverCountFromDb,
   updateOrderStatusInDb,
   updateOrderPaymentStatusInDb,
   deleteOrderInDb,
@@ -1389,8 +1390,10 @@ apiRouter.post(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-
 
     const orderId = decodeURIComponent(req.params.id);
     const staffName = auth.admin.full_name || auth.admin.admin_id || (auth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
+    const { markDelivered } = req.body || {};
+    const shouldMarkDelivered = Boolean(markDelivered);
 
-    const result = await confirmCodCashCollectionInDb(orderId, staffName);
+    const result = await confirmCodCashCollectionInDb(orderId, staffName, shouldMarkDelivered);
     if (!result.success) {
       if (result.alreadyConfirmed) {
         sendJson(res, 409, {
@@ -1420,6 +1423,7 @@ apiRouter.post(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-
       success: true,
       message: 'Cash collection confirmed successfully.',
       paymentStatus: 'COLLECTED',
+      status: shouldMarkDelivered ? 'Delivered' : undefined,
       verifiedAt: result.verifiedAt,
       verifiedBy: result.verifiedBy,
     });
@@ -1441,8 +1445,10 @@ apiRouter.put(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-c
 
     const orderId = decodeURIComponent(req.params.id);
     const staffName = auth.admin.full_name || auth.admin.admin_id || (auth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
+    const { markDelivered } = req.body || {};
+    const shouldMarkDelivered = Boolean(markDelivered);
 
-    const result = await confirmCodCashCollectionInDb(orderId, staffName);
+    const result = await confirmCodCashCollectionInDb(orderId, staffName, shouldMarkDelivered);
     if (!result.success) {
       if (result.alreadyConfirmed) {
         sendJson(res, 409, {
@@ -2869,27 +2875,7 @@ apiRouter.get(
   ['/api/admin/orders-to-deliver-count', '/orders-to-deliver-count', '/api/orders-to-deliver-count'],
   async (req: Request, res: Response) => {
     try {
-      const orders = await findOrdersForCustomerInDb();
-      const seenOrderIds = new Set<string>();
-      let count = 0;
-
-      for (const o of orders) {
-        if (!o || !o.id) continue;
-        const cleanId = String(o.id || '').replace(/^#/, '').trim().toLowerCase();
-        if (!cleanId || seenOrderIds.has(cleanId)) continue;
-        seenOrderIds.add(cleanId);
-
-        const deliveryStatus = String(o.status || '').trim().toUpperCase();
-        const terminalStatuses = ['DELIVERED', 'CANCELLED', 'CANCELED', 'RETURNED', 'REFUNDED'];
-        if (terminalStatuses.includes(deliveryStatus)) continue;
-        if ((o as any).handoverReleased === true) continue;
-
-        const paymentStatus = String(o.paymentStatus || '').trim().toUpperCase();
-        if (paymentStatus === 'REJECTED' || paymentStatus === 'FAILED' || paymentStatus === 'INITIATED') continue;
-
-        count++;
-      }
-
+      const count = await getOrdersToDeliverCountFromDb();
       sendJson(res, 200, {
         success: true,
         count,

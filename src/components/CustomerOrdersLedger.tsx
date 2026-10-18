@@ -22,6 +22,7 @@ import {
   ChevronDown,
   Banknote,
   RotateCcw,
+  Truck,
 } from 'lucide-react';
 import {
   generateOrderOtp,
@@ -85,6 +86,7 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
   // Orders list state & synchronization
   const [ordersList, setOrdersList] = useState<CustomerOrder[]>(customerOrders || []);
   const [isConfirmingCash, setIsConfirmingCash] = useState<Record<string, boolean>>({});
+  const [isDeliveringOrder, setIsDeliveringOrder] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (customerOrders && customerOrders.length > 0) {
@@ -386,12 +388,53 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
     }
   };
 
+  const handleDeliverCodOrder = async (order: CustomerOrder) => {
+    if (order.status === 'Delivered') return;
+    setIsDeliveringOrder((prev) => ({ ...prev, [order.id]: true }));
+    try {
+      const cleanId = order.id.replace(/^#/, '');
+      const adminToken = getStoredAdminToken();
+      const employeeToken = getStoredEmployeeToken();
+      const token = adminToken || employeeToken;
+      const role = userRole || (adminToken ? 'admin' : (employeeToken ? 'employee' : 'admin'));
+
+      await fetch(`/api/orders/${encodeURIComponent(cleanId)}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-role': role,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: 'Delivered' }),
+      }).catch(() => {});
+
+      if (onUpdateOrderStatus) {
+        onUpdateOrderStatus(order.id, 'Delivered');
+      }
+
+      setOrdersList((prev) =>
+        prev.map((o) => {
+          const oClean = o.id.replace(/^#/, '');
+          const cleanId = order.id.replace(/^#/, '');
+          return (o.id === order.id || oClean === cleanId)
+            ? { ...o, status: 'Delivered' }
+            : o;
+        })
+      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+      }
+    } finally {
+      setIsDeliveringOrder((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
   const handleConfirmCashCollection = async (orderId: string) => {
     if (userRole !== 'admin' && userRole !== 'employee') return; // Authorized employee or admin only
     const target = ordersList.find(
       (o) => o.id === orderId || o.id.replace(/^#/, '') === orderId.replace(/^#/, '')
     );
-    if (target && (target.paymentStatus === 'COLLECTED' || getDisplayPaymentInfo(target).paymentStatus === 'COLLECTED')) {
+    if (target && (target.paymentStatus === 'COLLECTED' || getDisplayPaymentInfo(target).paymentStatus === 'COLLECTED') && target.status === 'Delivered') {
       return; // Prevent duplicate cash-collection confirmations
     }
 
@@ -401,6 +444,7 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
       if (res.success) {
         const verifiedAt = res.verifiedAt || new Date().toISOString();
         const staffName = res.verifiedBy || currentUserName || (userRole === 'employee' ? 'Operations Employee' : 'Admin');
+        const isDelivered = (res as any).status === 'Delivered' || true;
         setOrdersList((prev) =>
           prev.map((o) => {
             const oClean = o.id.replace(/^#/, '');
@@ -408,6 +452,7 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
             return oClean === cleanId
               ? {
                   ...o,
+                  status: isDelivered ? 'Delivered' : o.status,
                   paymentStatus: 'COLLECTED',
                   verifiedAt,
                   verifiedBy: staffName,
@@ -416,16 +461,14 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
           })
         );
         if (onUpdateOrderStatus) {
-          const found = ordersList.find(
-            (o) => o.id === orderId || o.id.replace(/^#/, '') === orderId.replace(/^#/, '')
-          );
-          if (found) {
-            onUpdateOrderStatus(orderId, found.status, {
-              paymentStatus: 'COLLECTED',
-              verifiedAt,
-              verifiedBy: staffName,
-            } as any);
-          }
+          onUpdateOrderStatus(orderId, isDelivered ? 'Delivered' : 'Picking', {
+            paymentStatus: 'COLLECTED',
+            verifiedAt,
+            verifiedBy: staffName,
+          } as any);
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
         }
       }
     } finally {
@@ -1150,6 +1193,23 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
                         >
                           <Banknote className="w-3.5 h-3.5 text-[#10b981]" />
                           <span>{isConfirmingCash[order.id] ? 'Saving...' : 'Confirm Cash Collection'}</span>
+                        </button>
+                    )}
+
+                    {/* Delivery Confirmation: Visible for authorized employee or admin on COD orders awaiting delivery */}
+                    {(userRole === 'admin' || userRole === 'employee') &&
+                      isCod &&
+                      order.status !== 'Delivered' && (
+                        <button
+                          type="button"
+                          id={`confirm-delivery-btn-${cleanOrderId}`}
+                          onClick={() => handleDeliverCodOrder(order)}
+                          disabled={isDeliveringOrder[order.id]}
+                          title={`Confirm delivery for Order ${displayOrderId}`}
+                          className="px-2.5 py-1 text-[11px] font-bold text-sky-300 hover:text-white bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs backdrop-blur-xs disabled:opacity-50"
+                        >
+                          <Truck className="w-3.5 h-3.5 text-[#38bdf8]" />
+                          <span>{isDeliveringOrder[order.id] ? 'Delivering...' : 'Confirm Delivery'}</span>
                         </button>
                     )}
 

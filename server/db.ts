@@ -2519,31 +2519,71 @@ export async function findOrdersForCustomerInDb(customerId?: string): Promise<an
       }
     }
 
-    for (const ord of rows) {
-      const [itemRows] = await pool.query<RowDataPacket[]>(
-        `SELECT product_id as id, product_name as title, quantity, unit, price, subtotal
+    if (orderIds.length > 0) {
+      const [allItemRows] = await pool.query<RowDataPacket[]>(
+        `SELECT order_id, product_id as id, product_name as title, quantity, unit, price, subtotal
          FROM order_items
-         WHERE order_id = ?`,
-        [ord.id]
+         WHERE order_id IN (?)`,
+        [orderIds]
       );
-      ord.items = itemRows.map((it) => ({
-        product: {
-          id: it.id,
-          title: it.title,
-          price: Number(it.price),
-          unit: it.unit,
-        },
-        quantity: Number(it.quantity),
-      }));
-      ord.subtotal = Number(ord.subtotal);
-      ord.discount = Number(ord.discount);
-      ord.total = Number(ord.total);
+      const itemsMap = new Map<string, any[]>();
+      for (const it of allItemRows) {
+        const oid = String(it.order_id || '');
+        if (!itemsMap.has(oid)) itemsMap.set(oid, []);
+        itemsMap.get(oid)!.push({
+          product: {
+            id: it.id,
+            title: it.title,
+            price: Number(it.price),
+            unit: it.unit,
+          },
+          quantity: Number(it.quantity),
+        });
+      }
+
+      for (const ord of rows) {
+        ord.items = itemsMap.get(ord.id) || [];
+        ord.subtotal = Number(ord.subtotal);
+        ord.discount = Number(ord.discount);
+        ord.total = Number(ord.total);
+      }
+    } else {
+      for (const ord of rows) {
+        ord.items = [];
+        ord.subtotal = Number(ord.subtotal);
+        ord.discount = Number(ord.discount);
+        ord.total = Number(ord.total);
+      }
     }
 
     return rows;
   } catch (err: any) {
     console.warn('[MySQL] Error querying orders:', err?.message);
     return [];
+  }
+}
+
+/**
+ * Returns the authoritative count of orders awaiting delivery directly from MySQL.
+ * Excludes terminal statuses (DELIVERED, CANCELLED, etc.) and unconfirmed/rejected payment states.
+ * Deduplicates order IDs across different casing or '#' prefixes.
+ */
+export async function getOrdersToDeliverCountFromDb(): Promise<number> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(`
+      SELECT COUNT(DISTINCT LOWER(REPLACE(order_id, '#', ''))) AS count
+      FROM orders
+      WHERE LOWER(status) NOT IN ('delivered', 'cancelled', 'canceled', 'returned', 'refunded')
+        AND (
+          payment_status IS NULL
+          OR UPPER(payment_status) NOT IN ('REJECTED', 'FAILED', 'INITIATED')
+        )
+    `);
+    return Number(rows[0]?.count || 0);
+  } catch (err: any) {
+    console.error('[MySQL] Error querying orders to deliver count:', err?.message);
+    throw err;
   }
 }
 
@@ -2579,7 +2619,8 @@ export async function updateOrderStatusInDb(
  */
 export async function confirmCodCashCollectionInDb(
   orderId: string,
-  staffUsername: string = 'Staff'
+  staffUsername: string = 'Staff',
+  markDelivered: boolean = false
 ): Promise<{
   success: boolean;
   error?: string;
@@ -2622,7 +2663,7 @@ export async function confirmCodCashCollectionInDb(
     }
 
     const currentPStatus = String(order.payment_status || '').toUpperCase();
-    if (currentPStatus === 'COLLECTED') {
+    if (currentPStatus === 'COLLECTED' && order.status === 'Delivered') {
       return {
         success: false,
         alreadyConfirmed: true,
@@ -2635,14 +2676,26 @@ export async function confirmCodCashCollectionInDb(
 
     const verifiedAtStr = new Date().toISOString();
 
-    await pool.query(
-      `UPDATE orders
-       SET payment_status = 'COLLECTED',
-           verified_at = NOW(),
-           verified_by = ?
-       WHERE order_id IN (?, ?)`,
-      [staffUsername, orderId, altId]
-    );
+    if (markDelivered) {
+      await pool.query(
+        `UPDATE orders
+         SET payment_status = 'COLLECTED',
+             status = 'Delivered',
+             verified_at = NOW(),
+             verified_by = ?
+         WHERE order_id IN (?, ?)`,
+        [staffUsername, orderId, altId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE orders
+         SET payment_status = 'COLLECTED',
+             verified_at = NOW(),
+             verified_by = ?
+         WHERE order_id IN (?, ?)`,
+        [staffUsername, orderId, altId]
+      );
+    }
 
     const [payRows] = await pool.query<RowDataPacket[]>(
       `SELECT payment_id FROM payments WHERE order_id IN (?, ?)`,

@@ -992,8 +992,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [countFetchError, setCountFetchError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (customerOrders && (!ordersList || ordersList.length === 0)) {
-      setOrdersList(customerOrders);
+    if (customerOrders && Array.isArray(customerOrders)) {
+      setOrdersList((prevList) => {
+        if (!prevList || prevList.length === 0) return customerOrders;
+        const updateMap = new Map(customerOrders.map((o) => [String(o.id || '').replace(/^#/, '').toLowerCase(), o]));
+        return prevList.map((existing) => {
+          const clean = String(existing.id || '').replace(/^#/, '').toLowerCase();
+          const match = updateMap.get(clean);
+          return match ? { ...existing, ...match } : existing;
+        });
+      });
     }
   }, [customerOrders]);
 
@@ -1427,6 +1435,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         if (found) {
           onUpdateOrderStatus(orderId, found.status, { paymentStatus: 'COMPLETED' } as any);
         }
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
       }
     } finally {
       setIsConfirmingCash((prev) => ({ ...prev, [orderId]: false }));
