@@ -526,9 +526,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [showAdminProfileMenu, setShowAdminProfileMenu] = useState(false);
   const adminProfileMenuRef = useRef<HTMLDivElement>(null);
 
-  const [showAdminTabMenu, setShowAdminTabMenu] = useState(false);
-  const adminTabMenuRef = useRef<HTMLDivElement>(null);
-
   const [showOrderStatusDropdown, setShowOrderStatusDropdown] = useState(false);
   const orderStatusDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -537,9 +534,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       if (adminProfileMenuRef.current && !adminProfileMenuRef.current.contains(event.target as Node)) {
         setShowAdminProfileMenu(false);
       }
-      if (adminTabMenuRef.current && !adminTabMenuRef.current.contains(event.target as Node)) {
-        setShowAdminTabMenu(false);
-      }
       if (orderStatusDropdownRef.current && !orderStatusDropdownRef.current.contains(event.target as Node)) {
         setShowOrderStatusDropdown(false);
       }
@@ -547,7 +541,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowAdminProfileMenu(false);
-        setShowAdminTabMenu(false);
         setShowOrderStatusDropdown(false);
       }
     };
@@ -558,23 +551,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
-
-  const getAdminTabLabel = (tab: typeof activeTab) => {
-    switch (tab) {
-      case 'inventory': return t('tabLiveInventory') || 'Live Inventory';
-      case 'logs': return t('tabCdcLogs') || 'CDC Logs';
-      case 'coupons': return t('tabCoupons') || 'Coupons';
-      case 'orders': return t('tabCustomerOrders') || 'Customer Orders';
-      case 'settings': return t('tabSettings') || 'Delivery Charges';
-      case 'payment-settings': return 'UPI Settings';
-      case 'payment-verification': return 'Payment Verification';
-      case 'admins': return 'Authorized Admins';
-      case 'employees': return 'Employee Management';
-      case 'customers': return 'Customer Accounts';
-      case 'daily-reports': return 'Orders & Transactions Calendar';
-      default: return 'Admin Dashboard';
-    }
-  };
 
   // Customer Accounts Management State
   const [customerAccounts, setCustomerAccounts] = useState<AdminCustomerAccount[]>([]);
@@ -2100,95 +2076,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </div>
 
         {/* Tab Selection */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#e2e8f0] pb-2 gap-3">
-          {/* Quick Dashboard Views Dropdown Menu */}
-          <div className="relative shrink-0" ref={adminTabMenuRef}>
-            <button
-              type="button"
-              id="admin-dashboard-views-dropdown-btn"
-              aria-haspopup="true"
-              aria-expanded={showAdminTabMenu}
-              onClick={() => setShowAdminTabMenu(!showAdminTabMenu)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/20 bg-black/40 hover:bg-black/60 text-white text-[12px] font-semibold transition-all shadow-sm cursor-pointer hover:border-emerald-500/40"
-              title="Select Dashboard View"
-            >
-              <Package className="w-3.5 h-3.5 text-[#10b981]" />
-              <span className="truncate max-w-[150px]">View: <strong>{getAdminTabLabel(activeTab)}</strong></span>
-              <ChevronDown
-                className={`w-3.5 h-3.5 text-[#94a3b8] transition-transform duration-200 ${
-                  showAdminTabMenu ? 'rotate-180 text-[#10b981]' : ''
-                }`}
-              />
-            </button>
-
-            {showAdminTabMenu && (
-              <div
-                id="admin-dashboard-views-dropdown-menu"
-                data-dropdown-menu="true"
-                className="freshcart-dropdown-menu absolute left-0 top-full mt-2 w-72 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 max-w-[calc(100vw-2rem)]"
-                style={{
-                  backgroundColor: 'rgba(3, 7, 12, 0.96)',
-                  WebkitBackdropFilter: 'blur(16px)',
-                  backdropFilter: 'blur(16px)',
-                }}
-              >
-                <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8] border-b freshcart-dropdown-divider mb-1">
-                  Select Dashboard View
-                </div>
-                <div className="space-y-0.5">
-                  {[
-                    { id: 'inventory', label: t('tabLiveInventory') || 'Live Inventory', icon: Package },
-                    { id: 'orders', label: t('tabCustomerOrders') || 'Customer Orders', icon: ShoppingBag },
-                    { id: 'daily-reports', label: 'Orders & Transactions Calendar', icon: Calendar },
-                    { id: 'payment-verification', label: 'Payment Verification', icon: CheckCircle, badge: pendingVerificationCount },
-                    { id: 'coupons', label: t('tabCoupons') || 'Coupons', icon: Tag },
-                    { id: 'settings', label: t('tabSettings') || 'Delivery Charges', icon: Truck },
-                    { id: 'payment-settings', label: 'UPI Settings', icon: CreditCard },
-                    { id: 'admins', label: 'Authorized Admins', icon: ShieldCheck },
-                    { id: 'employees', label: 'Employee Management', icon: UserCheck },
-                    { id: 'customers', label: 'Customer Accounts', icon: Users },
-                    { id: 'logs', label: t('tabCdcLogs') || 'CDC Logs', icon: History },
-                  ].map((item) => {
-                    const isActive = activeTab === item.id;
-                    const Icon = item.icon;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        id={`admin-tab-view-${item.id}`}
-                        onClick={() => {
-                          if (item.id === 'payment-verification') loadVerificationQueue();
-                          if (item.id === 'admins') loadAdmins();
-                          if (item.id === 'customers') loadCustomerAccounts();
-                          if (item.id === 'orders') setSelectedOtpOrderId(null);
-                          setActiveTab(item.id as any);
-                          setShowAdminTabMenu(false);
-                        }}
-                        className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-[12px] transition-all cursor-pointer ${
-                          isActive
-                            ? 'freshcart-dropdown-item-active'
-                            : 'freshcart-dropdown-item text-slate-100'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <Icon className={`w-4 h-4 ${isActive ? 'text-[#10b981]' : 'text-[#34d399]'}`} />
-                          <span className={isActive ? 'font-semibold text-[#10b981]' : 'text-slate-100'}>{item.label}</span>
-                        </div>
-                        {item.badge ? (
-                          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
-                            {item.badge}
-                          </span>
-                        ) : isActive ? (
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] shadow-[0_0_6px_#10b981]" />
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
+        <div className="border-b border-[#e2e8f0]">
           <div className="flex items-center gap-4 overflow-x-auto pb-1">
             <button
             type="button"
