@@ -12,6 +12,7 @@ import { CouponModal } from './CouponModal';
 import { CustomerOrdersLedger } from './CustomerOrdersLedger';
 import { AdminCalendarReport } from './AdminCalendarReport';
 import { AdminEmployeeManagement } from './AdminEmployeeManagement';
+import { OrdersToDeliverModal } from './OrdersToDeliverModal';
 import {
   Package,
   Users,
@@ -990,6 +991,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [backendOrdersToDeliverCount, setBackendOrdersToDeliverCount] = useState<number | null>(null);
   const [isCountLoading, setIsCountLoading] = useState<boolean>(false);
   const [countFetchError, setCountFetchError] = useState<string | null>(null);
+  const [isOrdersToDeliverModalOpen, setIsOrdersToDeliverModalOpen] = useState<boolean>(false);
 
   useEffect(() => {
     if (customerOrders && Array.isArray(customerOrders)) {
@@ -2169,7 +2171,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
 
-          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
+          <button
+            type="button"
+            id="admin-orders-to-deliver-card"
+            onClick={() => setIsOrdersToDeliverModalOpen(true)}
+            title="Click to view all orders currently awaiting delivery"
+            className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between text-left cursor-pointer hover:border-[#0284c7]/50 hover:shadow-md transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-[#0284c7]/40 w-full"
+          >
             <div>
               <span className="text-[12px] text-[#64748b] font-medium block">
                 {t('ordersToDeliver') || 'Orders to Deliver'}
@@ -2184,7 +2192,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             <div className="w-12 h-12 rounded-xl bg-[#eff6ff] text-[#0284c7] flex items-center justify-center">
               <Truck className="w-6 h-6 text-[#0284c7]" />
             </div>
-          </div>
+          </button>
         </div>
 
         {/* Tab Selection */}
@@ -5269,6 +5277,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           setEditingCoupon(null);
           setTimeout(() => setPulseToast(null), 3500);
         }}
+      />
+
+      {/* Orders Awaiting Delivery Modal */}
+      <OrdersToDeliverModal
+        isOpen={isOrdersToDeliverModalOpen}
+        onClose={() => setIsOrdersToDeliverModalOpen(false)}
+        onOrderDelivered={async () => {
+          await refreshOrdersToDeliverCount();
+          refreshOrders();
+        }}
+        userRole="admin"
+        currentUserName={currentAdmin?.fullName || currentAdmin?.adminId}
       />
 
       {/* View Screenshot Modal */}

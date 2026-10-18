@@ -1166,6 +1166,79 @@ export async function fetchOrdersToDeliverCountFromBackend(): Promise<{ success:
   }
 }
 
+export interface PendingDeliveryOrder {
+  id: string;
+  orderId: string;
+  cleanOrderId: string;
+  customerId?: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  deliveryTimeSlot?: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  status: string;
+  deliveryStatus: string;
+  subtotal: number;
+  discount: number;
+  total: number;
+  amount: number;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  createdAt: string;
+}
+
+/**
+ * Fetches all orders currently awaiting delivery directly from backend MySQL database.
+ */
+export async function fetchOrdersToDeliverFromBackend(params?: {
+  page?: number;
+  limit?: number;
+}): Promise<{
+  success: boolean;
+  orders?: PendingDeliveryOrder[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+  error?: string;
+}> {
+  try {
+    const adminToken = getStoredAdminToken();
+    const employeeToken = getStoredEmployeeToken();
+    const token = adminToken || employeeToken;
+    const role = adminToken ? 'admin' : (employeeToken ? 'employee' : 'admin');
+
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set('page', String(params.page));
+    if (params?.limit) searchParams.set('limit', String(params.limit));
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
+
+    const res = await fetch(`/api/admin/orders-to-deliver${query}`, {
+      headers: {
+        'x-admin-role': role,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success && Array.isArray(data.orders)) {
+      return {
+        success: true,
+        orders: data.orders,
+        total: typeof data.total === 'number' ? data.total : data.orders.length,
+        page: data.page,
+        limit: data.limit,
+        totalPages: data.totalPages,
+      };
+    }
+    return { success: false, error: data?.error || 'Failed to fetch pending delivery orders.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error fetching pending orders.' };
+  }
+}
+
 /**
  * Synchronizes orders in local storage with authoritative state from backend MySQL database.
  */

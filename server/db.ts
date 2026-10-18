@@ -2588,6 +2588,125 @@ export async function getOrdersToDeliverCountFromDb(): Promise<number> {
 }
 
 /**
+ * Returns all orders currently awaiting delivery directly from MySQL.
+ * Excludes terminal statuses (DELIVERED, CANCELLED, RETURNED, etc.).
+ * Includes COD orders even if cash collection has been confirmed.
+ * Supports optional pagination: { page?: number; limit?: number }.
+ */
+export async function getOrdersToDeliverFromDb(options?: {
+  page?: number;
+  limit?: number;
+}): Promise<{
+  orders: any[];
+  total: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+}> {
+  const pool = getPool();
+  try {
+    const totalCount = await getOrdersToDeliverCountFromDb();
+
+    const sql = `
+      SELECT 
+        o.order_id as id,
+        o.customer_id as customerId,
+        o.customer_name as customerName,
+        o.email as customerEmail,
+        o.mobile as customerPhone,
+        o.delivery_address as deliveryAddress,
+        o.delivery_time_slot as deliveryTimeSlot,
+        o.payment_method as paymentMethod,
+        o.payment_status as paymentStatus,
+        o.status as status,
+        o.subtotal as subtotal,
+        o.discount as discount,
+        o.total as total,
+        o.verified_at as verifiedAt,
+        o.verified_by as verifiedBy,
+        o.created_at as createdAt
+      FROM orders o
+      WHERE LOWER(o.status) NOT IN ('delivered', 'cancelled', 'canceled', 'returned', 'refunded')
+        AND (
+          o.payment_status IS NULL
+          OR UPPER(o.payment_status) NOT IN ('REJECTED', 'FAILED', 'INITIATED')
+        )
+      ORDER BY o.created_at DESC
+    `;
+
+    const [rows] = await pool.query<RowDataPacket[]>(sql);
+
+    // Deduplicate by clean order ID to strictly match COUNT(DISTINCT LOWER(REPLACE(order_id, '#', '')))
+    const seen = new Set<string>();
+    const deduplicatedOrders: any[] = [];
+
+    for (const r of rows) {
+      const cleanKey = String(r.id || '').replace(/^#/, '').toLowerCase();
+      if (!seen.has(cleanKey)) {
+        seen.add(cleanKey);
+
+        const rawMethod = String(r.paymentMethod || '').trim();
+        const isCod =
+          !rawMethod ||
+          rawMethod.toLowerCase().includes('cash') ||
+          rawMethod.toUpperCase() === 'COD' ||
+          rawMethod === 'Cash on Delivery';
+        const formattedMethod = isCod ? 'COD' : (rawMethod || 'UPI');
+
+        const displayOrderId = String(r.id || '').startsWith('#') ? String(r.id) : `#${r.id}`;
+
+        deduplicatedOrders.push({
+          id: displayOrderId,
+          orderId: displayOrderId,
+          cleanOrderId: cleanKey,
+          customerId: r.customerId || '',
+          customerName: r.customerName || 'Customer',
+          customerEmail: r.customerEmail || '',
+          customerPhone: r.customerPhone || '',
+          deliveryAddress: r.deliveryAddress || '',
+          deliveryTimeSlot: r.deliveryTimeSlot || '',
+          paymentMethod: formattedMethod,
+          paymentStatus: r.paymentStatus || (isCod ? 'PENDING_COLLECTION' : 'COMPLETED'),
+          status: r.status || 'Picking',
+          deliveryStatus: r.status || 'Picking',
+          subtotal: Number(r.subtotal) || 0,
+          discount: Number(r.discount) || 0,
+          total: Number(r.total) || 0,
+          amount: Number(r.total) || 0,
+          verifiedAt: r.verifiedAt || null,
+          verifiedBy: r.verifiedBy || null,
+          createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        });
+      }
+    }
+
+    const finalTotal = deduplicatedOrders.length;
+
+    if (options?.page && options?.limit && options.limit > 0) {
+      const page = Math.max(1, options.page);
+      const limit = Math.max(1, options.limit);
+      const startIndex = (page - 1) * limit;
+      const paginatedOrders = deduplicatedOrders.slice(startIndex, startIndex + limit);
+      return {
+        orders: paginatedOrders,
+        total: finalTotal,
+        page,
+        limit,
+        totalPages: Math.ceil(finalTotal / limit) || 1,
+      };
+    }
+
+    return {
+      orders: deduplicatedOrders,
+      total: finalTotal,
+    };
+  } catch (err: any) {
+    console.error('[MySQL] Error querying orders to deliver:', err?.message);
+    throw err;
+  }
+}
+
+/**
  * Updates order status in MySQL.
  */
 export async function updateOrderStatusInDb(

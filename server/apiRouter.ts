@@ -40,6 +40,7 @@ import {
   findOrderInDb,
   findOrdersForCustomerInDb,
   getOrdersToDeliverCountFromDb,
+  getOrdersToDeliverFromDb,
   updateOrderStatusInDb,
   updateOrderPaymentStatusInDb,
   deleteOrderInDb,
@@ -2883,6 +2884,33 @@ apiRouter.get(
       });
     } catch (err: any) {
       sendJson(res, 500, { success: false, error: err?.message || 'Failed to calculate orders to deliver count.' });
+    }
+  }
+);
+
+/**
+ * GET /api/admin/orders-to-deliver
+ * Returns all orders currently awaiting delivery directly from MySQL.
+ * Excludes terminal statuses (delivered, cancelled, returned, etc.).
+ * Includes COD orders even if cash collection has been confirmed.
+ * Supports optional pagination: ?page=1&limit=25
+ */
+apiRouter.get(
+  ['/api/admin/orders-to-deliver', '/orders-to-deliver', '/api/orders-to-deliver'],
+  async (req: Request, res: Response) => {
+    try {
+      const rawPage = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const rawLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const page = rawPage && !isNaN(rawPage) && rawPage > 0 ? rawPage : undefined;
+      const limit = rawLimit && !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : undefined;
+
+      const result = await getOrdersToDeliverFromDb({ page, limit });
+      sendJson(res, 200, {
+        success: true,
+        ...result,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve orders to deliver.' });
     }
   }
 );
