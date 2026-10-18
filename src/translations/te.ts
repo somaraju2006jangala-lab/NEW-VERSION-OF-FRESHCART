@@ -240,6 +240,7 @@ export const te: typeof en = {
   optimalTempRange: 'సరైన పరిధి (2-5°C)',
   stockWarnings: 'స్టాక్ హెచ్చరికలు',
   stockWarningDetail: '{low} తక్కువ స్టాక్ · {out} స్టాక్ అయిపోయింది',
+  ordersToDeliver: 'డెలివరీ చేయాల్సిన ఆర్డర్లు',
   activePickersRunners: 'యాక్టివ్ ప్యాకర్లు & రైడర్లు',
   avgPackTime: 'సగటు ప్యాకింగ్ సమయం: 5.4 నిమిషాలు',
   tabLiveInventory: 'లైవ్ ఇన్వెంటరీ నిర్వహణ',

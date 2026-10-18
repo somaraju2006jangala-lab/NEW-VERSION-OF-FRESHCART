@@ -240,6 +240,7 @@ export const hi: typeof en = {
   optimalTempRange: 'इष्टतम (सहनशीलता 2-5°C)',
   stockWarnings: 'स्टॉक चेतावनियां',
   stockWarningDetail: '{low} कम स्टॉक · {out} स्टॉक समाप्त',
+  ordersToDeliver: 'डिलीवर करने के लिए ऑर्डर',
   activePickersRunners: 'सक्रिय पिकर्स और राइडर्स',
   avgPackTime: 'औसत पैकिंग समय: 5.4 मिनट',
   tabLiveInventory: 'लाइव इन्वेंटरी प्रबंधन',

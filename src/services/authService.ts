@@ -949,19 +949,37 @@ export function updateOrderStatus(
   try {
     const raw = localStorage.getItem(STORAGE_CUSTOMER_ORDERS_KEY);
     const orders: CustomerOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
-    const updated = orders.map((o) =>
-      o.id === orderId
+    const targetClean = String(orderId || '').replace(/^#/, '').toLowerCase();
+    const updated = orders.map((o) => {
+      const oClean = String(o.id || '').replace(/^#/, '').toLowerCase();
+      return (o.id === orderId || oClean === targetClean)
         ? {
             ...o,
             status: newStatus as any,
             ...(extraMeta || {}),
           }
-        : o
-    );
+        : o;
+    });
     localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(updated));
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
     }
+
+    // Persist delivery status update to MySQL database
+    const cleanId = orderId.replace(/^#/, '');
+    const adminToken = getStoredAdminToken();
+    const employeeToken = getStoredEmployeeToken();
+    const token = adminToken || employeeToken;
+    const role = adminToken ? 'admin' : (employeeToken ? 'employee' : 'admin');
+    fetch(`/api/orders/${encodeURIComponent(cleanId)}/status`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-role': role,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ status: newStatus, ...extraMeta }),
+    }).catch(() => {});
   } catch (err) {
     console.error('Failed to update order status:', err);
   }
@@ -1088,11 +1106,34 @@ export async function fetchAllOrdersFromBackend(): Promise<CustomerOrder[]> {
     const data = await res.json().catch(() => null);
     if (data?.success && Array.isArray(data.orders)) {
       syncBackendOrders(data.orders);
+      return data.orders;
     }
     return getCustomerOrders();
   } catch (err) {
     console.warn('Failed to fetch orders from backend:', err);
     return getCustomerOrders();
+  }
+}
+
+/**
+ * Fetches authoritative Orders to Deliver count directly from backend MySQL database.
+ */
+export async function fetchOrdersToDeliverCountFromBackend(): Promise<{ success: boolean; count?: number; error?: string }> {
+  try {
+    const adminToken = getStoredAdminToken();
+    const res = await fetch('/api/admin/orders-to-deliver-count', {
+      headers: {
+        'x-admin-role': 'admin',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success && typeof data.count === 'number') {
+      return { success: true, count: data.count };
+    }
+    return { success: false, error: data?.error || 'Failed to fetch count from server.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error fetching count.' };
   }
 }
 

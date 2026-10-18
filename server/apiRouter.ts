@@ -2827,6 +2827,21 @@ apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, r
     const totalSales = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
     const pendingOrders = orders.filter((o) => o.status === 'Picking' || o.status === 'Ordered').length;
 
+    const seenOrderIds = new Set<string>();
+    let ordersToDeliver = 0;
+    for (const o of orders) {
+      const cleanId = String(o.id || '').replace(/^#/, '').trim().toLowerCase();
+      if (!cleanId || seenOrderIds.has(cleanId)) continue;
+      seenOrderIds.add(cleanId);
+      const deliveryStatus = String(o.status || '').trim().toUpperCase();
+      const terminalStatuses = ['DELIVERED', 'CANCELLED', 'CANCELED', 'RETURNED', 'REFUNDED'];
+      if (terminalStatuses.includes(deliveryStatus)) continue;
+      if ((o as any).handoverReleased === true) continue;
+      const paymentStatus = String(o.paymentStatus || '').trim().toUpperCase();
+      if (paymentStatus === 'REJECTED' || paymentStatus === 'FAILED' || paymentStatus === 'INITIATED') continue;
+      ordersToDeliver++;
+    }
+
     sendJson(res, 200, {
       success: true,
       overview: {
@@ -2835,6 +2850,7 @@ apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, r
         totalCustomers: customers.length,
         totalSales,
         pendingOrders,
+        ordersToDeliver,
         recentOrders: orders.slice(0, 10),
         recentLogs: logs.slice(0, 10),
       },
@@ -2843,6 +2859,47 @@ apiRouter.get(['/api/admin/overview', '/admin/overview'], async (req: Request, r
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve admin overview.' });
   }
 });
+
+/**
+ * GET /api/admin/orders-to-deliver-count
+ * Returns authoritative count of confirmed orders that still need to be delivered.
+ * Accessible to Admin and Staff.
+ */
+apiRouter.get(
+  ['/api/admin/orders-to-deliver-count', '/orders-to-deliver-count', '/api/orders-to-deliver-count'],
+  async (req: Request, res: Response) => {
+    try {
+      const orders = await findOrdersForCustomerInDb();
+      const seenOrderIds = new Set<string>();
+      let count = 0;
+
+      for (const o of orders) {
+        if (!o || !o.id) continue;
+        const cleanId = String(o.id || '').replace(/^#/, '').trim().toLowerCase();
+        if (!cleanId || seenOrderIds.has(cleanId)) continue;
+        seenOrderIds.add(cleanId);
+
+        const deliveryStatus = String(o.status || '').trim().toUpperCase();
+        const terminalStatuses = ['DELIVERED', 'CANCELLED', 'CANCELED', 'RETURNED', 'REFUNDED'];
+        if (terminalStatuses.includes(deliveryStatus)) continue;
+        if ((o as any).handoverReleased === true) continue;
+
+        const paymentStatus = String(o.paymentStatus || '').trim().toUpperCase();
+        if (paymentStatus === 'REJECTED' || paymentStatus === 'FAILED' || paymentStatus === 'INITIATED') continue;
+
+        count++;
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        count,
+        ordersToDeliver: count,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Failed to calculate orders to deliver count.' });
+    }
+  }
+);
 
 // =============================================================================
 // ADMIN DAILY ORDERS & TRANSACTIONS CALENDAR REPORTS

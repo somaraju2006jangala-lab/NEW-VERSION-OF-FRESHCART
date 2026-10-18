@@ -238,6 +238,7 @@ export const en = {
   optimalTempRange: 'Optimal (Tolerance 2-5°C)',
   stockWarnings: 'Stock Warnings',
   stockWarningDetail: '{low} Low · {out} Out of Stock',
+  ordersToDeliver: 'Orders to Deliver',
   activePickersRunners: 'Active Pickers & Runners',
   avgPackTime: 'Avg pack time: 5.4 mins',
   tabLiveInventory: 'Live Inventory Management',

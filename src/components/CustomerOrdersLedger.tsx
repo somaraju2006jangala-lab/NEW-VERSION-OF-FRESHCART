@@ -274,10 +274,17 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
           });
         }
         setOrdersList((prev) =>
-          prev.map((o) =>
-            o.id === order.id ? { ...o, status: 'Delivered', otpVerifiedAt: verifiedTime } : o
-          )
+          prev.map((o) => {
+            const oClean = String(o.id || '').replace(/^#/, '').toLowerCase();
+            const cleanId = String(order.id || '').replace(/^#/, '').toLowerCase();
+            return (o.id === order.id || oClean === cleanId)
+              ? { ...o, status: 'Delivered', otpVerifiedAt: verifiedTime, handoverReleased: true }
+              : o;
+          })
         );
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+        }
         setOrderOtpStatusMap((prev) => ({
           ...prev,
           [order.id]: {

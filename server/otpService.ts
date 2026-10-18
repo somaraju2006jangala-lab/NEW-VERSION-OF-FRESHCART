@@ -632,12 +632,22 @@ export async function verifyOrderOtp(
     persistStore();
 
     if (isMySqlConnected()) {
-      await updateOrderOtpInDb(orderId, {
+      const updateOk = await updateOrderOtpInDb(orderId, {
         otpStatus: 'USED',
         otpVerifiedAt: verifiedAt,
         status: 'Delivered',
         used: true,
       });
+      if (!updateOk) {
+        record.status = 'UNUSED';
+        record.verifiedAt = undefined;
+        persistStore();
+        return {
+          success: false,
+          error: 'Failed to update delivery status in database.',
+          status: 'Picking',
+        };
+      }
     }
 
     return {

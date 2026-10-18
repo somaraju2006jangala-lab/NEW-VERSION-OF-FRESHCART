@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Product, InventoryLog, Coupon, CustomerOrder, DeliveryChargeRule } from '../types';
 import { USER_AVATAR_URL } from '../data/products';
 import { formatINR } from '../utils/currency';
@@ -77,6 +77,7 @@ import {
   updateOrderPaymentStatus,
   confirmCodCashCollection,
   fetchAllOrdersFromBackend,
+  fetchOrdersToDeliverCountFromBackend,
 } from '../services/authService';
 import { formatIndianDisplayNumber, validateIndianMobileNumber } from '../services/registrationOtpService';
 import {
@@ -985,19 +986,55 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [ordersList, setOrdersList] = useState<CustomerOrder[]>(customerOrders);
   const [isConfirmingCash, setIsConfirmingCash] = useState<Record<string, boolean>>({});
 
+  // Authoritative "Orders to Deliver" backend count state
+  const [backendOrdersToDeliverCount, setBackendOrdersToDeliverCount] = useState<number | null>(null);
+  const [isCountLoading, setIsCountLoading] = useState<boolean>(false);
+  const [countFetchError, setCountFetchError] = useState<string | null>(null);
+
   useEffect(() => {
-    if (customerOrders && customerOrders.length > 0) {
+    if (customerOrders && (!ordersList || ordersList.length === 0)) {
       setOrdersList(customerOrders);
     }
   }, [customerOrders]);
 
-  useEffect(() => {
+  const refreshOrdersToDeliverCount = useCallback(async () => {
+    setIsCountLoading(true);
+    setCountFetchError(null);
+    try {
+      const res = await fetchOrdersToDeliverCountFromBackend();
+      if (res.success && typeof res.count === 'number') {
+        setBackendOrdersToDeliverCount(res.count);
+      } else {
+        setCountFetchError(res.error || 'Failed to fetch count');
+      }
+    } catch (err: any) {
+      setCountFetchError(err?.message || 'Error fetching count');
+    } finally {
+      setIsCountLoading(false);
+    }
+  }, []);
+
+  const refreshOrders = useCallback(() => {
     fetchAllOrdersFromBackend().then((orders) => {
-      if (Array.isArray(orders) && orders.length > 0) {
+      if (Array.isArray(orders)) {
         setOrdersList(orders);
       }
     });
-  }, [activeTab]);
+  }, []);
+
+  useEffect(() => {
+    refreshOrders();
+    refreshOrdersToDeliverCount();
+  }, [refreshOrders, refreshOrdersToDeliverCount, activeTab]);
+
+  useEffect(() => {
+    const handleOrdersSync = () => {
+      refreshOrders();
+      refreshOrdersToDeliverCount();
+    };
+    window.addEventListener('freshcart_orders_updated', handleOrdersSync);
+    return () => window.removeEventListener('freshcart_orders_updated', handleOrdersSync);
+  }, [refreshOrders, refreshOrdersToDeliverCount]);
 
   // OTP Verification States for Admin Customer Orders Ledger
   const [orderOtpInputs, setOrderOtpInputs] = useState<Record<string, string>>({});
@@ -1505,6 +1542,43 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= 5).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
 
+  const ordersToDeliverCount = useMemo(() => {
+    if (!ordersList || ordersList.length === 0) return 0;
+    const seenOrderIds = new Set<string>();
+    let count = 0;
+
+    for (const order of ordersList) {
+      if (!order || !order.id) continue;
+      const cleanId = String(order.id).replace(/^#/, '').trim().toLowerCase();
+      if (!cleanId || seenOrderIds.has(cleanId)) continue;
+      seenOrderIds.add(cleanId);
+
+      // Exclude orders whose delivery status is DELIVERED, CANCELLED, or another terminal status
+      const deliveryStatus = String(order.status || '').trim().toUpperCase();
+      const terminalStatuses = ['DELIVERED', 'CANCELLED', 'CANCELED', 'RETURNED', 'REFUNDED'];
+      if (terminalStatuses.includes(deliveryStatus)) {
+        continue;
+      }
+      if (order.handoverReleased === true) {
+        continue;
+      }
+
+      // Exclude unconfirmed, rejected, or unsubmitted draft payments
+      const paymentStatus = String(order.paymentStatus || '').trim().toUpperCase();
+      if (paymentStatus === 'REJECTED' || paymentStatus === 'FAILED' || paymentStatus === 'INITIATED') {
+        continue;
+      }
+
+      // Valid confirmed order awaiting delivery (COD and online UPI orders)
+      count++;
+    }
+
+    return count;
+  }, [ordersList]);
+
+  const displayedOrdersToDeliver =
+    backendOrdersToDeliverCount !== null ? backendOrdersToDeliverCount : ordersToDeliverCount;
+
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
       p.title.toLowerCase().includes(adminSearch.toLowerCase()) ||
@@ -1618,10 +1692,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           });
         }
         setOrdersList((prev) =>
-          prev.map((o) =>
-            o.id === order.id ? { ...o, status: 'Delivered', otpVerifiedAt: verifiedTime } : o
-          )
+          prev.map((o) => {
+            const oClean = String(o.id || '').replace(/^#/, '').toLowerCase();
+            const cleanId = String(order.id || '').replace(/^#/, '').toLowerCase();
+            return (o.id === order.id || oClean === cleanId)
+              ? { ...o, status: 'Delivered', otpVerifiedAt: verifiedTime, handoverReleased: true }
+              : o;
+          })
         );
+        // Wait for backend to save delivered status, then fetch latest dashboard count
+        await refreshOrdersToDeliverCount();
+        await refreshOrders();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+        }
         setOrderOtpStatusMap((prev) => ({
           ...prev,
           [order.id]: {
@@ -2045,7 +2129,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
         {/* KPI Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
             <div>
               <span className="text-[12px] text-[#64748b] font-medium block">
@@ -2071,6 +2155,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
             <div className="w-12 h-12 rounded-xl bg-[#fee2e2] text-[#ef4444] flex items-center justify-center">
               <AlertTriangle className="w-6 h-6 text-[#ef4444]" />
+            </div>
+          </div>
+
+          <div className="bg-white p-4 sm:p-5 rounded-xl border border-[#e2e8f0] shadow-xs flex items-center justify-between">
+            <div>
+              <span className="text-[12px] text-[#64748b] font-medium block">
+                {t('ordersToDeliver') || 'Orders to Deliver'}
+              </span>
+              <span
+                id="admin-orders-to-deliver-count"
+                className="text-[28px] font-extrabold text-[#0284c7] font-display tabular-nums"
+              >
+                {displayedOrdersToDeliver}
+              </span>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-[#eff6ff] text-[#0284c7] flex items-center justify-center">
+              <Truck className="w-6 h-6 text-[#0284c7]" />
             </div>
           </div>
         </div>
