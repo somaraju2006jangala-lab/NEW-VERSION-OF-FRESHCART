@@ -304,5 +304,22 @@ CREATE TABLE IF NOT EXISTS admins (
   INDEX idx_admins_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-
-
+-- --------------------------------------------------------
+-- Table: delivery_assignments (Automatic and Manual Employee Assignment)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS delivery_assignments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  order_id VARCHAR(64) NOT NULL,
+  clean_order_id VARCHAR(64) NOT NULL UNIQUE,
+  employee_id VARCHAR(64) NOT NULL,
+  employee_name VARCHAR(255) NOT NULL,
+  assigned_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM_AUTO',
+  status VARCHAR(32) NOT NULL DEFAULT 'assigned',
+  assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  delivered_at TIMESTAMP NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_da_order_id (order_id),
+  INDEX idx_da_clean_order_id (clean_order_id),
+  INDEX idx_da_employee_id (employee_id),
+  INDEX idx_da_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

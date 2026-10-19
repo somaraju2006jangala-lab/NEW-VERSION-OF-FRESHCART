@@ -801,6 +801,23 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_paa_order_id (order_id),
       INDEX idx_paa_payment_status (payment_status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    `CREATE TABLE IF NOT EXISTS delivery_assignments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id VARCHAR(64) NOT NULL,
+      clean_order_id VARCHAR(64) NOT NULL UNIQUE,
+      employee_id VARCHAR(64) NOT NULL,
+      employee_name VARCHAR(255) NOT NULL,
+      assigned_by VARCHAR(64) NOT NULL DEFAULT 'SYSTEM_AUTO',
+      status VARCHAR(32) NOT NULL DEFAULT 'assigned',
+      assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      delivered_at TIMESTAMP NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_da_order_id (order_id),
+      INDEX idx_da_clean_order_id (clean_order_id),
+      INDEX idx_da_employee_id (employee_id),
+      INDEX idx_da_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
   ];
 
   for (const sql of tableStatements) {
@@ -899,6 +916,24 @@ export async function initializeDatabase(): Promise<void> {
   } catch {}
   try {
     await currentPool.query('ALTER TABLE admins ADD COLUMN username VARCHAR(64) NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_employee_id VARCHAR(64) NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_employee_name VARCHAR(255) NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_at TIMESTAMP NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_by VARCHAR(64) NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN assignment_status VARCHAR(32) NULL DEFAULT "unassigned"');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE admins ADD COLUMN last_assigned_at TIMESTAMP NULL');
   } catch {}
   try {
     await currentPool.query(`
@@ -2336,6 +2371,14 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
     }
 
     await connection.commit();
+
+    // If order is eligible for delivery, trigger automatic employee assignment
+    if (isOrderEligibleForDelivery({ status, paymentStatus })) {
+      autoAssignOrder(actualOrderId).catch((e) =>
+        console.warn(`[AutoAssign] Auto-assign error for order ${actualOrderId}:`, e?.message)
+      );
+    }
+
     return true;
   } catch (err: any) {
     await connection.rollback();
@@ -2599,12 +2642,17 @@ export async function getOrdersToDeliverFromDb(options?: {
 }): Promise<{
   orders: any[];
   total: number;
+  assignedCount?: number;
+  unassignedCount?: number;
   page?: number;
   limit?: number;
   totalPages?: number;
 }> {
   const pool = getPool();
   try {
+    // Attempt auto-assignment on any unassigned eligible orders first
+    await autoAssignEligibleOrders().catch(() => {});
+
     const totalCount = await getOrdersToDeliverCountFromDb();
 
     const sql = `
@@ -2624,8 +2672,17 @@ export async function getOrdersToDeliverFromDb(options?: {
         o.total as total,
         o.verified_at as verifiedAt,
         o.verified_by as verifiedBy,
-        o.created_at as createdAt
+        o.created_at as createdAt,
+        da.employee_id as assignedEmployeeId,
+        da.employee_name as assignedEmployeeName,
+        da.assigned_at as assignedAt,
+        da.assigned_by as assignedBy,
+        da.status as assignmentStatus
       FROM orders o
+      LEFT JOIN delivery_assignments da ON (
+        da.clean_order_id = LOWER(REPLACE(o.order_id, '#', ''))
+        AND da.status = 'assigned'
+      )
       WHERE LOWER(o.status) NOT IN ('delivered', 'cancelled', 'canceled', 'returned', 'refunded')
         AND (
           o.payment_status IS NULL
@@ -2676,11 +2733,18 @@ export async function getOrdersToDeliverFromDb(options?: {
           verifiedAt: r.verifiedAt || null,
           verifiedBy: r.verifiedBy || null,
           createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+          assignedEmployeeId: r.assignedEmployeeId || null,
+          assignedEmployeeName: r.assignedEmployeeName || null,
+          assignedAt: r.assignedAt ? new Date(r.assignedAt).toISOString() : null,
+          assignedBy: r.assignedBy || null,
+          assignmentStatus: r.assignmentStatus || 'unassigned',
         });
       }
     }
 
     const finalTotal = deduplicatedOrders.length;
+    const assignedCount = deduplicatedOrders.filter((o) => o.assignmentStatus === 'assigned').length;
+    const unassignedCount = finalTotal - assignedCount;
 
     if (options?.page && options?.limit && options.limit > 0) {
       const page = Math.max(1, options.page);
@@ -2690,6 +2754,8 @@ export async function getOrdersToDeliverFromDb(options?: {
       return {
         orders: paginatedOrders,
         total: finalTotal,
+        assignedCount,
+        unassignedCount,
         page,
         limit,
         totalPages: Math.ceil(finalTotal / limit) || 1,
@@ -2699,6 +2765,8 @@ export async function getOrdersToDeliverFromDb(options?: {
     return {
       orders: deduplicatedOrders,
       total: finalTotal,
+      assignedCount,
+      unassignedCount,
     };
   } catch (err: any) {
     console.error('[MySQL] Error querying orders to deliver:', err?.message);
@@ -2715,13 +2783,36 @@ export async function updateOrderStatusInDb(
   extraMeta?: any
 ): Promise<boolean> {
   const pool = getPool();
+  const cleanId = normalizeOrderId(orderId);
   const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
 
   try {
     await pool.query(
-      `UPDATE orders SET status = ? WHERE order_id IN (?, ?)`,
-      [newStatus, orderId, altId]
+      `UPDATE orders SET status = ? WHERE order_id IN (?, ?) OR LOWER(REPLACE(order_id, '#', '')) = ?`,
+      [newStatus, orderId, altId, cleanId]
     );
+
+    const lowerStatus = newStatus.toLowerCase();
+    if (lowerStatus === 'delivered') {
+      await pool.query(
+        `UPDATE delivery_assignments
+         SET status = 'delivered', delivered_at = NOW()
+         WHERE clean_order_id = ? AND status = 'assigned'`,
+        [cleanId]
+      );
+      autoAssignEligibleOrders().catch(() => {});
+    } else if (['cancelled', 'canceled', 'returned', 'refunded'].includes(lowerStatus)) {
+      await pool.query(
+        `UPDATE delivery_assignments
+         SET status = 'cancelled'
+         WHERE clean_order_id = ? AND status = 'assigned'`,
+        [cleanId]
+      );
+      autoAssignEligibleOrders().catch(() => {});
+    } else if (isOrderEligibleForDelivery({ status: newStatus })) {
+      autoAssignOrder(orderId).catch(() => {});
+    }
+
     return true;
   } catch (err: any) {
     console.error('[MySQL] Error updating order status:', err?.message);
@@ -4294,6 +4385,13 @@ export async function verifyUpiPaymentInDb(params: {
     }
 
     await connection.commit();
+
+    if (params.action === 'APPROVE') {
+      autoAssignOrder(params.orderId).catch((e) =>
+        console.warn(`[AutoAssign] Auto-assign error for order ${params.orderId}:`, e?.message)
+      );
+    }
+
     return {
       success: true,
       screenshotPathToDelete: params.action === 'APPROVE' ? screenshotPathToDelete : undefined,
@@ -5013,7 +5111,631 @@ export async function deleteEmployeeFromDb(employeeId: string): Promise<boolean>
   return result.affectedRows > 0;
 }
 
+// =============================================================================
+// AUTOMATIC & MANUAL EMPLOYEE DELIVERY ASSIGNMENT SYSTEM
+// =============================================================================
 
+export interface DeliveryAssignmentRecord {
+  id?: number;
+  orderId: string;
+  cleanOrderId: string;
+  employeeId: string;
+  employeeName: string;
+  assignedBy: string;
+  status: 'assigned' | 'delivered' | 'cancelled' | 'reassigned';
+  assignedAt: string;
+  deliveredAt?: string | null;
+  updatedAt?: string;
+}
 
+/**
+ * Normalizes an order ID by stripping leading hash, whitespace, and lowercasing.
+ */
+export function normalizeOrderId(orderId: string): string {
+  return String(orderId || '').replace(/^#/, '').trim().toLowerCase();
+}
 
+/**
+ * Checks whether an order is eligible for delivery assignment:
+ * - Ready for delivery (not in terminal status: delivered, cancelled, returned, refunded).
+ * - Payment is not in invalid/draft status (REJECTED, FAILED, INITIATED).
+ * - COD orders remain eligible even if cash has already been collected.
+ */
+export function isOrderEligibleForDelivery(order: any): boolean {
+  if (!order) return false;
+  const status = String(order.status || '').trim().toLowerCase();
+  const terminalStatuses = ['delivered', 'cancelled', 'canceled', 'returned', 'refunded'];
+  if (terminalStatuses.includes(status)) return false;
+  if (order.handoverReleased === true) return false;
 
+  const paymentStatus = String(order.paymentStatus || order.payment_status || '').trim().toUpperCase();
+  if (paymentStatus === 'REJECTED' || paymentStatus === 'FAILED' || paymentStatus === 'INITIATED') {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Returns all active delivery employees from the MySQL database.
+ */
+export async function getActiveDeliveryEmployeesFromDb(connection?: PoolConnection): Promise<Array<{
+  admin_id: string;
+  employeeId: string;
+  full_name: string;
+  name: string;
+  email: string;
+  last_assigned_at: string | null;
+}>> {
+  const conn = connection || getPool();
+  const [rows] = await conn.query<RowDataPacket[]>(`
+    SELECT admin_id, admin_id as employeeId, full_name, full_name as name, email, last_assigned_at
+    FROM admins
+    WHERE role = 'employee' AND status = 'active'
+    ORDER BY admin_id ASC
+  `);
+  return rows as any;
+}
+
+/**
+ * Calculates an employee's current workload (count of assigned, undelivered orders).
+ */
+export async function getEmployeePendingWorkloadInDb(employeeId: string, connection?: PoolConnection): Promise<number> {
+  const conn = connection || getPool();
+  const [rows] = await conn.query<RowDataPacket[]>(`
+    SELECT COUNT(*) as count
+    FROM delivery_assignments da
+    JOIN orders o ON (
+      o.order_id = da.order_id OR
+      o.order_id = CONCAT('#', da.order_id) OR
+      da.order_id = CONCAT('#', o.order_id) OR
+      LOWER(REPLACE(o.order_id, '#', '')) = da.clean_order_id
+    )
+    WHERE da.employee_id = ?
+      AND da.status = 'assigned'
+      AND LOWER(o.status) NOT IN ('delivered', 'cancelled', 'canceled', 'returned', 'refunded')
+  `, [employeeId]);
+  return Number(rows[0]?.count || 0);
+}
+
+/**
+ * Selects the eligible employee with the fewest pending deliveries.
+ * If multiple employees have equal lowest workload, uses fair rotation (least recently assigned first, then admin_id ASC).
+ */
+export async function findBestEligibleEmployeeForAssignment(connection?: PoolConnection): Promise<{
+  admin_id: string;
+  full_name: string;
+  email: string;
+  workload: number;
+} | null> {
+  const conn = connection || getPool();
+  const activeEmployees = await getActiveDeliveryEmployeesFromDb(conn as any);
+  if (!activeEmployees || activeEmployees.length === 0) {
+    return null;
+  }
+
+  const candidates: Array<{
+    admin_id: string;
+    full_name: string;
+    email: string;
+    last_assigned_at: Date | null;
+    workload: number;
+  }> = [];
+
+  for (const emp of activeEmployees) {
+    const workload = await getEmployeePendingWorkloadInDb(emp.admin_id, conn as any);
+    candidates.push({
+      admin_id: emp.admin_id,
+      full_name: emp.full_name,
+      email: emp.email,
+      last_assigned_at: emp.last_assigned_at ? new Date(emp.last_assigned_at) : null,
+      workload,
+    });
+  }
+
+  // Primary: Fewest pending deliveries (workload ASC)
+  // Tie-breaker: Least recently assigned first (nulls / older timestamps first)
+  // Tertiary: admin_id ASC (deterministic)
+  candidates.sort((a, b) => {
+    if (a.workload !== b.workload) {
+      return a.workload - b.workload;
+    }
+    const timeA = a.last_assigned_at ? a.last_assigned_at.getTime() : 0;
+    const timeB = b.last_assigned_at ? b.last_assigned_at.getTime() : 0;
+    if (timeA !== timeB) {
+      return timeA - timeB;
+    }
+    return a.admin_id.localeCompare(b.admin_id);
+  });
+
+  return candidates[0] || null;
+}
+
+// In-process promise mutex to serialize simultaneous order assignment operations cleanly
+let assignmentMutex = Promise.resolve();
+function withAssignmentLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = assignmentMutex.then(fn, fn);
+  assignmentMutex = next.then(() => {}, () => {});
+  return next;
+}
+
+/**
+ * Assigns or reassigns an eligible delivery order to an active employee.
+ * Uses database transactions, row-level locks, and unique clean_order_id constraint.
+ */
+export async function assignOrderToEmployeeInDb(
+  paramsOrOrderId:
+    | {
+        orderId: string;
+        employeeId?: string;
+        assignedBy?: string;
+        isManual?: boolean;
+      }
+    | string,
+  employeeIdParam?: string,
+  assignedByParam?: string,
+  isManualParam?: boolean
+): Promise<{
+  success: boolean;
+  assigned: boolean;
+  reason?: string;
+  orderId: string;
+  employeeId?: string;
+  employeeName?: string;
+  assignedBy?: string;
+  assignedAt?: string;
+  status?: string;
+  unassigned?: boolean;
+  alreadyAssigned?: boolean;
+  error?: string;
+}> {
+  const params =
+    typeof paramsOrOrderId === 'string'
+      ? {
+          orderId: paramsOrOrderId,
+          employeeId: employeeIdParam,
+          assignedBy: assignedByParam,
+          isManual: isManualParam,
+        }
+      : paramsOrOrderId;
+
+  return withAssignmentLock(async () => {
+    const pool = getPool();
+    const rawOrderId = String(params?.orderId || '').trim();
+    if (!rawOrderId) {
+      return { success: false, assigned: false, orderId: '', error: 'Missing orderId' };
+    }
+    const cleanId = normalizeOrderId(rawOrderId);
+    const altId = rawOrderId.startsWith('#') ? rawOrderId.slice(1) : `#${rawOrderId}`;
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      // 1. Lock and retrieve order
+      const [orders] = await connection.query<RowDataPacket[]>(
+        `SELECT order_id, customer_name, status, payment_status, payment_method, total
+         FROM orders
+         WHERE order_id IN (?, ?) OR LOWER(REPLACE(order_id, '#', '')) = ?
+         LIMIT 1
+         FOR UPDATE`,
+        [rawOrderId, altId, cleanId]
+      );
+
+      if (orders.length === 0) {
+        await connection.rollback();
+        return { success: false, assigned: false, orderId: rawOrderId, error: 'Order not found in database.' };
+      }
+
+      const orderRow = orders[0];
+      const actualOrderId = orderRow.order_id;
+
+      // 2. Validate eligibility
+      if (!isOrderEligibleForDelivery(orderRow)) {
+        await connection.rollback();
+        return {
+          success: false,
+          assigned: false,
+          reason: 'NOT_ELIGIBLE',
+          orderId: actualOrderId,
+          error: `Order is not eligible for delivery assignment (status: ${orderRow.status}, payment: ${orderRow.payment_status}).`,
+        };
+      }
+
+      // 3. Check existing assignment
+      const [existingAssignments] = await connection.query<RowDataPacket[]>(
+        `SELECT * FROM delivery_assignments WHERE clean_order_id = ? FOR UPDATE`,
+        [cleanId]
+      );
+
+      const existing = existingAssignments.length > 0 ? existingAssignments[0] : null;
+
+      // If already assigned and this is NOT a manual reassignment, preserve existing assignment
+      if (existing && existing.status === 'assigned' && !params.isManual) {
+        await connection.commit();
+        return {
+          success: true,
+          assigned: true,
+          orderId: actualOrderId,
+          employeeId: existing.employee_id,
+          employeeName: existing.employee_name,
+          assignedBy: existing.assigned_by,
+          assignedAt: existing.assigned_at ? new Date(existing.assigned_at).toISOString() : new Date().toISOString(),
+          status: existing.status,
+          alreadyAssigned: true,
+        };
+      }
+
+      // 4. Resolve target employee
+      let targetEmployee: { admin_id: string; full_name: string } | null = null;
+
+      if (params.employeeId) {
+        // Manual assignment
+        const [empRows] = await connection.query<RowDataPacket[]>(
+          `SELECT admin_id, full_name, status, role FROM admins WHERE admin_id = ? LIMIT 1`,
+          [params.employeeId]
+        );
+        if (empRows.length === 0 || empRows[0].role !== 'employee') {
+          await connection.rollback();
+          return { success: false, assigned: false, orderId: actualOrderId, error: 'Target employee account not found.' };
+        }
+        if (empRows[0].status !== 'active') {
+          await connection.rollback();
+          return { success: false, assigned: false, orderId: actualOrderId, error: 'Cannot assign order to an inactive employee.' };
+        }
+        targetEmployee = { admin_id: empRows[0].admin_id, full_name: empRows[0].full_name };
+      } else {
+        // Automatic assignment based on workload & fair rotation
+        targetEmployee = await findBestEligibleEmployeeForAssignment(connection);
+        if (!targetEmployee) {
+          // No active employee available: leave order unassigned
+          await connection.query(
+            `UPDATE orders
+             SET assigned_employee_id = NULL,
+                 assigned_employee_name = NULL,
+                 assignment_status = 'unassigned'
+             WHERE order_id IN (?, ?) OR LOWER(REPLACE(order_id, '#', '')) = ?`,
+            [rawOrderId, altId, cleanId]
+          );
+          await connection.commit();
+          return {
+            success: false,
+            assigned: false,
+            unassigned: true,
+            reason: 'NO_ACTIVE_EMPLOYEES',
+            orderId: actualOrderId,
+            error: 'No active delivery employees available for assignment.',
+          };
+        }
+      }
+
+      const assignedBy = params.assignedBy || (params.isManual ? 'ADMIN' : 'SYSTEM_AUTO');
+      const now = new Date();
+
+      // 5. Insert / Update delivery_assignments
+      await connection.query(
+        `INSERT INTO delivery_assignments (
+           order_id, clean_order_id, employee_id, employee_name, assigned_by, status, assigned_at
+         )
+         VALUES (?, ?, ?, ?, ?, 'assigned', NOW())
+         ON DUPLICATE KEY UPDATE
+           employee_id = VALUES(employee_id),
+           employee_name = VALUES(employee_name),
+           assigned_by = VALUES(assigned_by),
+           status = 'assigned',
+           assigned_at = NOW(),
+           delivered_at = NULL`,
+        [actualOrderId, cleanId, targetEmployee.admin_id, targetEmployee.full_name, assignedBy]
+      );
+
+      // 6. Update orders columns
+      await connection.query(
+        `UPDATE orders
+         SET assigned_employee_id = ?,
+             assigned_employee_name = ?,
+             assigned_at = NOW(),
+             assigned_by = ?,
+             assignment_status = 'assigned'
+         WHERE order_id IN (?, ?) OR LOWER(REPLACE(order_id, '#', '')) = ?`,
+        [targetEmployee.admin_id, targetEmployee.full_name, assignedBy, actualOrderId, altId, cleanId]
+      );
+
+      // 7. Update employee's last_assigned_at in admins for fair rotation
+      await connection.query(
+        `UPDATE admins SET last_assigned_at = NOW() WHERE admin_id = ?`,
+        [targetEmployee.admin_id]
+      );
+
+      await connection.commit();
+
+      return {
+        success: true,
+        assigned: true,
+        orderId: actualOrderId,
+        employeeId: targetEmployee.admin_id,
+        employeeName: targetEmployee.full_name,
+        assignedBy,
+        assignedAt: now.toISOString(),
+        status: 'assigned',
+      };
+    } catch (err: any) {
+      await connection.rollback();
+      console.error(`[MySQL] Assignment error for order ${rawOrderId}:`, err?.message);
+      return {
+        success: false,
+        assigned: false,
+        orderId: rawOrderId,
+        error: err?.message || 'Database transaction error during order assignment.',
+      };
+    } finally {
+      connection.release();
+    }
+  });
+}
+
+/**
+ * Automatically assigns a single order if eligible.
+ */
+export async function autoAssignOrder(orderId: string): Promise<{
+  success: boolean;
+  assigned: boolean;
+  reason?: string;
+  orderId: string;
+  employeeId?: string;
+  employeeName?: string;
+  unassigned?: boolean;
+  alreadyAssigned?: boolean;
+  error?: string;
+}> {
+  return assignOrderToEmployeeInDb({ orderId, isManual: false });
+}
+
+/**
+ * Automatically assigns all unassigned eligible orders to active employees.
+ */
+export async function autoAssignEligibleOrders(): Promise<{
+  totalEligible: number;
+  assignedCount: number;
+  unassignedCount: number;
+  results: any[];
+}> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(`
+      SELECT o.order_id, o.status, o.payment_status, o.created_at, da.id as assignment_id, da.status as assignment_status
+      FROM orders o
+      LEFT JOIN delivery_assignments da ON (
+        da.clean_order_id = LOWER(REPLACE(o.order_id, '#', '')) AND da.status = 'assigned'
+      )
+      WHERE LOWER(o.status) NOT IN ('delivered', 'cancelled', 'canceled', 'returned', 'refunded')
+        AND (
+          o.payment_status IS NULL
+          OR UPPER(o.payment_status) NOT IN ('REJECTED', 'FAILED', 'INITIATED')
+        )
+        AND da.id IS NULL
+      ORDER BY o.created_at ASC
+    `);
+
+    const results: any[] = [];
+    let assignedCount = 0;
+    let unassignedCount = 0;
+
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const clean = normalizeOrderId(r.order_id);
+      if (seen.has(clean)) continue;
+      seen.add(clean);
+
+      const res = await assignOrderToEmployeeInDb({ orderId: r.order_id, isManual: false });
+      results.push(res);
+      if (res.success && !res.unassigned) {
+        assignedCount++;
+      } else {
+        unassignedCount++;
+      }
+    }
+
+    return {
+      totalEligible: seen.size,
+      assignedCount,
+      unassignedCount,
+      results,
+    };
+  } catch (err: any) {
+    console.error('[MySQL] Error in autoAssignEligibleOrders:', err?.message);
+    throw err;
+  }
+}
+
+/**
+ * Marks an assignment as delivered in the database.
+ * Validates ownership if an employeeId is supplied.
+ */
+export async function markAssignmentDeliveredInDb(
+  orderId: string,
+  employeeId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const pool = getPool();
+  const cleanId = normalizeOrderId(orderId);
+  const altId = orderId.startsWith('#') ? orderId.slice(1) : `#${orderId}`;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [assignments] = await connection.query<RowDataPacket[]>(
+      `SELECT * FROM delivery_assignments WHERE clean_order_id = ? FOR UPDATE`,
+      [cleanId]
+    );
+
+    if (assignments.length > 0) {
+      const assign = assignments[0];
+      if (employeeId && assign.employee_id !== employeeId) {
+        await connection.rollback();
+        return {
+          success: false,
+          error: `Unauthorized: Order ${orderId} is assigned to ${assign.employee_name || assign.employee_id}, not you.`,
+        };
+      }
+
+      await connection.query(
+        `UPDATE delivery_assignments
+         SET status = 'delivered', delivered_at = NOW()
+         WHERE clean_order_id = ?`,
+        [cleanId]
+      );
+    }
+
+    await connection.query(
+      `UPDATE orders
+       SET status = 'Delivered',
+           assignment_status = 'delivered'
+       WHERE order_id IN (?, ?) OR LOWER(REPLACE(order_id, '#', '')) = ?`,
+      [orderId, altId, cleanId]
+    );
+
+    await connection.commit();
+
+    // Trigger autoAssignEligibleOrders asynchronously to assign waiting orders to the freed employee
+    autoAssignEligibleOrders().catch((e) =>
+      console.warn('[AutoAssign] Background trigger after delivery error:', e?.message)
+    );
+
+    return { success: true };
+  } catch (err: any) {
+    await connection.rollback();
+    console.error(`[MySQL] Error marking assignment delivered:`, err?.message);
+    return { success: false, error: err?.message || 'Database error completing delivery.' };
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Retrieves orders assigned to a specific employee directly from MySQL.
+ */
+export async function getEmployeeAssignedOrdersFromDb(
+  employeeId: string,
+  includeDelivered: boolean = false
+): Promise<any[]> {
+  const pool = getPool();
+  try {
+    const statusClause = includeDelivered
+      ? `AND LOWER(o.status) NOT IN ('cancelled', 'canceled', 'returned', 'refunded')`
+      : `AND da.status = 'assigned' AND LOWER(o.status) NOT IN ('delivered', 'cancelled', 'canceled', 'returned', 'refunded')`;
+
+    const sql = `
+      SELECT 
+        o.order_id as id,
+        o.customer_id as customerId,
+        o.customer_name as customerName,
+        o.email as customerEmail,
+        o.mobile as customerPhone,
+        o.delivery_address as deliveryAddress,
+        o.delivery_time_slot as deliveryTimeSlot,
+        o.payment_method as paymentMethod,
+        o.payment_status as paymentStatus,
+        o.status as status,
+        o.subtotal as subtotal,
+        o.discount as discount,
+        o.total as total,
+        o.created_at as createdAt,
+        da.employee_id as assignedEmployeeId,
+        da.employee_name as assignedEmployeeName,
+        da.assigned_at as assignedAt,
+        da.assigned_by as assignedBy,
+        da.status as assignmentStatus
+      FROM delivery_assignments da
+      JOIN orders o ON (
+        o.order_id = da.order_id OR
+        o.order_id = CONCAT('#', da.order_id) OR
+        da.order_id = CONCAT('#', o.order_id) OR
+        LOWER(REPLACE(o.order_id, '#', '')) = da.clean_order_id
+      )
+      WHERE da.employee_id = ?
+        ${statusClause}
+      ORDER BY da.assigned_at DESC
+    `;
+
+    const [rows] = await pool.query<RowDataPacket[]>(sql, [employeeId]);
+
+    const seen = new Set<string>();
+    const orders: any[] = [];
+
+    for (const r of rows) {
+      const cleanKey = normalizeOrderId(r.id);
+      if (seen.has(cleanKey)) continue;
+      seen.add(cleanKey);
+
+      const rawMethod = String(r.paymentMethod || '').trim();
+      const isCod =
+        !rawMethod ||
+        rawMethod.toLowerCase().includes('cash') ||
+        rawMethod.toUpperCase() === 'COD' ||
+        rawMethod === 'Cash on Delivery';
+      const formattedMethod = isCod ? 'COD' : (rawMethod || 'UPI');
+      const displayOrderId = String(r.id || '').startsWith('#') ? String(r.id) : `#${r.id}`;
+
+      orders.push({
+        id: displayOrderId,
+        orderId: displayOrderId,
+        cleanOrderId: cleanKey,
+        customerId: r.customerId || '',
+        customerName: r.customerName || 'Customer',
+        customerEmail: r.customerEmail || '',
+        customerPhone: r.customerPhone || '',
+        deliveryAddress: r.deliveryAddress || '',
+        deliveryTimeSlot: r.deliveryTimeSlot || '',
+        paymentMethod: formattedMethod,
+        paymentStatus: r.paymentStatus || (isCod ? 'PENDING_COLLECTION' : 'COMPLETED'),
+        status: r.status || 'Picking',
+        deliveryStatus: r.status || 'Picking',
+        subtotal: Number(r.subtotal) || 0,
+        discount: Number(r.discount) || 0,
+        total: Number(r.total) || 0,
+        amount: Number(r.total) || 0,
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        assignedEmployeeId: r.assignedEmployeeId,
+        assignedEmployeeName: r.assignedEmployeeName,
+        assignedAt: r.assignedAt ? new Date(r.assignedAt).toISOString() : null,
+        assignedBy: r.assignedBy,
+        assignmentStatus: r.assignmentStatus,
+      });
+    }
+
+    return orders;
+  } catch (err: any) {
+    console.error(`[MySQL] Error fetching assigned orders for ${employeeId}:`, err?.message);
+    throw err;
+  }
+}
+
+/**
+ * Retrieves the current assignment record for a specific order.
+ */
+export async function getOrderAssignmentFromDb(orderId: string): Promise<DeliveryAssignmentRecord | null> {
+  const pool = getPool();
+  const cleanId = normalizeOrderId(orderId);
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT * FROM delivery_assignments WHERE clean_order_id = ? LIMIT 1`,
+      [cleanId]
+    );
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      id: r.id,
+      orderId: r.order_id,
+      cleanOrderId: r.clean_order_id,
+      employeeId: r.employee_id,
+      employeeName: r.employee_name,
+      assignedBy: r.assigned_by,
+      status: r.status,
+      assignedAt: r.assigned_at ? new Date(r.assigned_at).toISOString() : new Date().toISOString(),
+      deliveredAt: r.delivered_at ? new Date(r.delivered_at).toISOString() : null,
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    };
+  } catch (err: any) {
+    console.error(`[MySQL] Error fetching assignment for ${orderId}:`, err?.message);
+    return null;
+  }
+}

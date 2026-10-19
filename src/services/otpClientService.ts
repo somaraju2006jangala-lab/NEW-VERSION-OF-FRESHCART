@@ -84,12 +84,24 @@ export async function generateOrderOtp(
  */
 export async function verifyOrderOtp(
   orderId: string,
-  otp: string
+  otp: string,
+  authToken?: string
 ): Promise<OtpVerifyResult> {
   try {
+    const token =
+      authToken ||
+      (typeof window !== 'undefined'
+        ? localStorage.getItem('freshcart_employee_token') ||
+          localStorage.getItem('freshcart_admin_token')
+        : undefined);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch('/api/otp/verify', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ orderId, otp }),
     });
     return await res.json();

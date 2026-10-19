@@ -1187,6 +1187,23 @@ export interface PendingDeliveryOrder {
   verifiedAt?: string | null;
   verifiedBy?: string | null;
   createdAt: string;
+  assignedEmployeeId?: string | null;
+  assignedEmployeeName?: string | null;
+  assignedAt?: string | null;
+  assignedBy?: string | null;
+  assignmentStatus?: string;
+}
+
+export interface ActiveDeliveryEmployee {
+  employeeId: string;
+  fullName: string;
+  name?: string;
+  email: string;
+  phone?: string;
+  status?: string;
+  workload: number;
+  currentWorkload?: number;
+  lastAssignedAt?: string | null;
 }
 
 /**
@@ -1197,8 +1214,11 @@ export async function fetchOrdersToDeliverFromBackend(params?: {
   limit?: number;
 }): Promise<{
   success: boolean;
-  orders?: PendingDeliveryOrder[];
-  total?: number;
+  orders: PendingDeliveryOrder[];
+  total: number;
+  assignedCount?: number;
+  unassignedCount?: number;
+  activeEmployees?: ActiveDeliveryEmployee[];
   page?: number;
   limit?: number;
   totalPages?: number;
@@ -1228,14 +1248,128 @@ export async function fetchOrdersToDeliverFromBackend(params?: {
         success: true,
         orders: data.orders,
         total: typeof data.total === 'number' ? data.total : data.orders.length,
+        assignedCount: typeof data.assignedCount === 'number' ? data.assignedCount : undefined,
+        unassignedCount: typeof data.unassignedCount === 'number' ? data.unassignedCount : undefined,
+        activeEmployees: Array.isArray(data.activeEmployees) ? data.activeEmployees : undefined,
         page: data.page,
         limit: data.limit,
         totalPages: data.totalPages,
       };
     }
-    return { success: false, error: data?.error || 'Failed to fetch pending delivery orders.' };
+    return { success: false, orders: [], total: 0, error: data?.error || 'Failed to fetch pending delivery orders.' };
   } catch (err: any) {
-    return { success: false, error: err?.message || 'Network error fetching pending orders.' };
+    return { success: false, orders: [], total: 0, error: err?.message || 'Network error fetching pending orders.' };
+  }
+}
+
+/**
+ * Fetches current delivery orders assigned to the authenticated employee directly from MySQL.
+ */
+export async function fetchEmployeeAssignedDeliveries(includeDelivered: boolean = false): Promise<{
+  success: boolean;
+  orders: PendingDeliveryOrder[];
+  workload?: number;
+  total: number;
+  error?: string;
+}> {
+  try {
+    const token = getStoredEmployeeToken();
+    if (!token) {
+      return { success: false, orders: [], total: 0, error: 'Employee not authenticated.' };
+    }
+
+    const res = await fetch(`/api/employee/assigned-deliveries${includeDelivered ? '?includeDelivered=true' : ''}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success && Array.isArray(data.orders)) {
+      return {
+        success: true,
+        orders: data.orders,
+        workload: typeof data.workload === 'number' ? data.workload : data.orders.length,
+        total: typeof data.total === 'number' ? data.total : data.orders.length,
+      };
+    }
+    return { success: false, orders: [], total: 0, error: data?.error || 'Failed to fetch assigned deliveries.' };
+  } catch (err: any) {
+    return { success: false, orders: [], total: 0, error: err?.message || 'Network error fetching assigned deliveries.' };
+  }
+}
+
+/**
+ * Manually assigns or reassigns an eligible order to a specified employee.
+ */
+export async function assignOrderToEmployee(orderId: string, employeeId: string): Promise<{
+  success: boolean;
+  orderId?: string;
+  assignedEmployeeId?: string;
+  assignedEmployeeName?: string;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const adminToken = getStoredAdminToken();
+    const cleanId = orderId.replace(/^#/, '');
+    const res = await fetch(`/api/admin/orders/${encodeURIComponent(cleanId)}/assign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-role': 'admin',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+      body: JSON.stringify({ employeeId }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      return {
+        success: true,
+        orderId: data.orderId,
+        assignedEmployeeId: data.assignedEmployeeId,
+        assignedEmployeeName: data.assignedEmployeeName,
+        message: data.message,
+      };
+    }
+    return { success: false, error: data?.error || 'Failed to assign order.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error while assigning order.' };
+  }
+}
+
+/**
+ * Triggers automatic employee delivery assignment across all eligible unassigned orders.
+ */
+export async function triggerAutoAssignOrders(): Promise<{
+  success: boolean;
+  assignedCount?: number;
+  unassignedCount?: number;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const adminToken = getStoredAdminToken();
+    const res = await fetch('/api/admin/orders/auto-assign', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-role': 'admin',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      return {
+        success: true,
+        assignedCount: data.assignedCount,
+        unassignedCount: data.unassignedCount,
+        message: data.message,
+      };
+    }
+    return { success: false, error: data?.error || 'Failed to trigger automatic assignment.' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error triggering auto-assignment.' };
   }
 }
 

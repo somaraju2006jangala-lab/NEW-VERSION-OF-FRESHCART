@@ -78,6 +78,16 @@ import {
   resetEmployeePasswordInDb,
   toggleEmployeeStatusInDb,
   deleteEmployeeFromDb,
+  getEmployeeAssignedOrdersFromDb,
+  assignOrderToEmployeeInDb,
+  autoAssignOrder,
+  autoAssignEligibleOrders,
+  markAssignmentDeliveredInDb,
+  getOrderAssignmentFromDb,
+  getActiveDeliveryEmployeesFromDb,
+  getEmployeePendingWorkloadInDb,
+  normalizeOrderId,
+  isOrderEligibleForDelivery,
   type AdminRecord,
 } from './db.ts';
 
@@ -1334,9 +1344,19 @@ apiRouter.get('/api/orders', async (req: Request, res: Response) => {
     const auth = extractAuthCustomer(req);
     const queryCustId = (req.query.customerId as string) || '';
 
+    // Enforce employee backend isolation: Employees only see their own assigned deliveries
+    if (adminAuth.authenticated && adminAuth.admin?.role === 'employee') {
+      const orders = await getEmployeeAssignedOrdersFromDb(
+        adminAuth.admin.admin_id,
+        req.query.includeDelivered === 'true'
+      );
+      sendJson(res, 200, { success: true, orders, total: orders.length });
+      return;
+    }
+
     let targetCustomerId = '';
-    if (adminAuth.authenticated || req.headers['x-admin-role'] === 'admin' || req.headers['x-admin-role'] === 'employee') {
-      targetCustomerId = queryCustId; // Staff can filter by customer or see all orders
+    if (adminAuth.authenticated || req.headers['x-admin-role'] === 'admin') {
+      targetCustomerId = queryCustId; // Admins can filter by customer or see all orders
     } else if (auth.authenticated && auth.customerId) {
       targetCustomerId = auth.customerId; // Customer only sees their own orders
     } else if (queryCustId) {
@@ -1353,10 +1373,24 @@ apiRouter.get('/api/orders', async (req: Request, res: Response) => {
 /**
  * GET /api/orders/:id
  * Retrieves an order by ID.
+ * Enforces employee delivery isolation: Employees cannot access other employees' orders.
  */
 apiRouter.get('/api/orders/:id', async (req: Request, res: Response) => {
   try {
     const orderId = decodeURIComponent(req.params.id);
+    const adminAuth = await extractAdminAuth(req);
+
+    if (adminAuth.authenticated && adminAuth.admin?.role === 'employee') {
+      const assignment = await getOrderAssignmentFromDb(orderId);
+      if (assignment && assignment.employeeId !== adminAuth.admin.admin_id) {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Access forbidden: You can only view orders assigned to you.',
+        });
+        return;
+      }
+    }
+
     const order = await findOrderInDb(orderId);
     if (!order) {
       sendJson(res, 404, { success: false, error: 'Order not found.' });
@@ -1390,6 +1424,19 @@ apiRouter.post(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-
     }
 
     const orderId = decodeURIComponent(req.params.id);
+
+    // Validate employee assignment ownership
+    if (auth.admin.role === 'employee') {
+      const assignment = await getOrderAssignmentFromDb(orderId);
+      if (assignment && assignment.employeeId !== auth.admin.admin_id) {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Unauthorized: You cannot confirm delivery or cash collection for an order assigned to another employee.',
+        });
+        return;
+      }
+    }
+
     const staffName = auth.admin.full_name || auth.admin.admin_id || (auth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
     const { markDelivered } = req.body || {};
     const shouldMarkDelivered = Boolean(markDelivered);
@@ -1418,6 +1465,13 @@ apiRouter.post(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-
         error: result.error || 'Failed to confirm cash collection.',
       });
       return;
+    }
+
+    if (shouldMarkDelivered) {
+      await markAssignmentDeliveredInDb(
+        orderId,
+        auth.admin.role === 'employee' ? auth.admin.admin_id : undefined
+      );
     }
 
     sendJson(res, 200, {
@@ -1445,6 +1499,19 @@ apiRouter.put(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-c
     }
 
     const orderId = decodeURIComponent(req.params.id);
+
+    // Validate employee assignment ownership
+    if (auth.admin.role === 'employee') {
+      const assignment = await getOrderAssignmentFromDb(orderId);
+      if (assignment && assignment.employeeId !== auth.admin.admin_id) {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Unauthorized: You cannot confirm delivery or cash collection for an order assigned to another employee.',
+        });
+        return;
+      }
+    }
+
     const staffName = auth.admin.full_name || auth.admin.admin_id || (auth.admin.role === 'employee' ? 'Operations Employee' : 'Admin');
     const { markDelivered } = req.body || {};
     const shouldMarkDelivered = Boolean(markDelivered);
@@ -1475,10 +1542,18 @@ apiRouter.put(['/api/orders/:id/confirm-cash-collection', '/orders/:id/confirm-c
       return;
     }
 
+    if (shouldMarkDelivered) {
+      await markAssignmentDeliveredInDb(
+        orderId,
+        auth.admin.role === 'employee' ? auth.admin.admin_id : undefined
+      );
+    }
+
     sendJson(res, 200, {
       success: true,
       message: 'Cash collection confirmed successfully.',
       paymentStatus: 'COLLECTED',
+      status: shouldMarkDelivered ? 'Delivered' : undefined,
       verifiedAt: result.verifiedAt,
       verifiedBy: result.verifiedBy,
     });
@@ -1603,11 +1678,49 @@ apiRouter.put('/api/orders/:id/status', async (req: Request, res: Response) => {
       return;
     }
 
-    const updated = await updateOrderStatusInDb(orderId, status);
-    if (!updated) {
-      sendJson(res, 500, { success: false, error: 'Failed to update order status.' });
+    const auth = await extractAdminAuth(req);
+    const order = await findOrderInDb(orderId);
+    if (!order) {
+      sendJson(res, 404, { success: false, error: 'Order not found.' });
       return;
     }
+
+    // If caller is an authenticated employee, validate assignment ownership & prevent duplicate delivery
+    if (auth.authenticated && auth.admin?.role === 'employee') {
+      const assignment = await getOrderAssignmentFromDb(orderId);
+      if (assignment && assignment.employeeId !== auth.admin.admin_id) {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Unauthorized: You cannot complete delivery for an order assigned to another employee.',
+        });
+        return;
+      }
+      if (status.toLowerCase() === 'delivered' && order.status?.toLowerCase() === 'delivered') {
+        sendJson(res, 400, {
+          success: false,
+          error: 'Order is already marked as Delivered.',
+        });
+        return;
+      }
+    }
+
+    if (status.toLowerCase() === 'delivered') {
+      const deliveredResult = await markAssignmentDeliveredInDb(
+        orderId,
+        auth.admin?.role === 'employee' ? auth.admin.admin_id : undefined
+      );
+      if (!deliveredResult.success) {
+        sendJson(res, 400, { success: false, error: deliveredResult.error || 'Failed to complete delivery.' });
+        return;
+      }
+    } else {
+      const updated = await updateOrderStatusInDb(orderId, status);
+      if (!updated) {
+        sendJson(res, 500, { success: false, error: 'Failed to update order status.' });
+        return;
+      }
+    }
+
     sendJson(res, 200, { success: true, message: 'Status updated successfully.' });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Server error updating status.' });
@@ -1831,11 +1944,33 @@ apiRouter.post(['/api/otp/verify', '/otp/verify', '/verify'], async (req: Reques
       return;
     }
 
+    const auth = await extractAdminAuth(req);
+    // If caller is an authenticated employee, validate assignment ownership
+    if (auth.authenticated && auth.admin?.role === 'employee') {
+      const assignment = await getOrderAssignmentFromDb(orderId);
+      if (assignment && assignment.employeeId !== auth.admin.admin_id) {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Unauthorized: You cannot verify OTP for an order assigned to another employee.',
+          status: 'Picking',
+        });
+        return;
+      }
+    }
+
     const result = await verifyOrderOtp(orderId, otp);
     if (!result.success) {
       sendJson(res, 400, result);
       return;
     }
+
+    if (result.status === 'Delivered') {
+      await markAssignmentDeliveredInDb(
+        orderId,
+        auth.admin?.role === 'employee' ? auth.admin.admin_id : undefined
+      );
+    }
+
     sendJson(res, 200, result);
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: 'Backend error verifying OTP.', status: 'Picking' });
@@ -2120,6 +2255,50 @@ apiRouter.get(['/api/employee/me', '/employee/me'], async (req: Request, res: Re
     });
   }
 });
+
+/**
+ * GET /api/employee/assigned-deliveries
+ * Authoritatively retrieves current delivery orders assigned to the logged-in employee.
+ * Enforces employee identity check on backend.
+ */
+apiRouter.get(
+  ['/api/employee/assigned-deliveries', '/employee/assigned-deliveries'],
+  async (req: Request, res: Response) => {
+    try {
+      const auth = await extractAdminAuth(req);
+      if (!auth.authenticated || !auth.admin) {
+        sendJson(res, auth.statusCode || 401, {
+          success: false,
+          error: auth.error || 'Employee authentication required.',
+        });
+        return;
+      }
+      if (auth.admin.role !== 'employee') {
+        sendJson(res, 403, {
+          success: false,
+          error: 'Forbidden: Access restricted to employee accounts.',
+        });
+        return;
+      }
+
+      const includeDelivered = req.query.includeDelivered === 'true';
+      const orders = await getEmployeeAssignedOrdersFromDb(auth.admin.admin_id, includeDelivered);
+
+      sendJson(res, 200, {
+        success: true,
+        employeeId: auth.admin.admin_id,
+        employeeName: auth.admin.full_name,
+        orders,
+        total: orders.length,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, {
+        success: false,
+        error: err?.message || 'Failed to retrieve assigned deliveries.',
+      });
+    }
+  }
+);
 
 /**
  * GET /api/admin/users
@@ -2905,12 +3084,91 @@ apiRouter.get(
       const limit = rawLimit && !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : undefined;
 
       const result = await getOrdersToDeliverFromDb({ page, limit });
+
+      // Provide active employees list with their live pending workload for easy manual assignment
+      const activeEmps = await getActiveDeliveryEmployeesFromDb();
+      const activeEmployees = await Promise.all(
+        activeEmps.map(async (e) => ({
+          employeeId: e.admin_id,
+          fullName: e.full_name,
+          email: e.email,
+          workload: await getEmployeePendingWorkloadInDb(e.admin_id),
+        }))
+      );
+
       sendJson(res, 200, {
         success: true,
+        activeEmployees,
         ...result,
       });
     } catch (err: any) {
       sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve orders to deliver.' });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/orders/:id/assign
+ * Allows authorized admins to manually assign or reassign an order to an employee.
+ */
+apiRouter.post(
+  ['/api/admin/orders/:id/assign', '/admin/orders/:id/assign'],
+  async (req: Request, res: Response) => {
+    try {
+      const auth = await extractAdminAuth(req);
+      if (!requireAdminRole(auth, res)) return;
+
+      const orderId = decodeURIComponent(req.params.id);
+      const { employeeId } = req.body || {};
+
+      if (!employeeId || typeof employeeId !== 'string') {
+        sendJson(res, 400, { success: false, error: 'Employee ID is required for assignment.' });
+        return;
+      }
+
+      const assignedByName = auth.admin?.full_name || auth.admin?.admin_id || 'Admin';
+      const result = await assignOrderToEmployeeInDb({
+        orderId,
+        employeeId: employeeId.trim(),
+        assignedBy: assignedByName,
+        isManual: true,
+      });
+
+      if (!result.success) {
+        sendJson(res, 400, result);
+        return;
+      }
+
+      sendJson(res, 200, {
+        success: true,
+        message: `Order ${orderId} assigned to ${result.employeeName} (${result.employeeId}) successfully.`,
+        assignment: result,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Server error assigning order.' });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/orders/auto-assign
+ * Triggers automatic employee delivery assignment across all eligible unassigned orders.
+ */
+apiRouter.post(
+  ['/api/admin/orders/auto-assign', '/admin/orders/auto-assign'],
+  async (req: Request, res: Response) => {
+    try {
+      const auth = await extractAdminAuth(req);
+      if (!requireAdminRole(auth, res)) return;
+
+      const result = await autoAssignEligibleOrders();
+      sendJson(res, 200, {
+        success: true,
+        message: `Automatic assignment complete: ${result.assignedCount} assigned, ${result.unassignedCount} remaining unassigned.`,
+        ...result,
+      });
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, error: err?.message || 'Server error running automatic assignment.' });
     }
   }
 );

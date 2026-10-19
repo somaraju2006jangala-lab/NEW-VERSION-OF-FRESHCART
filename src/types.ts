@@ -71,6 +71,11 @@ export interface Order {
   verifiedAt?: string;
   verifiedBy?: string;
   verificationNotes?: string;
+  assignedEmployeeId?: string;
+  assignedEmployeeName?: string;
+  assignedAt?: string | null;
+  assignedBy?: string | null;
+  assignmentStatus?: 'assigned' | 'delivered' | 'cancelled' | 'unassigned' | string;
 }
 
 export interface CustomerAddress {

@@ -21,10 +21,19 @@ import { useLanguage } from '../context/LanguageContext';
 import {
   fetchOrdersToDeliverFromBackend,
   PendingDeliveryOrder,
+  ActiveDeliveryEmployee,
   getStoredAdminToken,
+  assignOrderToEmployee,
+  triggerAutoAssignOrders,
 } from '../services/authService';
 import { getStoredEmployeeToken } from '../services/employeeService';
 import { verifyOrderOtp } from '../services/otpClientService';
+import {
+  UserCheck,
+  AlertTriangle,
+  Sparkles,
+  User,
+} from 'lucide-react';
 
 interface OrdersToDeliverModalProps {
   isOpen: boolean;
@@ -45,8 +54,16 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
 
   const [orders, setOrders] = useState<PendingDeliveryOrder[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
+  const [assignedCount, setAssignedCount] = useState<number>(0);
+  const [unassignedCount, setUnassignedCount] = useState<number>(0);
+  const [activeEmployees, setActiveEmployees] = useState<ActiveDeliveryEmployee[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Assignment states
+  const [activeAssignOrderId, setActiveAssignOrderId] = useState<string | null>(null);
+  const [assigningOrderId, setAssigningOrderId] = useState<string | null>(null);
+  const [isAutoAssigning, setIsAutoAssigning] = useState<boolean>(false);
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -76,6 +93,19 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
       if (res.success && Array.isArray(res.orders)) {
         setOrders(res.orders);
         setTotalCount(typeof res.total === 'number' ? res.total : res.orders.length);
+        if (typeof res.assignedCount === 'number') {
+          setAssignedCount(res.assignedCount);
+        } else {
+          setAssignedCount(res.orders.filter((o) => o.assignedEmployeeId).length);
+        }
+        if (typeof res.unassignedCount === 'number') {
+          setUnassignedCount(res.unassignedCount);
+        } else {
+          setUnassignedCount(res.orders.filter((o) => !o.assignedEmployeeId).length);
+        }
+        if (Array.isArray(res.activeEmployees)) {
+          setActiveEmployees(res.activeEmployees);
+        }
       } else {
         setError(res.error || 'Failed to fetch pending delivery orders from server.');
       }
@@ -85,6 +115,55 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
       setIsLoading(false);
     }
   }, []);
+
+  // Manual assign / reassign order
+  const handleAssignOrder = async (orderId: string, employeeId: string) => {
+    setAssigningOrderId(orderId);
+    setActionSuccessMessage(null);
+    try {
+      const res = await assignOrderToEmployee(orderId, employeeId);
+      if (res.success) {
+        setActionSuccessMessage(
+          `Order ${orderId} assigned to ${res.assignedEmployeeName || res.assignedEmployeeId || employeeId} successfully.`
+        );
+        setActiveAssignOrderId(null);
+        await loadOrders();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+        }
+      } else {
+        alert(res.error || 'Failed to assign order to employee.');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error occurred while assigning delivery order.');
+    } finally {
+      setAssigningOrderId(null);
+    }
+  };
+
+  // Auto assign all eligible unassigned orders
+  const handleAutoAssignAll = async () => {
+    setIsAutoAssigning(true);
+    setActionSuccessMessage(null);
+    try {
+      const res = await triggerAutoAssignOrders();
+      if (res.success) {
+        setActionSuccessMessage(
+          res.message || `Auto-assignment completed. ${res.assignedCount ?? 0} orders assigned.`
+        );
+        await loadOrders();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+        }
+      } else {
+        alert(res.error || 'Failed to auto-assign delivery orders.');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error occurred during auto-assignment.');
+    } finally {
+      setIsAutoAssigning(false);
+    }
+  };
 
   // Refresh on modal open
   useEffect(() => {
@@ -266,25 +345,54 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
               <Truck className="w-5 h-5 text-[#38bdf8]" />
             </div>
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 id="orders-to-deliver-title" className="text-lg font-bold text-white font-display">
                   {t('ordersToDeliver') || 'Orders to Deliver'}
                 </h3>
                 <span
                   id="modal-orders-to-deliver-count-badge"
-                  className="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-sky-950/90 text-sky-300 border border-sky-500/40"
-                  title="Authoritative count of orders awaiting delivery"
+                  className="px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-sky-950/90 text-sky-300 border border-sky-500/40"
+                  title="Total orders awaiting customer delivery"
                 >
                   {totalCount} Total
                 </span>
+                <span
+                  id="modal-orders-assigned-count-badge"
+                  className="px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-emerald-950/90 text-emerald-300 border border-emerald-500/40"
+                  title="Orders assigned to active delivery employees"
+                >
+                  {assignedCount} Assigned
+                </span>
+                {unassignedCount > 0 && (
+                  <span
+                    id="modal-orders-unassigned-count-badge"
+                    className="px-2 py-0.5 rounded-full text-xs font-bold font-mono bg-amber-950/90 text-amber-300 border border-amber-500/40"
+                    title="Orders awaiting employee assignment"
+                  >
+                    ⚠️ {unassignedCount} Unassigned
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Confirmed orders awaiting customer delivery • Live MySQL database records
+                Confirmed orders awaiting customer delivery • Live MySQL database workload balancing
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {userRole === 'admin' && (
+              <button
+                type="button"
+                id="orders-to-deliver-auto-assign-btn"
+                onClick={handleAutoAssignAll}
+                disabled={isAutoAssigning || unassignedCount === 0 || activeEmployees.length === 0}
+                title="Automatically assign unassigned orders to active employees using current workload"
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 text-xs font-bold shadow-xs"
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isAutoAssigning ? 'animate-spin' : ''}`} />
+                <span>{isAutoAssigning ? 'Assigning...' : 'Auto-Assign Orders'}</span>
+              </button>
+            )}
             <button
               type="button"
               id="orders-to-deliver-refresh-btn"
@@ -307,6 +415,19 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* No active employees warning banner */}
+        {unassignedCount > 0 && activeEmployees.length === 0 && (
+          <div
+            id="orders-to-deliver-no-employee-alert"
+            className="px-5 py-2.5 bg-amber-950/80 border-b border-amber-500/50 text-amber-200 text-xs font-medium flex items-center gap-2"
+          >
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Attention Admin:</strong> {unassignedCount} order(s) remain unassigned because no active delivery employees are currently available in the system. Orders will be assigned once delivery staff become active.
+            </span>
+          </div>
+        )}
 
         {/* Action feedback message */}
         {actionSuccessMessage && (
@@ -448,6 +569,7 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                     <tr className="border-b border-white/10 bg-black/40 text-[11px] font-semibold text-slate-400 uppercase tracking-wider font-mono">
                       <th className="py-3 px-4">Order ID</th>
                       <th className="py-3 px-4">Customer</th>
+                      <th className="py-3 px-4">Assigned To</th>
                       <th className="py-3 px-4">Date & Time</th>
                       <th className="py-3 px-4">Payment</th>
                       <th className="py-3 px-4">Delivery Status</th>
@@ -494,6 +616,114 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono truncate max-w-[170px]">
                               {order.customerPhone || order.customerEmail || 'No contact info'}
+                            </div>
+                          </td>
+
+                          {/* Assigned Employee */}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="relative inline-block text-left">
+                              {order.assignedEmployeeId ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    id={`modal-assigned-pill-${cleanId}`}
+                                    className="px-2 py-0.5 rounded-md text-[11px] font-bold font-mono bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1"
+                                    title={`Assigned at ${order.assignedAt || 'N/A'}`}
+                                  >
+                                    <UserCheck className="w-3 h-3 text-emerald-400" />
+                                    <span>{order.assignedEmployeeName || order.assignedEmployeeId}</span>
+                                  </span>
+                                  {userRole === 'admin' && (
+                                    <button
+                                      type="button"
+                                      id={`modal-reassign-btn-${cleanId}`}
+                                      onClick={() =>
+                                        setActiveAssignOrderId(
+                                          activeAssignOrderId === order.id ? null : order.id
+                                        )
+                                      }
+                                      className="text-[10px] text-sky-400 hover:text-white underline cursor-pointer"
+                                    >
+                                      Reassign
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    id={`modal-unassigned-pill-${cleanId}`}
+                                    className="px-2 py-0.5 rounded-md text-[11px] font-bold font-mono bg-amber-950/60 text-amber-300 border border-amber-500/40 inline-flex items-center gap-1"
+                                  >
+                                    <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                    <span>Unassigned</span>
+                                  </span>
+                                  {userRole === 'admin' && (
+                                    <button
+                                      type="button"
+                                      id={`modal-assign-btn-${cleanId}`}
+                                      onClick={() =>
+                                        setActiveAssignOrderId(
+                                          activeAssignOrderId === order.id ? null : order.id
+                                        )
+                                      }
+                                      className="text-[10px] text-emerald-400 hover:text-white font-semibold underline cursor-pointer"
+                                    >
+                                      Assign
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Dropdown Popover for Manual (Re)Assignment */}
+                              {activeAssignOrderId === order.id && (
+                                <div className="absolute left-0 top-full mt-1 z-30 w-72 bg-[#091524] border border-white/20 rounded-xl p-3 shadow-2xl space-y-2">
+                                  <div className="flex items-center justify-between text-xs text-white font-semibold border-b border-white/10 pb-1.5">
+                                    <span>Assign Delivery Employee</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setActiveAssignOrderId(null)}
+                                      className="text-slate-400 hover:text-white"
+                                    >
+                                      &times;
+                                    </button>
+                                  </div>
+                                  {activeEmployees.length === 0 ? (
+                                    <p className="text-[11px] text-amber-400 py-1">
+                                      No active delivery employees available in the database.
+                                    </p>
+                                  ) : (
+                                    <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                                      {activeEmployees.map((emp) => {
+                                        const isCurrent = order.assignedEmployeeId === emp.employeeId;
+                                        return (
+                                          <button
+                                            key={emp.employeeId}
+                                            type="button"
+                                            disabled={assigningOrderId === order.id}
+                                            onClick={() => handleAssignOrder(order.id, emp.employeeId)}
+                                            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors cursor-pointer border ${
+                                              isCurrent
+                                                ? 'bg-emerald-950/60 border-emerald-500/50 text-white font-bold'
+                                                : 'bg-white/5 border-white/10 text-slate-200 hover:bg-white/10 hover:text-white'
+                                            }`}
+                                          >
+                                            <div className="truncate pr-2">
+                                              <p className="font-semibold truncate">{emp.name || emp.fullName}</p>
+                                              <p className="text-[10px] text-slate-400 font-mono">
+                                                ID: {emp.employeeId}
+                                              </p>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 border border-white/10 text-sky-300">
+                                                Load: {emp.currentWorkload ?? emp.workload}
+                                              </span>
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </td>
 
@@ -669,7 +899,7 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                             {order.customerName}
                           </span>
                           <span className="text-[10px] text-slate-400 font-mono block">
-                            {order.customerPhone || 'N/A'}
+                            {order.customerPhone || order.customerEmail || 'N/A'}
                           </span>
                         </div>
                         <div>
@@ -679,6 +909,73 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                           </span>
                         </div>
                       </div>
+
+                      {/* Assigned Employee on Mobile */}
+                      <div className="flex items-center justify-between gap-2 text-xs pt-1 border-t border-white/5">
+                        <span className="text-[10px] text-slate-400">Assigned To:</span>
+                        <div className="flex items-center gap-1.5">
+                          {order.assignedEmployeeId ? (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold font-mono bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1">
+                              <UserCheck className="w-2.5 h-2.5 text-emerald-400" />
+                              <span>{order.assignedEmployeeName || order.assignedEmployeeId}</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold font-mono bg-amber-950/60 text-amber-300 border border-amber-500/40 inline-flex items-center gap-1">
+                              <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
+                              <span>Unassigned</span>
+                            </span>
+                          )}
+                          {userRole === 'admin' && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setActiveAssignOrderId(
+                                  activeAssignOrderId === order.id ? null : order.id
+                                )
+                              }
+                              className="text-[10px] text-sky-400 hover:text-white underline cursor-pointer"
+                            >
+                              {order.assignedEmployeeId ? 'Reassign' : 'Assign'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Mobile Manual Assignment List */}
+                      {activeAssignOrderId === order.id && (
+                        <div className="bg-[#091524] border border-white/20 rounded-xl p-3 space-y-2">
+                          <div className="flex items-center justify-between text-xs text-white font-semibold">
+                            <span>Assign Delivery Employee</span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveAssignOrderId(null)}
+                              className="text-slate-400 hover:text-white"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                          {activeEmployees.length === 0 ? (
+                            <p className="text-[11px] text-amber-400">No active delivery employees available.</p>
+                          ) : (
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {activeEmployees.map((emp) => (
+                                <button
+                                  key={emp.employeeId}
+                                  type="button"
+                                  disabled={assigningOrderId === order.id}
+                                  onClick={() => handleAssignOrder(order.id, emp.employeeId)}
+                                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs flex items-center justify-between bg-white/5 border border-white/10 text-white"
+                                >
+                                  <span>{emp.name || emp.fullName}</span>
+                                  <span className="text-[10px] text-sky-300 font-mono">
+                                    Load: {emp.currentWorkload ?? emp.workload}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/5">
                         <div className="flex items-center gap-1.5">

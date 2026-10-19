@@ -1,14 +1,36 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CustomerOrder } from '../types';
-import { AuthorizedEmployee, clearEmployeeSession } from '../services/employeeService';
+import {
+  AuthorizedEmployee,
+  clearEmployeeSession,
+  getStoredEmployeeToken,
+} from '../services/employeeService';
+import {
+  fetchEmployeeAssignedDeliveries,
+  PendingDeliveryOrder,
+} from '../services/authService';
+import { verifyOrderOtp } from '../services/otpClientService';
+import { formatINR } from '../utils/currency';
+import { formatOrderDateTime } from '../utils/date';
 import { CustomerOrdersLedger } from './CustomerOrdersLedger';
 import { LanguageSelector } from './LanguageSelector';
 import {
-  ShoppingBag,
   ArrowLeft,
   LogOut,
   Shield,
   Sparkles,
+  Truck,
+  MapPin,
+  Phone,
+  Mail,
+  Calendar,
+  Check,
+  Copy,
+  CheckCircle2,
+  AlertCircle,
+  KeyRound,
+  RefreshCw,
+  Search,
 } from 'lucide-react';
 import { USER_AVATAR_URL } from '../data/products';
 
@@ -31,10 +53,157 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
   onEmployeeLogout,
   onUpdateOrderStatus,
 }) => {
+  const [assignedOrders, setAssignedOrders] = useState<PendingDeliveryOrder[]>([]);
+  const [workload, setWorkload] = useState<number>(0);
+  const [isLoadingAssigned, setIsLoadingAssigned] = useState<boolean>(false);
+  const [assignedError, setAssignedError] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Per-order delivery states
+  const [deliveringOrderId, setDeliveringOrderId] = useState<string | null>(null);
+  const [activeOtpOrderId, setActiveOtpOrderId] = useState<string | null>(null);
+  const [otpInputs, setOtpInputs] = useState<Record<string, string>>({});
+  const [otpVerifying, setOtpVerifying] = useState<Record<string, boolean>>({});
+  const [otpErrors, setOtpErrors] = useState<Record<string, string>>({});
+
+  // Fetch strictly assigned deliveries from backend using employee auth token
+  const loadAssignedDeliveries = useCallback(async () => {
+    setIsLoadingAssigned(true);
+    setAssignedError(null);
+    try {
+      const res = await fetchEmployeeAssignedDeliveries();
+      if (res.success && Array.isArray(res.orders)) {
+        setAssignedOrders(res.orders);
+        setWorkload(typeof res.workload === 'number' ? res.workload : res.orders.length);
+      } else {
+        setAssignedError(res.error || 'Failed to retrieve your assigned deliveries.');
+      }
+    } catch (err: any) {
+      setAssignedError(err?.message || 'Network error fetching assigned deliveries.');
+    } finally {
+      setIsLoadingAssigned(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAssignedDeliveries();
+  }, [loadAssignedDeliveries]);
+
+  // Synchronize on global order updates
+  useEffect(() => {
+    const handleSync = () => {
+      loadAssignedDeliveries();
+    };
+    window.addEventListener('freshcart_orders_updated', handleSync);
+    return () => window.removeEventListener('freshcart_orders_updated', handleSync);
+  }, [loadAssignedDeliveries]);
+
   const handleLogout = () => {
     clearEmployeeSession();
     onEmployeeLogout();
   };
+
+  const handleCopyOrderId = (id: string) => {
+    navigator.clipboard?.writeText(id);
+    setCopiedOrderId(id);
+    setTimeout(() => setCopiedOrderId(null), 2000);
+  };
+
+  // Confirm Delivery for COD orders
+  const handleConfirmCodDelivery = async (order: PendingDeliveryOrder) => {
+    setDeliveringOrderId(order.id);
+    setSuccessNotice(null);
+    try {
+      const cleanId = order.id.replace(/^#/, '');
+      const token = getStoredEmployeeToken();
+      const res = await fetch(`/api/orders/${encodeURIComponent(cleanId)}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-role': 'employee',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: 'Delivered' }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.success) {
+        setAssignedOrders((prev) => prev.filter((o) => o.id !== order.id));
+        setWorkload((prev) => Math.max(0, prev - 1));
+        setSuccessNotice(`Order ${order.id} marked as Delivered! Workload updated.`);
+
+        if (onUpdateOrderStatus) {
+          onUpdateOrderStatus(order.id, 'Delivered');
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+        }
+      } else {
+        alert(data?.error || 'Failed to complete delivery.');
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Network error while completing delivery.');
+    } finally {
+      setDeliveringOrderId(null);
+    }
+  };
+
+  // Complete Delivery for Prepaid/UPI orders with OTP
+  const handleVerifyOtpDelivery = async (order: PendingDeliveryOrder) => {
+    const code = (otpInputs[order.id] || '').trim();
+    if (!code || code.length !== 6) {
+      setOtpErrors((prev) => ({ ...prev, [order.id]: 'Please enter a valid 6-digit OTP code.' }));
+      return;
+    }
+
+    setOtpVerifying((prev) => ({ ...prev, [order.id]: true }));
+    setOtpErrors((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const token = getStoredEmployeeToken();
+      const res = await verifyOrderOtp(order.id, code, token || undefined);
+      if (res.success && res.status === 'Delivered') {
+        setAssignedOrders((prev) => prev.filter((o) => o.id !== order.id));
+        setWorkload((prev) => Math.max(0, prev - 1));
+        setSuccessNotice(`Order ${order.id} handover OTP verified! Marked as Delivered.`);
+        setActiveOtpOrderId(null);
+
+        if (onUpdateOrderStatus) {
+          onUpdateOrderStatus(order.id, 'Delivered', { otpVerifiedAt: new Date().toISOString() });
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('freshcart_orders_updated'));
+        }
+      } else {
+        setOtpErrors((prev) => ({
+          ...prev,
+          [order.id]: res.error || 'Invalid OTP. Please ask customer to re-check code.',
+        }));
+      }
+    } catch (err: any) {
+      setOtpErrors((prev) => ({
+        ...prev,
+        [order.id]: err?.message || 'Error communicating with server during OTP verification.',
+      }));
+    } finally {
+      setOtpVerifying((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const filteredAssignedOrders = assignedOrders.filter((order) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    return (
+      order.id.toLowerCase().includes(q) ||
+      order.customerName.toLowerCase().includes(q) ||
+      (order.customerPhone || '').toLowerCase().includes(q) ||
+      (order.customerEmail || '').toLowerCase().includes(q) ||
+      (order.deliveryAddress || '').toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="w-full min-h-screen bg-transparent pb-16 relative z-10 selection:bg-emerald-500 selection:text-black">
@@ -117,16 +286,337 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                   </span>
                 </h2>
                 <p className="text-[12px] text-slate-300 mt-0.5">
-                  Authorized Employee Portal &bull; Customer Orders Ledger fulfillment and delivery verification
+                  Authorized Employee Portal &bull; Automatic Delivery Assignment & Workload Management
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start sm:self-auto font-mono text-[11px] text-slate-400 bg-black/40 px-3 py-1.5 rounded-lg border border-white/10">
-              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-emerald-300 font-semibold">Active Session</span>
+            <div className="flex items-center gap-3 self-start sm:self-auto font-mono text-[11px]">
+              <div
+                id="employee-workload-badge"
+                className="bg-black/40 px-3 py-1.5 rounded-lg border border-emerald-500/30 text-emerald-300 flex items-center gap-2 shadow-xs"
+              >
+                <Truck className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Workload: <strong className="text-white text-xs">{workload}</strong> Pending</span>
+              </div>
+              <div className="text-slate-400 bg-black/40 px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-emerald-300 font-semibold">Active Staff</span>
+              </div>
             </div>
           </div>
+        </div>
+
+        {/* Action feedback message */}
+        {successNotice && (
+          <div className="px-5 py-3 rounded-xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-200 text-xs font-medium flex items-center justify-between shadow-lg animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#10b981] shrink-0" />
+              <span>{successNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSuccessNotice(null)}
+              className="text-emerald-400 hover:text-white ml-2 text-sm leading-none"
+            >
+              &times;
+            </button>
+          </div>
+        )}
+
+        {/* SECTION: My Assigned Deliveries */}
+        <div
+          id="employee-assigned-deliveries-section"
+          className="rounded-2xl border border-white/10 bg-black/30 backdrop-blur-xl p-4 sm:p-6 shadow-xl space-y-4"
+        >
+          {/* Section Header */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-950/80 border border-sky-500/30 flex items-center justify-center text-sky-400 shadow-inner">
+                <Truck className="w-5 h-5 text-[#38bdf8]" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <h3 className="text-lg font-bold text-white font-display">
+                    My Assigned Deliveries
+                  </h3>
+                  <span
+                    id="employee-assigned-orders-count"
+                    className="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono bg-sky-950/90 text-sky-300 border border-sky-500/40"
+                  >
+                    {assignedOrders.length} Assigned
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Live orders assigned to your staff profile based on automated workload balancing
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              {/* Search input if multiple orders */}
+              {assignedOrders.length > 2 && (
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search assigned orders..."
+                    className="pl-8 pr-2.5 py-1 bg-black/40 border border-white/15 rounded-lg text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500 w-44 font-mono"
+                  />
+                </div>
+              )}
+
+              <button
+                type="button"
+                id="employee-refresh-assigned-btn"
+                onClick={loadAssignedDeliveries}
+                disabled={isLoadingAssigned}
+                title="Refresh assigned deliveries from database"
+                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 text-xs font-semibold"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 text-sky-400 ${isLoadingAssigned ? 'animate-spin' : ''}`}
+                />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Assigned Orders Content */}
+          {isLoadingAssigned && assignedOrders.length === 0 ? (
+            <div className="py-12 text-center space-y-3">
+              <RefreshCw className="w-7 h-7 text-sky-400 animate-spin mx-auto" />
+              <p className="text-sm font-medium text-slate-300">
+                Loading your assigned delivery orders...
+              </p>
+            </div>
+          ) : assignedError ? (
+            <div className="py-8 px-4 text-center space-y-3 max-w-md mx-auto">
+              <AlertCircle className="w-8 h-8 text-red-400 mx-auto" />
+              <p className="text-xs text-red-300">{assignedError}</p>
+              <button
+                type="button"
+                onClick={loadAssignedDeliveries}
+                className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold"
+              >
+                Retry
+              </button>
+            </div>
+          ) : assignedOrders.length === 0 ? (
+            <div
+              id="employee-assigned-empty-state"
+              className="py-12 text-center space-y-3 border border-white/5 rounded-xl bg-black/20 p-6"
+            >
+              <div className="w-12 h-12 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-6 h-6 text-[#10b981]" />
+              </div>
+              <h4 className="text-sm font-bold text-white">No Pending Deliveries Assigned</h4>
+              <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                You currently have 0 pending delivery assignments. When new eligible orders are confirmed, the system will automatically assign them to you based on your active workload status.
+              </p>
+            </div>
+          ) : filteredAssignedOrders.length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate-400">
+              No assigned deliveries match your search query "{searchQuery}".
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredAssignedOrders.map((order) => {
+                const cleanId = order.id.replace(/^#/, '');
+                const isCod =
+                  (order.paymentMethod || '').toUpperCase() === 'COD' ||
+                  (order.paymentMethod || '').toLowerCase().includes('cash');
+
+                return (
+                  <div
+                    key={order.id}
+                    id={`employee-assigned-order-card-${cleanId}`}
+                    className="border border-white/15 rounded-xl p-4 bg-black/40 hover:border-emerald-500/40 transition-all duration-150 space-y-3 shadow-md"
+                  >
+                    {/* Header: Order ID & Amount */}
+                    <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[#38bdf8] font-mono text-xs">{order.id}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyOrderId(order.id)}
+                          title="Copy Order ID"
+                          className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors"
+                        >
+                          {copiedOrderId === order.id ? (
+                            <Check className="w-3 h-3 text-[#10b981]" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-bold text-white font-mono text-sm">
+                          {formatINR(order.total)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Customer & Address Details */}
+                    <div className="space-y-1.5 text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-mono">
+                          Customer
+                        </span>
+                        <p className="font-semibold text-white truncate">{order.customerName}</p>
+                      </div>
+
+                      {/* Contact: Phone & Email */}
+                      <div className="flex flex-wrap items-center gap-3 pt-0.5 text-slate-300 font-mono text-[11px]">
+                        {order.customerPhone && (
+                          <a
+                            href={`tel:${order.customerPhone}`}
+                            className="flex items-center gap-1 text-emerald-400 hover:underline"
+                          >
+                            <Phone className="w-3 h-3" />
+                            <span>{order.customerPhone}</span>
+                          </a>
+                        )}
+                        {order.customerEmail && (
+                          <a
+                            href={`mailto:${order.customerEmail}`}
+                            className="flex items-center gap-1 text-sky-400 hover:underline truncate max-w-[180px]"
+                          >
+                            <Mail className="w-3 h-3" />
+                            <span>{order.customerEmail}</span>
+                          </a>
+                        )}
+                      </div>
+
+                      {/* Delivery Address */}
+                      <div className="pt-1">
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-mono block">
+                          Delivery Address
+                        </span>
+                        <div className="flex items-start gap-1.5 text-slate-200 mt-0.5">
+                          <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                          <p className="text-[11px] leading-tight">
+                            {order.deliveryAddress || 'Address on file with customer'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Date & Time */}
+                      <div className="flex items-center gap-1 pt-1 text-[11px] text-slate-400 font-mono">
+                        <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span>Order Placed: {formatOrderDateTime(order.createdAt)}</span>
+                      </div>
+                    </div>
+
+                    {/* Status & Payment Pills */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${
+                            isCod
+                              ? 'bg-amber-950/60 text-amber-300 border-amber-500/40'
+                              : 'bg-indigo-950/60 text-indigo-300 border-indigo-500/40'
+                          }`}
+                        >
+                          {order.paymentMethod}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${
+                            order.paymentStatus === 'COLLECTED' ||
+                            order.paymentStatus === 'COMPLETED' ||
+                            order.paymentStatus === 'PAID'
+                              ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                              : 'bg-yellow-950/60 text-yellow-300 border-yellow-500/40'
+                          }`}
+                        >
+                          ● {order.paymentStatus}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-sky-950/60 text-sky-300 border border-sky-500/40">
+                          ● {order.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Delivery Completion Action */}
+                    <div className="pt-2 border-t border-white/10">
+                      {isCod ? (
+                        <button
+                          type="button"
+                          id={`employee-confirm-delivery-btn-${cleanId}`}
+                          onClick={() => handleConfirmCodDelivery(order)}
+                          disabled={deliveringOrderId === order.id}
+                          className="w-full py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 border border-sky-400/40 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50"
+                        >
+                          <Truck className="w-3.5 h-3.5" />
+                          <span>
+                            {deliveringOrderId === order.id ? 'Completing Delivery...' : 'Confirm Delivery (COD)'}
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            id={`employee-verify-otp-btn-${cleanId}`}
+                            onClick={() =>
+                              setActiveOtpOrderId(activeOtpOrderId === order.id ? null : order.id)
+                            }
+                            className="w-full py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/40 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            <span>
+                              {activeOtpOrderId === order.id ? 'Cancel OTP Input' : 'Enter Handover OTP'}
+                            </span>
+                          </button>
+
+                          {activeOtpOrderId === order.id && (
+                            <div className="bg-black/60 border border-white/20 rounded-xl p-3 space-y-2 animate-in fade-in">
+                              <div className="flex items-center justify-between text-xs text-white font-semibold">
+                                <span>Customer Handover OTP</span>
+                                <span className="text-[10px] text-slate-400">Ask customer for 6-digit code</span>
+                              </div>
+                              <input
+                                type="text"
+                                maxLength={6}
+                                id={`employee-otp-input-${cleanId}`}
+                                value={otpInputs[order.id] || ''}
+                                onChange={(e) => {
+                                  const v = e.target.value.replace(/\D/g, '');
+                                  setOtpInputs((prev) => ({ ...prev, [order.id]: v }));
+                                }}
+                                placeholder="000000"
+                                className="w-full px-3 py-2 bg-black/80 border border-white/25 rounded-lg text-center font-mono text-base tracking-widest text-emerald-400 focus:outline-none focus:border-emerald-500"
+                              />
+                              {otpErrors[order.id] && (
+                                <p className="text-[11px] text-red-400 font-medium text-center">
+                                  {otpErrors[order.id]}
+                                </p>
+                              )}
+                              <button
+                                type="button"
+                                id={`employee-submit-otp-btn-${cleanId}`}
+                                onClick={() => handleVerifyOtpDelivery(order)}
+                                disabled={
+                                  otpVerifying[order.id] || (otpInputs[order.id] || '').length !== 6
+                                }
+                                className="w-full py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1 cursor-pointer"
+                              >
+                                <Sparkles className="w-3 h-3" />
+                                <span>
+                                  {otpVerifying[order.id] ? 'Verifying...' : 'Complete Delivery'}
+                                </span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Customer Orders Ledger: Reused without duplication */}
