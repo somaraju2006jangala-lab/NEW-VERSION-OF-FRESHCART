@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
-import { STANDARD_UNITS } from './AddProductModal';
-import { getProductPackSizes } from '../utils/packSize';
-import { X, Check, Upload, Image as ImageIcon, Plus, Minus, Edit3 } from 'lucide-react';
+import { STANDARD_UNITS, determinePackSizesForUnit, getProductPackSizes } from '../utils/packSize';
+import { X, Check, Upload, Image as ImageIcon, Plus, Minus, Edit3, Sparkles } from 'lucide-react';
 
 interface EditProductModalProps {
   isOpen: boolean;
@@ -517,7 +516,15 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                   if (e.target.value === 'custom') {
                     setIsCustomUnit(true);
                   } else {
-                    setUnit(e.target.value);
+                    const newUnit = e.target.value;
+                    setUnit(newUnit);
+                    const derived = determinePackSizesForUnit({
+                      unit: newUnit,
+                      price: parseFloat(price) || product.price,
+                      category,
+                      title,
+                    });
+                    setPackSizes(derived);
                   }
                 }}
                 className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
@@ -536,6 +543,17 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                 required
                 value={customUnit}
                 onChange={(e) => setCustomUnit(e.target.value)}
+                onBlur={() => {
+                  if (customUnit.trim()) {
+                    const derived = determinePackSizesForUnit({
+                      unit: customUnit.trim(),
+                      price: parseFloat(price) || product.price,
+                      category,
+                      title,
+                    });
+                    setPackSizes(derived);
+                  }
+                }}
                 placeholder="e.g. 1 kg, 500 g, 250 g, 100 g, 1 litre, 500 ml, 1 piece, packet, box"
                 className="w-full px-3 py-2 text-[13px] border border-[#006b2c] rounded-lg bg-[#f8fff9] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 autoFocus
@@ -546,23 +564,56 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
           {/* Pack Sizes & Prices Configuration */}
           <div className="space-y-2 border border-[#e2e8f0] rounded-xl p-3 bg-[#f8fafc]">
             <div className="flex items-center justify-between">
-              <label className="text-[12px] font-semibold text-[#0b1c30]">
-                Available Pack Sizes & Prices
-              </label>
-              <button
-                type="button"
-                id="add-pack-size-row-btn"
-                onClick={() => {
-                  setPackSizes([
-                    ...packSizes,
-                    { size: '500 g', price: Math.round(Number(price) * 0.6) || 40 },
-                  ]);
-                }}
-                className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Add Pack Size</span>
-              </button>
+              <div>
+                <label className="text-[12px] font-semibold text-[#0b1c30] block">
+                  Available Pack Sizes & Prices
+                </label>
+                <span className="text-[10px] text-[#64748b] block">
+                  Auto-determined by unit ({isCustomUnit ? customUnit || 'custom' : unit})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="auto-generate-pack-sizes-btn"
+                  onClick={() => {
+                    const currentUnit = isCustomUnit ? customUnit.trim() : unit;
+                    const derived = determinePackSizesForUnit({
+                      unit: currentUnit || '1 kg',
+                      price: parseFloat(price) || product.price,
+                      category,
+                      title,
+                    });
+                    setPackSizes(derived);
+                  }}
+                  className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
+                  title="Auto-determine pack sizes from configured unit and price"
+                >
+                  <Sparkles className="w-3 h-3 text-[#006b2c]" />
+                  <span>Auto-derive</span>
+                </button>
+                <button
+                  type="button"
+                  id="add-pack-size-row-btn"
+                  onClick={() => {
+                    const currentUnit = isCustomUnit ? customUnit.trim() : unit;
+                    const numericPrice = parseFloat(price) || product.price;
+                    const sampleSize = currentUnit.toLowerCase().includes('l')
+                      ? '2 L'
+                      : currentUnit.toLowerCase().includes('dozen')
+                      ? '3 dozen'
+                      : '2 kg';
+                    setPackSizes([
+                      ...packSizes,
+                      { size: sampleSize, price: Math.round(numericPrice * 1.85) || 40 },
+                    ]);
+                  }}
+                  className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add Size</span>
+                </button>
+              </div>
             </div>
             <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
               {packSizes.map((ps, idx) => (

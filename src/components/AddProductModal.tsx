@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Product } from '../types';
+import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
-import { getDefaultPackSizes } from '../utils/packSize';
+import { determinePackSizesForUnit, STANDARD_UNITS } from '../utils/packSize';
+export { STANDARD_UNITS };
 import { X, Plus, Image as ImageIcon, Sparkles } from 'lucide-react';
 
 interface AddProductModalProps {
@@ -18,22 +19,6 @@ const CATEGORY_OPTIONS: { id: Product['category']; label: string; aisle: string 
   { id: 'snacks', label: 'Snacks', aisle: 'Snacks' },
   { id: 'grains', label: 'Rice & Grains', aisle: 'Rice & Grains' },
 ];
-
-export const STANDARD_UNITS = [
-  '1 kg',
-  '500 g',
-  '250 g',
-  '100 g',
-  '50 g',
-  '1 litre',
-  '500 ml',
-  '250 ml',
-  '100 ml',
-  '1 piece',
-  '1 packet',
-  '1 box',
-  '1 dozen',
-] as const;
 
 const PRESET_IMAGES = [
   {
@@ -104,6 +89,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [description, setDescription] = useState('');
   const [customUnit, setCustomUnit] = useState('');
   const [isCustomUnit, setIsCustomUnit] = useState(false);
+  const [packSizes, setPackSizes] = useState<PackSizeOption[]>(() =>
+    determinePackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce', title: '' })
+  );
   const [error, setError] = useState('');
 
   if (!isOpen) return null;
@@ -113,9 +101,69 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setCategory(preset.category);
     setUnit(preset.unit);
     setIsCustomUnit(false);
+    const numericPrice = parseFloat(price) || 99;
+    const derived = determinePackSizesForUnit({
+      unit: preset.unit,
+      price: numericPrice,
+      category: preset.category,
+      title: preset.name,
+    });
+    setPackSizes(derived);
     if (!description) {
       setDescription(`Farm fresh ${preset.name.toLowerCase()} sourced daily from local organic producers.`);
     }
+  };
+
+  const handleUnitChange = (newUnit: string) => {
+    setUnit(newUnit);
+    setIsCustomUnit(false);
+    const numericPrice = parseFloat(price) || 99;
+    const derived = determinePackSizesForUnit({
+      unit: newUnit,
+      price: numericPrice,
+      category,
+      title,
+    });
+    setPackSizes(derived);
+  };
+
+  const handleCustomUnitApply = () => {
+    const trimmed = customUnit.trim();
+    if (!trimmed) return;
+    const numericPrice = parseFloat(price) || 99;
+    const derived = determinePackSizesForUnit({
+      unit: trimmed,
+      price: numericPrice,
+      category,
+      title,
+    });
+    setPackSizes(derived);
+  };
+
+  const handleRegeneratePackSizes = () => {
+    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
+    const numericPrice = parseFloat(price) || 99;
+    const derived = determinePackSizesForUnit({
+      unit: selectedUnit || '1 kg',
+      price: numericPrice,
+      category,
+      title,
+    });
+    setPackSizes(derived);
+  };
+
+  const handleAddPackSizeRow = () => {
+    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
+    const numericPrice = parseFloat(price) || 99;
+    const sampleSize = selectedUnit.toLowerCase().includes('l')
+      ? '2 L'
+      : selectedUnit.toLowerCase().includes('dozen')
+      ? '3 dozen'
+      : '2 kg';
+    setPackSizes([
+      ...packSizes,
+      { size: sampleSize, price: Math.round(numericPrice * 1.85) },
+    ]);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -152,6 +200,20 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
     const categoryObj = CATEGORY_OPTIONS.find((c) => c.id === category);
 
+    const validPackSizes = packSizes.filter(
+      (ps) => ps.size.trim() && !isNaN(ps.price) && ps.price > 0
+    );
+
+    const finalPackSizes =
+      validPackSizes.length > 0
+        ? validPackSizes
+        : determinePackSizesForUnit({
+            unit: selectedUnit,
+            price: numericPrice,
+            category,
+            title: title.trim(),
+          });
+
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       title: title.trim(),
@@ -172,7 +234,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       tempRequirement: 'Ambient / Cold-Chain Controlled',
       batchNumber: `LOT-2026-${Date.now().toString().slice(-4)}`,
       expiryDate: 'Fresh Daily Stock',
-      packSizes: getDefaultPackSizes({ unit: selectedUnit, price: numericPrice }),
+      packSizes: finalPackSizes,
     };
 
     onAddProduct(newProduct);
@@ -185,6 +247,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setUnit('1 kg');
     setDescription('');
     setIsCustomUnit(false);
+    setPackSizes(determinePackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce' }));
   };
 
   return (
@@ -282,7 +345,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       if (e.target.value === 'custom') {
                         setIsCustomUnit(true);
                       } else {
-                        setUnit(e.target.value);
+                        handleUnitChange(e.target.value);
                       }
                     }}
                     className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
@@ -301,12 +364,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     type="text"
                     value={customUnit}
                     onChange={(e) => setCustomUnit(e.target.value)}
-                    placeholder="e.g. 500 g, 1 kg"
+                    onBlur={handleCustomUnitApply}
+                    placeholder="e.g. 500 g, 1 kg, 1 L, 1 dozen"
                     className="flex-1 px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                   />
                   <button
                     type="button"
-                    onClick={() => setIsCustomUnit(false)}
+                    onClick={() => {
+                      setIsCustomUnit(false);
+                      handleUnitChange(unit);
+                    }}
                     className="px-2.5 py-1 text-[11px] text-[#565e74] hover:text-[#0b1c30] underline cursor-pointer"
                   >
                     {t('switchToStandardUnits')}
@@ -353,6 +420,84 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 placeholder="e.g. 50"
                 className="w-full px-3 py-2 text-[13px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
               />
+            </div>
+          </div>
+
+          {/* Pack Sizes & Prices Configuration (Automatically derived from Unit & customizable) */}
+          <div className="space-y-2 border border-[#e2e8f0] rounded-xl p-3 bg-[#f8fafc]">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-[12px] font-semibold text-[#0b1c30] block">
+                  Available Pack Sizes & Prices
+                </label>
+                <span className="text-[10px] text-[#64748b] block">
+                  Auto-determined by unit ({isCustomUnit ? customUnit || 'custom' : unit})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="auto-generate-pack-sizes-add-btn"
+                  onClick={handleRegeneratePackSizes}
+                  className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
+                  title="Auto-determine pack sizes from configured unit and price"
+                >
+                  <Sparkles className="w-3 h-3 text-[#006b2c]" />
+                  <span>Auto-derive</span>
+                </button>
+                <button
+                  type="button"
+                  id="add-pack-size-row-add-modal-btn"
+                  onClick={handleAddPackSizeRow}
+                  className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add Size</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+              {packSizes.map((ps, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={ps.size}
+                    onChange={(e) => {
+                      const next = [...packSizes];
+                      next[idx] = { ...next[idx], size: e.target.value };
+                      setPackSizes(next);
+                    }}
+                    placeholder="e.g. 500 g"
+                    className="flex-1 px-2.5 py-1 text-[12px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                  />
+                  <div className="relative w-24">
+                    <span className="absolute left-2 top-1 text-[12px] font-bold text-[#64748b]">₹</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={ps.price}
+                      onChange={(e) => {
+                        const next = [...packSizes];
+                        next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
+                        setPackSizes(next);
+                      }}
+                      className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={packSizes.length <= 1}
+                    onClick={() => {
+                      setPackSizes(packSizes.filter((_, i) => i !== idx));
+                    }}
+                    className="p-1 rounded-md text-[#64748b] hover:text-red-500 hover:bg-red-50 disabled:opacity-30 cursor-pointer"
+                    title="Remove pack size"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
 

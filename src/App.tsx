@@ -4,7 +4,12 @@ import { INITIAL_PRODUCTS, INITIAL_INVENTORY_LOGS } from './data/products';
 import { INITIAL_COUPONS } from './data/coupons';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getCustomerOrders, updateOrderStatus, deleteCustomerOrder } from './services/authService';
-import { getProductPackSizes } from './utils/packSize';
+import { getProductPackSizes, determinePackSizesForUnit } from './utils/packSize';
+import {
+  fetchProductsFromBackend,
+  saveProductToBackend,
+  deleteProductFromBackend,
+} from './services/productService';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { getStoredSettings, fetchServerSettings, updateServerSettings } from './services/settingsService';
 import { Header } from './components/Header';
@@ -121,6 +126,23 @@ function FreshCartStore() {
   useEffect(() => {
     localStorage.setItem(STORAGE_PRODUCTS_KEY, JSON.stringify(products));
   }, [products]);
+
+  // Synchronize products from MySQL database on initial mount
+  useEffect(() => {
+    fetchProductsFromBackend().then((backendProducts) => {
+      if (Array.isArray(backendProducts) && backendProducts.length > 0) {
+        setProducts((prev) => {
+          const merged = [...backendProducts];
+          prev.forEach((localP) => {
+            if (!merged.some((m) => m.id === localP.id)) {
+              merged.push(localP);
+            }
+          });
+          return merged;
+        });
+      }
+    }).catch(() => {});
+  }, []);
 
   // Default to login when unauthenticated; storefront when authenticated
   const [currentView, setCurrentView] = useState<ViewType>('login');
@@ -784,13 +806,40 @@ function FreshCartStore() {
   };
 
   const handleUpdateProductPrice = (productId: string, newPrice: number) => {
+    const targetProduct = products.find((p) => p.id === productId);
+    const updatedPackSizes = targetProduct?.packSizes?.map((ps) => {
+      if (ps.size.toLowerCase() === targetProduct.unit.toLowerCase()) {
+        return { ...ps, price: newPrice };
+      }
+      const ratio = targetProduct.price > 0 ? ps.price / targetProduct.price : 1;
+      return { ...ps, price: Math.max(1, Math.round(newPrice * ratio)) };
+    }) || (targetProduct ? determinePackSizesForUnit({
+      unit: targetProduct.unit,
+      price: newPrice,
+      category: targetProduct.category,
+      title: targetProduct.title,
+    }) : undefined);
+
     setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, price: newPrice } : p))
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, price: newPrice, packSizes: updatedPackSizes }
+          : p
+      )
     );
+
+    if (targetProduct) {
+      saveProductToBackend({
+        ...targetProduct,
+        price: newPrice,
+        packSizes: updatedPackSizes,
+      });
+    }
   };
 
   const handleAddProduct = (newProduct: Product) => {
     setProducts((prev) => [newProduct, ...prev]);
+    saveProductToBackend(newProduct);
 
     const { date, time, timestamp } = createLogTimestamp();
     const logEntry: InventoryLog = {
@@ -811,6 +860,7 @@ function FreshCartStore() {
 
   const handleDeleteProduct = (productId: string) => {
     const productToDelete = products.find((p) => p.id === productId);
+    deleteProductFromBackend(productId);
     if (productToDelete) {
       const { date, time, timestamp } = createLogTimestamp();
       const logEntry: InventoryLog = {
@@ -837,24 +887,45 @@ function FreshCartStore() {
   };
 
   const handleUpdateProductUnit = (productId: string, newUnit: string) => {
+    const targetProduct = products.find((p) => p.id === productId);
+    const newPackSizes = targetProduct
+      ? determinePackSizesForUnit({
+          unit: newUnit,
+          price: targetProduct.price,
+          category: targetProduct.category,
+          title: targetProduct.title,
+        })
+      : undefined;
+
     setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, unit: newUnit } : p))
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, unit: newUnit, packSizes: newPackSizes }
+          : p
+      )
     );
 
     setCart((prev) =>
       prev.map((item) =>
         item.product.id === productId
-          ? { ...item, product: { ...item.product, unit: newUnit } }
+          ? { ...item, product: { ...item.product, unit: newUnit, packSizes: newPackSizes } }
           : item
       )
     );
 
     if (activeModalProduct && activeModalProduct.id === productId) {
-      setActiveModalProduct((prev) => (prev ? { ...prev, unit: newUnit } : null));
+      setActiveModalProduct((prev) =>
+        prev ? { ...prev, unit: newUnit, packSizes: newPackSizes } : null
+      );
     }
 
-    const targetProduct = products.find((p) => p.id === productId);
     if (targetProduct) {
+      saveProductToBackend({
+        ...targetProduct,
+        unit: newUnit,
+        packSizes: newPackSizes,
+      });
+
       const { date, time, timestamp } = createLogTimestamp();
       const logEntry: InventoryLog = {
         id: `log-${Date.now()}-${productId}`,
@@ -867,7 +938,7 @@ function FreshCartStore() {
         quantityChange: 0,
         newStock: targetProduct.stock,
         operator: 'Admin Portal',
-        notes: `Updated unit for ${targetProduct.title} to "${newUnit}"`,
+        notes: `Updated unit for ${targetProduct.title} to "${newUnit}" (Pack sizes auto-determined)`,
       };
       setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
     }
@@ -881,6 +952,8 @@ function FreshCartStore() {
     if (activeModalProduct && activeModalProduct.id === updatedProduct.id) {
       setActiveModalProduct(updatedProduct);
     }
+
+    saveProductToBackend(updatedProduct);
 
     const { date, time, timestamp } = createLogTimestamp();
     const logEntry: InventoryLog = {

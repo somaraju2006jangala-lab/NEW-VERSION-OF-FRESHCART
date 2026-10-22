@@ -6,7 +6,8 @@ import { formatLogDateTime, formatOrderDateTime } from '../utils/date';
 import { useLanguage } from '../context/LanguageContext';
 import { DEFAULT_DELIVERY_RULES, getApplicableDeliveryChargeRule } from '../services/settingsService';
 import { LanguageSelector } from './LanguageSelector';
-import { AddProductModal, STANDARD_UNITS } from './AddProductModal';
+import { AddProductModal } from './AddProductModal';
+import { getProductPackSizes, STANDARD_UNITS } from '../utils/packSize';
 import { EditProductModal } from './EditProductModal';
 import { CouponModal } from './CouponModal';
 import { CustomerOrdersLedger } from './CustomerOrdersLedger';
@@ -2597,6 +2598,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                               </button>
                             </div>
                           )}
+                          <div className="mt-1 flex flex-wrap gap-1 max-w-[170px]" title="Available pack sizes for this product">
+                            {getProductPackSizes(p).map((ps, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#eff4ff] text-[#006b2c] border border-[#cbdcfc]"
+                              >
+                                {ps.size}
+                              </span>
+                            ))}
+                          </div>
                         </td>
 
                         <td className="py-3 px-4">
