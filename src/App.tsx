@@ -13,6 +13,7 @@ import { ProductCard } from './components/ProductCard';
 import { CartPage } from './components/CartPage';
 import { CheckoutPage } from './components/CheckoutPage';
 import { ProductModal } from './components/ProductModal';
+import { FloatingCart } from './components/FloatingCart';
 import { AdminPortal } from './components/AdminPortal';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
@@ -1227,7 +1228,19 @@ function FreshCartStore() {
         />
       )}
 
-
+      {/* Floating Cart Icon (Customer Portal) */}
+      {currentView !== 'admin' &&
+        currentView !== 'employee' &&
+        currentView !== 'cart' &&
+        currentView !== 'checkout' &&
+        currentView !== 'login' &&
+        currentView !== 'register' && (
+          <FloatingCart
+            cart={cart}
+            cartCount={cartCount}
+            onNavigateToCart={() => navigateToView('cart')}
+          />
+        )}
     </div>
   );
 }

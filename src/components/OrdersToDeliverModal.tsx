@@ -1097,7 +1097,15 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                           </span>
                         </div>
 
-                        <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                        <button
+                          type="button"
+                          id={`modal-mobile-toggle-btn-${cleanId}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleExpandOrder(order);
+                          }}
+                          className="text-[10px] font-mono font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors p-1 rounded hover:bg-emerald-950/40"
+                        >
                           {isExpanded ? (
                             <>
                               <span>Hide Items</span>
@@ -1105,26 +1113,12 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                             </>
                           ) : (
                             <>
-                              <span>View Items</span>
+                              <span>View Items & OTP</span>
                               <ChevronDown className="w-3 h-3" />
                             </>
                           )}
-                        </span>
+                        </button>
                       </div>
-
-                      {/* Collapsed indicator */}
-                      {!isExpanded && (
-                        <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                          <span>
-                            {items.length > 0
-                              ? `${items.length} product${items.length !== 1 ? 's' : ''}`
-                              : 'Tap to view products'}
-                          </span>
-                          <span className="text-emerald-400 hover:underline">
-                            Details & OTP &rarr;
-                          </span>
-                        </div>
-                      )}
 
                       {/* Expanded Section */}
                       {isExpanded && (

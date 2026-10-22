@@ -642,34 +642,28 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                         </span>
                       </div>
 
-                      <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                      <button
+                        type="button"
+                        id={`employee-toggle-items-btn-${cleanId}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleExpandOrder(order);
+                        }}
+                        className="text-[11px] font-mono font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors p-1 rounded hover:bg-emerald-950/40"
+                      >
                         {isExpanded ? (
                           <>
                             <span>Hide Items</span>
-                            <ChevronUp className="w-3 h-3" />
+                            <ChevronUp className="w-3.5 h-3.5" />
                           </>
                         ) : (
                           <>
                             <span>View Items & OTP</span>
-                            <ChevronDown className="w-3 h-3" />
+                            <ChevronDown className="w-3.5 h-3.5" />
                           </>
                         )}
-                      </span>
+                      </button>
                     </div>
-
-                    {/* Collapsed state prompt */}
-                    {!isExpanded && (
-                      <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                        <span>
-                          {items.length > 0
-                            ? `${items.length} item${items.length > 1 ? 's' : ''} in this order`
-                            : 'Click card to view items'}
-                        </span>
-                        <span className="text-emerald-400 font-semibold hover:underline">
-                          View Items & OTP &rarr;
-                        </span>
-                      </div>
-                    )}
 
                     {/* Expanded Section: Ordered Items first, Order Total next, OTP button below */}
                     {isExpanded && (
