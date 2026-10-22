@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Product } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { getDefaultPackSizes } from '../utils/packSize';
 import { X, Plus, Image as ImageIcon, Sparkles } from 'lucide-react';
 
 interface AddProductModalProps {
@@ -171,6 +172,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       tempRequirement: 'Ambient / Cold-Chain Controlled',
       batchNumber: `LOT-2026-${Date.now().toString().slice(-4)}`,
       expiryDate: 'Fresh Daily Stock',
+      packSizes: getDefaultPackSizes({ unit: selectedUnit, price: numericPrice }),
     };
 
     onAddProduct(newProduct);

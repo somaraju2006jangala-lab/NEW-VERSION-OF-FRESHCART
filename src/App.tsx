@@ -4,6 +4,7 @@ import { INITIAL_PRODUCTS, INITIAL_INVENTORY_LOGS } from './data/products';
 import { INITIAL_COUPONS } from './data/coupons';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getCustomerOrders, updateOrderStatus, deleteCustomerOrder } from './services/authService';
+import { getProductPackSizes } from './utils/packSize';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
 import { getStoredSettings, fetchServerSettings, updateServerSettings } from './services/settingsService';
 import { Header } from './components/Header';
@@ -76,7 +77,16 @@ function FreshCartStore() {
             parsed.push(initP);
           }
         });
-        return parsed;
+        return parsed.map((p) => {
+          const initMatch = INITIAL_PRODUCTS.find((ip) => ip.id === p.id);
+          const packSizes =
+            p.packSizes && p.packSizes.length > 0
+              ? p.packSizes
+              : initMatch?.packSizes && initMatch.packSizes.length > 0
+              ? initMatch.packSizes
+              : getProductPackSizes(p);
+          return { ...p, packSizes };
+        });
       }
       const savedV1 = localStorage.getItem('freshcart_products_inr_v1');
       if (savedV1) {
@@ -91,7 +101,16 @@ function FreshCartStore() {
             migrated.push(initP);
           }
         });
-        return migrated;
+        return migrated.map((p) => {
+          const initMatch = INITIAL_PRODUCTS.find((ip) => ip.id === p.id);
+          const packSizes =
+            p.packSizes && p.packSizes.length > 0
+              ? p.packSizes
+              : initMatch?.packSizes && initMatch.packSizes.length > 0
+              ? initMatch.packSizes
+              : getProductPackSizes(p);
+          return { ...p, packSizes };
+        });
       }
     } catch {
       // fallback
@@ -220,7 +239,16 @@ function FreshCartStore() {
           if (matchingProduct) {
             const safeQty = Math.min(item.quantity, matchingProduct.stock);
             if (safeQty <= 0) return null;
-            return { ...item, product: matchingProduct, quantity: safeQty };
+            const selectedPackSize = item.selectedPackSize || matchingProduct.unit;
+            const configuredSize = matchingProduct.packSizes?.find((ps) => ps.size === selectedPackSize);
+            const selectedPrice = configuredSize ? configuredSize.price : (item.selectedPrice ?? matchingProduct.price);
+            return {
+              ...item,
+              product: matchingProduct,
+              quantity: safeQty,
+              selectedPackSize,
+              selectedPrice,
+            };
           }
           return item;
         })
@@ -557,55 +585,112 @@ function FreshCartStore() {
   };
 
   // Cart Handlers
-  const handleAddToCart = (product: Product, quantity: number) => {
+  const handleAddToCart = (
+    product: Product,
+    quantity: number,
+    packSize?: string,
+    packPrice?: number
+  ) => {
     const currentProduct = products.find((p) => p.id === product.id) || product;
     if (currentProduct.stock <= 0) return;
 
+    const chosenPackSize = packSize || currentProduct.unit;
+    const chosenPrice = packPrice !== undefined ? packPrice : currentProduct.price;
+
     setCart((prev) => {
-      const existing = prev.find((item) => item.product.id === currentProduct.id);
-      const currentQty = existing ? existing.quantity : 0;
-      const maxCanAdd = Math.max(0, currentProduct.stock - currentQty);
+      const existing = prev.find(
+        (item) =>
+          item.product.id === currentProduct.id &&
+          (item.selectedPackSize || item.product.unit) === chosenPackSize
+      );
+
+      // Check total quantity across ALL pack sizes of this product currently in cart
+      const totalProductQty = prev
+        .filter((item) => item.product.id === currentProduct.id)
+        .reduce((sum, item) => sum + item.quantity, 0);
+
+      const maxCanAdd = Math.max(0, currentProduct.stock - totalProductQty);
       if (maxCanAdd <= 0) return prev;
 
       const toAdd = Math.min(quantity, maxCanAdd);
+      if (toAdd <= 0) return prev;
+
       if (existing) {
         return prev.map((item) =>
-          item.product.id === currentProduct.id
-            ? { ...item, quantity: item.quantity + toAdd }
+          item.product.id === currentProduct.id &&
+          (item.selectedPackSize || item.product.unit) === chosenPackSize
+            ? {
+                ...item,
+                quantity: item.quantity + toAdd,
+                selectedPrice: chosenPrice,
+                selectedPackSize: chosenPackSize,
+              }
             : item
         );
       }
-      return [...prev, { product: currentProduct, quantity: toAdd }];
+      return [
+        ...prev,
+        {
+          product: currentProduct,
+          quantity: toAdd,
+          selectedPackSize: chosenPackSize,
+          selectedPrice: chosenPrice,
+        },
+      ];
     });
   };
 
-  const handleUpdateCartQty = (productId: string, delta: number) => {
+  const handleUpdateCartQty = (productId: string, delta: number, packSize?: string) => {
     const currentProduct = products.find((p) => p.id === productId);
 
-    setCart((prev) =>
-      prev
-        .map((item) => {
-          if (item.product.id === productId) {
-            const stockLimit = currentProduct ? currentProduct.stock : item.product.stock;
-            const targetQty = item.quantity + delta;
-            // If decreased to 0 or below, automatically remove that product from the cart
-            if (targetQty <= 0) {
-              return null;
-            }
-            // Cannot exceed available product quantity
-            if (targetQty > stockLimit) {
-              return { ...item, quantity: stockLimit };
-            }
-            return { ...item, quantity: targetQty };
-          }
-          return item;
-        })
-        .filter((item): item is CartItem => item !== null)
-    );
+    setCart((prev) => {
+      const targetItem = prev.find(
+        (item) =>
+          item.product.id === productId &&
+          (!packSize || (item.selectedPackSize || item.product.unit) === packSize)
+      );
+      if (!targetItem) return prev;
+
+      const stockLimit = currentProduct ? currentProduct.stock : targetItem.product.stock;
+
+      // Total quantity of other pack sizes of this product in cart
+      const otherQty = prev
+        .filter(
+          (item) =>
+            item.product.id === productId &&
+            item !== targetItem
+        )
+        .reduce((sum, item) => sum + item.quantity, 0);
+
+      const maxAllowedForThisItem = Math.max(0, stockLimit - otherQty);
+      const targetQty = targetItem.quantity + delta;
+
+      if (targetQty <= 0) {
+        return prev.filter((item) => item !== targetItem);
+      }
+
+      const finalQty = Math.min(targetQty, maxAllowedForThisItem);
+      if (finalQty <= 0) {
+        return prev.filter((item) => item !== targetItem);
+      }
+
+      return prev.map((item) => {
+        if (item === targetItem) {
+          return { ...item, quantity: finalQty };
+        }
+        return item;
+      });
+    });
   };
 
-  const handleRemoveCartItem = (productId: string) => {
-    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+  const handleRemoveCartItem = (productId: string, packSize?: string) => {
+    setCart((prev) =>
+      prev.filter((item) => {
+        if (item.product.id !== productId) return true;
+        if (packSize && (item.selectedPackSize || item.product.unit) !== packSize) return true;
+        return false;
+      })
+    );
   };
 
   const handleClearCart = () => {
@@ -614,11 +699,16 @@ function FreshCartStore() {
 
   // When a customer purchases a product, reduce the available quantity accordingly
   const handleOrderPlaced = (purchasedItems: CartItem[], placedOrder?: CustomerOrder) => {
+    const qtyByProductId: Record<string, number> = {};
+    purchasedItems.forEach((it) => {
+      qtyByProductId[it.product.id] = (qtyByProductId[it.product.id] || 0) + it.quantity;
+    });
+
     setProducts((prev) =>
       prev.map((p) => {
-        const purchased = purchasedItems.find((it) => it.product.id === p.id);
-        if (purchased) {
-          const newStock = Math.max(0, p.stock - purchased.quantity);
+        const totalPurchased = qtyByProductId[p.id];
+        if (totalPurchased) {
+          const newStock = Math.max(0, p.stock - totalPurchased);
           return { ...p, stock: newStock };
         }
         return p;
@@ -628,9 +718,10 @@ function FreshCartStore() {
     // Record CDC inventory audit log entries for the purchase
     purchasedItems.forEach((it) => {
       const remainingStock = Math.max(0, it.product.stock - it.quantity);
+      const packLabel = it.selectedPackSize || it.product.unit;
       const { date, time, timestamp } = createLogTimestamp();
       const logEntry: InventoryLog = {
-        id: `log-${Date.now()}-${it.product.id}`,
+        id: `log-${Date.now()}-${it.product.id}-${packLabel}`,
         timestamp,
         date,
         time,
@@ -640,7 +731,7 @@ function FreshCartStore() {
         quantityChange: -it.quantity,
         newStock: remainingStock,
         operator: 'Customer Checkout',
-        notes: `Customer Order Purchase (${it.quantity} ${it.product.unit})`,
+        notes: `Customer Order Purchase (${it.quantity} × ${packLabel})`,
       };
       setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
     });

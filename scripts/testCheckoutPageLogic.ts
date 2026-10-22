@@ -41,7 +41,7 @@ console.log('✓ TEST 2 PASSED: Three-page state and 3-step progress indicator v
 console.log('Test 3: Verifying Page 1 (Delivery Details) only displays delivery info and validates address...');
 assert(checkoutCode.includes("checkoutStep === 'delivery'"), 'Page 1 must render conditionally on delivery step');
 assert(checkoutCode.includes('Delivery Address & Time Slot'), 'Page 1 must display Delivery Address & Time Slot');
-assert(checkoutCode.includes('Express Cold-Chain Delivery, 24–30 Minutes'), 'Page 1 must display cold-chain info');
+assert(!checkoutCode.includes('<span>Express Cold-Chain Delivery, 24–30 Minutes</span>'), 'Cart UI must not display cold-chain info');
 assert(checkoutCode.includes('handleContinueToPayment'), 'Must have handleContinueToPayment handler');
 assert(checkoutCode.includes('id="checkout-continue-btn"'), 'Page 1 must have #checkout-continue-btn');
 assert(checkoutCode.includes('id="checkout-back-to-cart-btn"'), 'Page 1 must have #checkout-back-to-cart-btn');

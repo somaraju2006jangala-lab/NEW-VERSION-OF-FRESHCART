@@ -22,8 +22,8 @@ import { Footer } from './Footer';
 
 interface CartPageProps {
   items: CartItem[];
-  onUpdateQty: (productId: string, delta: number) => void;
-  onRemoveItem: (productId: string) => void;
+  onUpdateQty: (productId: string, delta: number, packSize?: string) => void;
+  onRemoveItem: (productId: string, packSize?: string) => void;
   onOpenCheckout: () => void;
   appliedCoupon: string | null;
   onApplyCoupon: (code: string) => void;
@@ -63,7 +63,7 @@ export const CartPage: React.FC<CartPageProps> = ({
 
   const totalItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = items.reduce(
-    (sum, item) => sum + item.product.price * item.quantity,
+    (sum, item) => sum + (item.selectedPrice ?? item.product.price) * item.quantity,
     0
   );
 
@@ -367,12 +367,17 @@ export const CartPage: React.FC<CartPageProps> = ({
 
                 <div id="cart-items-container" className="space-y-3">
                   {items.map((item) => {
-                    const isAtMaxStock = item.quantity >= item.product.stock;
+                    const itemPackSize = item.selectedPackSize || item.product.unit;
+                    const itemUnitPrice = item.selectedPrice ?? item.product.price;
+                    const totalProductQty = items
+                      .filter((it) => it.product.id === item.product.id)
+                      .reduce((sum, it) => sum + it.quantity, 0);
+                    const isAtMaxStock = totalProductQty >= item.product.stock;
 
                     return (
                       <div
-                        key={item.product.id}
-                        id={`cart-item-${item.product.id}`}
+                        key={`${item.product.id}-${itemPackSize}`}
+                        id={`cart-item-${item.product.id}-${itemPackSize}`}
                         className="cart-semi-opaque-card rounded-xl sm:rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all"
                       >
                         {/* Product Info Section */}
@@ -388,7 +393,10 @@ export const CartPage: React.FC<CartPageProps> = ({
                             </h4>
                             <div className="flex flex-wrap items-center gap-2 mt-1">
                               <span className="text-xs text-slate-300 font-medium">
-                                {formatINR(item.product.price)} / {item.product.unit}
+                                {formatINR(itemUnitPrice)} / {itemPackSize}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
+                                Pack: {itemPackSize}
                               </span>
                               {item.product.badge && (
                                 <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
@@ -411,7 +419,7 @@ export const CartPage: React.FC<CartPageProps> = ({
                             <button
                               type="button"
                               title="Decrease quantity"
-                              onClick={() => onUpdateQty(item.product.id, -1)}
+                              onClick={() => onUpdateQty(item.product.id, -1, itemPackSize)}
                               className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/80 transition-colors cursor-pointer"
                             >
                               <Minus className="w-3.5 h-3.5" />
@@ -423,7 +431,7 @@ export const CartPage: React.FC<CartPageProps> = ({
                               type="button"
                               title="Increase quantity"
                               disabled={isAtMaxStock}
-                              onClick={() => onUpdateQty(item.product.id, 1)}
+                              onClick={() => onUpdateQty(item.product.id, 1, itemPackSize)}
                               className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                             >
                               <Plus className="w-3.5 h-3.5" />
@@ -433,7 +441,7 @@ export const CartPage: React.FC<CartPageProps> = ({
                           {/* Line Item Total */}
                           <div className="text-right min-w-[70px]">
                             <span className="text-sm sm:text-base font-bold text-emerald-400 tabular-nums">
-                              {formatINR(item.product.price * item.quantity)}
+                              {formatINR(itemUnitPrice * item.quantity)}
                             </span>
                           </div>
 
@@ -441,7 +449,7 @@ export const CartPage: React.FC<CartPageProps> = ({
                           <button
                             type="button"
                             title="Remove item"
-                            onClick={() => onRemoveItem(item.product.id)}
+                            onClick={() => onRemoveItem(item.product.id, itemPackSize)}
                             className="w-8 h-8 rounded-xl hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors flex items-center justify-center cursor-pointer shrink-0"
                           >
                             <Trash2 className="w-4 h-4" />

@@ -163,7 +163,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
   const totalItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = items.reduce(
-    (sum, item) => sum + item.product.price * item.quantity,
+    (sum, item) => sum + (item.selectedPrice ?? item.product.price) * item.quantity,
     0
   );
 
@@ -1352,11 +1352,6 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                         className="checkout-input w-full px-4 py-2.5 rounded-xl text-sm text-white placeholder:text-slate-500 focus:outline-none"
                       />
                     </div>
-
-                    <div className="checkout-subpanel w-full px-4 py-2.5 rounded-xl flex items-center gap-2.5 text-xs sm:text-sm text-slate-300">
-                      <Clock className="w-4 h-4 text-cyan-400 shrink-0" />
-                      <span>Express Cold-Chain Delivery, 24–30 Minutes</span>
-                    </div>
                   </div>
                 </div>
 
@@ -1908,10 +1903,6 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                         <p className="text-slate-300 italic">{deliveryNote}</p>
                       </div>
                     )}
-                    <div className="pt-1 flex items-center gap-2 text-cyan-400 text-[11px]">
-                      <Clock className="w-3.5 h-3.5 shrink-0" />
-                      <span>Express Cold-Chain Delivery, 24–30 Minutes</span>
-                    </div>
                   </div>
                 </div>
 
@@ -1931,29 +1922,34 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
                   {/* Items List */}
                   <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                    {items.map((item) => (
-                      <div
-                        key={item.product.id}
-                        className="flex items-center gap-3 checkout-subpanel p-3 rounded-xl text-xs"
-                      >
-                        <img
-                          src={item.product.image}
-                          alt={item.product.title}
-                          className="w-12 h-12 rounded-lg object-cover bg-slate-900 border border-white/10 shrink-0"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white font-semibold truncate sm:text-sm">{item.product.title}</p>
-                          <p className="text-slate-400 text-[11px] mt-0.5">
-                            Qty: <span className="text-white font-medium">{item.quantity}</span> × {formatINR(item.product.price)}
-                          </p>
+                    {items.map((item) => {
+                      const itemPackSize = item.selectedPackSize || item.product.unit;
+                      const itemPrice = item.selectedPrice ?? item.product.price;
+
+                      return (
+                        <div
+                          key={`${item.product.id}-${itemPackSize}`}
+                          className="flex items-center gap-3 checkout-subpanel p-3 rounded-xl text-xs"
+                        >
+                          <img
+                            src={item.product.image}
+                            alt={item.product.title}
+                            className="w-12 h-12 rounded-lg object-cover bg-slate-900 border border-white/10 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-semibold truncate sm:text-sm">{item.product.title}</p>
+                            <p className="text-slate-400 text-[11px] mt-0.5">
+                              Qty: <span className="text-white font-medium">{item.quantity}</span> <span className="text-emerald-400 font-medium">({itemPackSize})</span> × {formatINR(itemPrice)}
+                            </p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="font-bold text-white tabular-nums sm:text-sm">
+                              {formatINR(itemPrice * item.quantity)}
+                            </p>
+                          </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="font-bold text-white tabular-nums sm:text-sm">
-                            {formatINR(item.product.price * item.quantity)}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Financial Breakdown */}

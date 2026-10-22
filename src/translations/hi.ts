@@ -70,9 +70,13 @@ export const hi: typeof en = {
   nutritionalProfile: 'पोषण प्रोफ़ाइल:',
   availableQuantity: 'उपलब्ध मात्रा:',
   packSizeUnit: 'पैक का आकार / इकाई:',
+  selectPackSize: 'पैक का आकार चुनें:',
+  packSize: 'पैक का आकार:',
+  addToBasket: 'बास्केट में जोड़ें',
+  addToBasketTotal: 'बास्केट में जोड़ें · {price}',
   addToLiveCart: 'लाइव कार्ट में जोड़ें',
-  addToCartTotal: '{qty} कार्ट में जोड़ें · {price}',
-  addedToLiveCart: 'लाइव कार्ट में जोड़ा गया',
+  addToCartTotal: 'बास्केट में जोड़ें · {price}',
+  addedToLiveCart: 'बास्केट में जोड़ा गया',
 
   // Trust Banner
   speedTitle: '30 मिनट से कम में डिलीवरी',

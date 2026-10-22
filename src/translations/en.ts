@@ -68,9 +68,13 @@ export const en = {
   nutritionalProfile: 'Nutritional Profile:',
   availableQuantity: 'Available Quantity:',
   packSizeUnit: 'Pack Size / Unit:',
+  selectPackSize: 'Select Pack Size:',
+  packSize: 'Pack Size:',
+  addToBasket: 'Add to Basket',
+  addToBasketTotal: 'Add to Basket · {price}',
   addToLiveCart: 'Add to Live Cart',
-  addToCartTotal: 'Add {qty} to Cart · {price}',
-  addedToLiveCart: 'Added to Live Cart',
+  addToCartTotal: 'Add to Basket · {price}',
+  addedToLiveCart: 'Added to Basket',
 
   // Trust Banner
   speedTitle: 'Under 30-Minute Speed',

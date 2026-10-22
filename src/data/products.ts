@@ -41,6 +41,12 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '89 kcal per 100g · Potassium 358mg · Sugars 12g',
     batchNumber: 'LOT-2026-BAN-884',
     expiryDate: 'In 5 days',
+    packSizes: [
+      { size: '250 g', price: 20 },
+      { size: '500 g', price: 38 },
+      { size: '1 kg', price: 69 },
+      { size: '2 kg', price: 130 },
+    ],
   },
   {
     id: 'prod-2',
@@ -64,6 +70,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '149 kcal per cup · Protein 8g · Calcium 300mg',
     batchNumber: 'LOT-2026-MLK-019',
     expiryDate: 'In 9 days',
+    packSizes: [
+      { size: '250 ml', price: 18 },
+      { size: '500 ml', price: 30 },
+      { size: '1 litre', price: 58 },
+    ],
   },
   {
     id: 'prod-3',
@@ -87,6 +98,12 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '95 kcal per apple · Dietary Fiber 4.4g',
     batchNumber: 'LOT-2026-APL-409',
     expiryDate: 'In 12 days',
+    packSizes: [
+      { size: '250 g', price: 55 },
+      { size: '500 g', price: 105 },
+      { size: '1 kg', price: 199 },
+      { size: '2 kg', price: 380 },
+    ],
   },
   {
     id: 'prod-4',
@@ -110,6 +127,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '160 kcal per slice · Low Glycemic',
     batchNumber: 'LOT-2026-BRD-550',
     expiryDate: 'In 4 days',
+    packSizes: [
+      { size: '1 piece', price: 149 },
+      { size: '2 pieces', price: 280 },
+      { size: '4 pieces', price: 530 },
+    ],
   },
   {
     id: 'prod-5',
@@ -133,6 +155,12 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '110 kcal per 250ml · 100% Daily Vitamin C',
     batchNumber: 'LOT-2026-JUC-882',
     expiryDate: 'In 7 days',
+    packSizes: [
+      { size: '250 ml', price: 16 },
+      { size: '500 ml', price: 28 },
+      { size: '1 litre', price: 50 },
+      { size: '2 litres', price: 95 },
+    ],
   },
   {
     id: 'prod-6',
@@ -156,6 +184,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '240 kcal per avocado · Healthy Omega 9',
     batchNumber: 'LOT-2026-AVO-771',
     expiryDate: 'In 6 days',
+    packSizes: [
+      { size: '2 pieces', price: 180 },
+      { size: '1 packet', price: 349 },
+      { size: '2 packets', price: 660 },
+    ],
   },
   {
     id: 'prod-7',
@@ -179,6 +212,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '130 kcal per cup · Protein 17g',
     batchNumber: 'LOT-2026-YGT-219',
     expiryDate: 'In 18 days',
+    packSizes: [
+      { size: '200 g', price: 85 },
+      { size: '500 g', price: 189 },
+      { size: '1 kg', price: 360 },
+    ],
   },
   {
     id: 'prod-8',
@@ -202,6 +240,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '72 kcal per egg · Choline & Lutein rich',
     batchNumber: 'LOT-2026-EGG-110',
     expiryDate: 'In 21 days',
+    packSizes: [
+      { size: '6 pieces', price: 65 },
+      { size: '1 dozen', price: 120 },
+      { size: '2 dozen', price: 230 },
+    ],
   },
   {
     id: 'prod-9',
@@ -225,6 +268,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '130 kcal per 100g cooked',
     batchNumber: 'LOT-2026-RIC-902',
     expiryDate: 'In 18 months',
+    packSizes: [
+      { size: '500 g', price: 45 },
+      { size: '1 kg', price: 80 },
+      { size: '5 kg', price: 380 },
+    ],
   },
   {
     id: 'prod-10',
@@ -248,6 +296,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: '16 kcal per teaspoon',
     batchNumber: 'LOT-2026-SGR-902',
     expiryDate: 'In 24 months',
+    packSizes: [
+      { size: '500 g', price: 45 },
+      { size: '1 kg', price: 85 },
+      { size: '2 kg', price: 160 },
+    ],
   },
   {
     id: 'prod-11',
@@ -271,6 +324,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: 'Natural Anti-inflammatory & Immunity Booster',
     batchNumber: 'LOT-2026-TRM-902',
     expiryDate: 'In 12 months',
+    packSizes: [
+      { size: '50 g', price: 18 },
+      { size: '100 g', price: 30 },
+      { size: '250 g', price: 70 },
+    ],
   },
   {
     id: 'prod-12',
@@ -294,6 +352,39 @@ export const INITIAL_PRODUCTS: Product[] = [
     nutrition: 'Vitamin A · Vitamin K · Folate',
     batchNumber: 'LOT-2026-CRD-771',
     expiryDate: 'In 4 days',
+    packSizes: [
+      { size: '1 bunch', price: 10 },
+      { size: '2 bunches', price: 18 },
+      { size: '3 bunches', price: 25 },
+    ],
+  },
+  {
+    id: 'prod-13',
+    title: 'Organic Tender Ooty Carrots',
+    supplier: 'Nilgiri Organic Highlands',
+    sku: 'SKU-4022',
+    price: 70,
+    unit: '1 kg',
+    stock: 45,
+    badge: 'Farm Fresh',
+    image:
+      'https://images.unsplash.com/photo-1447175008436-054170c2e979?auto=format&fit=crop&w=600&q=80',
+    category: 'produce',
+    categoryLabel: 'Fruits & Veggies',
+    isOrganic: true,
+    isQuickPrep: true,
+    description: 'Sweet, crunchy, vibrant orange organic carrots harvested daily in the Nilgiri highlands. Rich in Vitamin A and Beta-Carotene.',
+    farmOrigin: 'Nilgiri Organic Highlands, Plot 7',
+    harvestDate: 'Today, 04:30 AM',
+    tempRequirement: '4°C - 8°C Chilled Crisp',
+    nutrition: '41 kcal per 100g · Vitamin A 835µg · Dietary Fiber 2.8g',
+    batchNumber: 'LOT-2026-CRT-402',
+    expiryDate: 'In 10 days',
+    packSizes: [
+      { size: '250 g', price: 20 },
+      { size: '500 g', price: 40 },
+      { size: '1 kg', price: 70 },
+    ],
   },
 ];
 

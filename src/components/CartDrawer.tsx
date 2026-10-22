@@ -22,8 +22,8 @@ interface CartDrawerProps {
   items: CartItem[];
   isOpen: boolean;
   onToggle: () => void;
-  onUpdateQty: (productId: string, delta: number) => void;
-  onRemoveItem: (productId: string) => void;
+  onUpdateQty: (productId: string, delta: number, packSize?: string) => void;
+  onRemoveItem: (productId: string, packSize?: string) => void;
   onOpenCheckout: () => void;
   appliedCoupon: string | null;
   onApplyCoupon: (code: string) => void;
@@ -55,7 +55,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [couponFeedback, setCouponFeedback] = useState('');
   const totalItemCount = items.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = items.reduce(
-    (sum, item) => sum + item.product.price * item.quantity,
+    (sum, item) => sum + (item.selectedPrice ?? item.product.price) * item.quantity,
     0
   );
 
@@ -335,12 +335,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               </div>
             ) : (
               items.map((item) => {
-                const isAtMaxStock = item.quantity >= item.product.stock;
+                const itemPackSize = item.selectedPackSize || item.product.unit;
+                const itemUnitPrice = item.selectedPrice ?? item.product.price;
+                const totalProductQty = items
+                  .filter((it) => it.product.id === item.product.id)
+                  .reduce((sum, it) => sum + it.quantity, 0);
+                const isAtMaxStock = totalProductQty >= item.product.stock;
 
                 return (
                   <div
-                    key={item.product.id}
-                    id={`cart-item-${item.product.id}`}
+                    key={`${item.product.id}-${itemPackSize}`}
+                    id={`cart-item-${item.product.id}-${itemPackSize}`}
                     className="flex items-center justify-between bg-white/30 backdrop-blur-xs p-2.5 rounded-xl gap-2 border border-white/45 hover:bg-white/50 transition-colors"
                   >
                     <img
@@ -353,7 +358,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         {item.product.title}
                       </span>
                       <span className="text-[11px] text-[#565e74]">
-                        {item.quantity} × {formatINR(item.product.price)} / {item.product.unit}
+                        {item.quantity} × {formatINR(itemUnitPrice)} / {itemPackSize}
                       </span>
                     </div>
 
@@ -362,7 +367,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         <button
                           type="button"
                           title="Decrease or remove item"
-                          onClick={() => onUpdateQty(item.product.id, -1)}
+                          onClick={() => onUpdateQty(item.product.id, -1, itemPackSize)}
                           className="w-6 h-6 flex items-center justify-center text-[#0b1c30] hover:bg-white/60 rounded-l-lg transition-colors cursor-pointer"
                         >
                           <Minus className="w-3 h-3" />
@@ -374,7 +379,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                           type="button"
                           title="Increase quantity"
                           disabled={isAtMaxStock}
-                          onClick={() => onUpdateQty(item.product.id, 1)}
+                          onClick={() => onUpdateQty(item.product.id, 1, itemPackSize)}
                           className="w-6 h-6 flex items-center justify-center text-[#0b1c30] hover:bg-white/60 rounded-r-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                         >
                           <Plus className="w-3 h-3" />
@@ -382,13 +387,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       </div>
 
                       <span className="text-[13px] font-bold text-[#0b1c30] min-w-[50px] text-right tabular-nums">
-                        {formatINR(item.product.price * item.quantity)}
+                        {formatINR(itemUnitPrice * item.quantity)}
                       </span>
 
                       <button
                         type="button"
                         title="Remove item"
-                        onClick={() => onRemoveItem(item.product.id)}
+                        onClick={() => onRemoveItem(item.product.id, itemPackSize)}
                         className="w-7 h-7 rounded-lg hover:bg-[#ffdad6] text-[#6e7b6c] hover:text-[#ba1a1a] transition-colors flex items-center justify-center cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

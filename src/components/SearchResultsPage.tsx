@@ -11,7 +11,12 @@ import { AISLE_CATEGORIES } from '../data/products';
 interface SearchResultsPageProps {
   searchQuery: string;
   products: Product[];
-  onAddToCart: (product: Product, quantity: number) => void;
+  onAddToCart: (
+    product: Product,
+    quantity: number,
+    packSize?: string,
+    packPrice?: number
+  ) => void;
   onOpenDetails: (product: Product) => void;
   onBackToStorefront: () => void;
   onOpenAdmin: () => void;

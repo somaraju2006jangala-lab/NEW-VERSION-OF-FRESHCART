@@ -70,9 +70,13 @@ export const te: typeof en = {
   nutritionalProfile: 'పోషకాహార సమాచారం:',
   availableQuantity: 'అందుబాటులో ఉన్న పరిమాణం:',
   packSizeUnit: 'ప్యాక్ సైజు / యూనిట్:',
+  selectPackSize: 'ప్యాక్ సైజు ఎంచుకోండి:',
+  packSize: 'ప్యాక్ సైజు:',
+  addToBasket: 'బాస్కెట్‌కు జోడించండి',
+  addToBasketTotal: 'బాస్కెట్‌కు జోడించండి · {price}',
   addToLiveCart: 'లైవ్ కార్ట్‌కు జోడించండి',
-  addToCartTotal: '{qty} కార్ట్‌కు జోడించండి · {price}',
-  addedToLiveCart: 'లైవ్ కార్ట్‌కు జోడించబడింది',
+  addToCartTotal: 'బాస్కెట్‌కు జోడించండి · {price}',
+  addedToLiveCart: 'బాస్కెట్‌కు జోడించబడింది',
 
   // Trust Banner
   speedTitle: '30 నిమిషాల లోపు డెలివరీ',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Product } from '../types';
+import { Product, PackSizeOption } from '../types';
 import { formatINR } from '../utils/currency';
+import { getProductPackSizes } from '../utils/packSize';
 import {
   X,
   ShoppingCart,
@@ -12,11 +13,17 @@ import {
   Award,
 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
+import { PackSizeModal } from './PackSizeModal';
 
 interface ProductModalProps {
   product: Product | null;
   onClose: () => void;
-  onAddToCart: (product: Product, quantity: number) => void;
+  onAddToCart: (
+    product: Product,
+    quantity: number,
+    packSize?: string,
+    price?: number
+  ) => void;
 }
 
 export const ProductModal: React.FC<ProductModalProps> = ({
@@ -27,12 +34,33 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const { t } = useLanguage();
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
+  const [showPackSizePopup, setShowPackSizePopup] = useState(false);
 
-  // Reset quantity and state when product changes
+  // Available pack sizes for this product
+  const packSizes = product ? getProductPackSizes(product) : [];
+
+  const [selectedPackSize, setSelectedPackSize] = useState<PackSizeOption>(() => {
+    if (!product) return { size: '1 kg', price: 0 };
+    const options = getProductPackSizes(product);
+    const matched = options.find(
+      (opt) => opt.size.toLowerCase() === product.unit.toLowerCase()
+    );
+    return matched || options[0] || { size: product.unit, price: product.price };
+  });
+
+  // Reset quantity, pack size, and state when product changes
   useEffect(() => {
     if (product) {
+      const options = getProductPackSizes(product);
+      const matched = options.find(
+        (opt) => opt.size.toLowerCase() === product.unit.toLowerCase()
+      );
+      setSelectedPackSize(
+        matched || options[0] || { size: product.unit, price: product.price }
+      );
       setQty(1);
       setAdded(false);
+      setShowPackSizePopup(false);
     }
   }, [product]);
 
@@ -44,7 +72,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        if (!showPackSizePopup) {
+          onClose();
+        }
       }
     };
 
@@ -53,20 +83,40 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       document.body.style.overflow = originalOverflow;
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [product, onClose]);
+  }, [product, onClose, showPackSizePopup]);
 
   if (!product) return null;
 
   const isOutOfStock = product.stock <= 0;
 
-  const handleAdd = () => {
+  const handleOpenPackSizePopup = () => {
     if (isOutOfStock) return;
-    onAddToCart(product, Math.min(qty, product.stock));
+    setShowPackSizePopup(true);
+  };
+
+  const handleConfirmFromPopup = (
+    confirmedProduct: Product,
+    confirmedQty: number,
+    confirmedPackSize: string,
+    confirmedPrice: number
+  ) => {
+    const finalProduct: Product = {
+      ...confirmedProduct,
+      unit: confirmedPackSize,
+      price: confirmedPrice,
+    };
+    onAddToCart(
+      finalProduct,
+      Math.min(confirmedQty, confirmedProduct.stock),
+      confirmedPackSize,
+      confirmedPrice
+    );
     setAdded(true);
     setTimeout(() => {
       setAdded(false);
+      setShowPackSizePopup(false);
       onClose();
-    }, 900);
+    }, 400);
   };
 
   const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -139,19 +189,85 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               <div className="text-[12px] text-slate-400 mt-0.5">
                 <div>
                   {t('packSizeUnit')}{' '}
-                  <span className="font-semibold text-white">{product.unit}</span>
+                  <span className="font-semibold text-white">{selectedPackSize.size}</span>
                 </div>
               </div>
             </div>
             <div className="text-right shrink-0">
-              <span className="text-[24px] sm:text-[26px] font-extrabold text-[#00c978] font-display tabular-nums">
-                {formatINR(product.price)}
+              <span
+                id="product-modal-price"
+                className="text-[24px] sm:text-[26px] font-extrabold text-[#00c978] font-display tabular-nums"
+              >
+                {formatINR(selectedPackSize.price)}
               </span>
               <span className="text-[12px] text-slate-400 block">
-                / {product.unit}
+                / {selectedPackSize.size}
               </span>
             </div>
           </div>
+
+          {/* Pack Size Selection */}
+          {packSizes.length > 0 && (
+            <div className="space-y-2 pt-1" id="product-pack-size-selector">
+              <div className="flex items-center justify-between">
+                <label className="text-[12px] font-semibold text-white flex items-center gap-1.5">
+                  <span>{t('selectPackSize') || 'Select Pack Size:'}</span>
+                </label>
+                <span className="text-[11px] text-[#00c978] font-medium">
+                  {selectedPackSize.size} · {formatINR(selectedPackSize.price)}
+                </span>
+              </div>
+
+              <div
+                className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+                role="radiogroup"
+                aria-label="Available pack sizes"
+              >
+                {packSizes.map((option) => {
+                  const isSelected = selectedPackSize.size === option.size;
+                  return (
+                    <button
+                      key={option.size}
+                      type="button"
+                      role="radio"
+                      aria-checked={isSelected}
+                      id={`pack-size-opt-${option.size.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
+                      data-pack-size={option.size}
+                      data-pack-price={option.price}
+                      onClick={() => setSelectedPackSize(option)}
+                      className={`py-2 px-3 rounded-xl text-left transition-all duration-200 flex flex-col justify-between cursor-pointer border ${
+                        isSelected
+                          ? 'bg-[#00873a]/30 border-[#00c978] shadow-[0_0_14px_rgba(0,201,120,0.35)] ring-1 ring-[#00c978]/60 text-white'
+                          : 'bg-white/5 border-white/10 hover:border-white/25 hover:bg-white/10 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span
+                          className={`text-[12px] font-semibold ${
+                            isSelected ? 'text-white' : 'text-slate-200'
+                          }`}
+                        >
+                          {option.size}
+                        </span>
+                        {isSelected && (
+                          <div className="w-3.5 h-3.5 rounded-full bg-[#00c978] text-[#03070c] flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                        )}
+                      </div>
+                      <span
+                        className={`text-[13px] font-bold tabular-nums mt-1 ${
+                          isSelected ? 'text-[#00c978]' : 'text-slate-300'
+                        }`}
+                      >
+                        {formatINR(option.price)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <p className="text-[14px] text-slate-300 leading-relaxed font-body">
             {product.description}
@@ -234,8 +350,9 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
           <button
             type="button"
+            id="product-add-to-cart-btn"
             disabled={isOutOfStock}
-            onClick={handleAdd}
+            onClick={handleOpenPackSizePopup}
             className={`flex-1 py-3 px-4 rounded-xl text-[13px] font-semibold flex items-center justify-center gap-2 shadow-lg transition-all duration-200 ${
               isOutOfStock
                 ? 'bg-slate-800 text-slate-500 border border-white/5 cursor-not-allowed'
@@ -254,12 +371,27 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             ) : (
               <>
                 <ShoppingCart className="w-4 h-4" />
-                <span>{t('addToCartTotal', { qty, price: formatINR(product.price * qty) })}</span>
+                <span>
+                  {t('addToCartTotal', {
+                    qty,
+                    price: formatINR(selectedPackSize.price * qty),
+                  })}
+                </span>
               </>
             )}
           </button>
         </div>
       </div>
+
+      {/* Pack Size Selection Modal Portal */}
+      <PackSizeModal
+        product={product}
+        isOpen={showPackSizePopup}
+        initialQty={qty}
+        initialPackSize={selectedPackSize.size}
+        onClose={() => setShowPackSizePopup(false)}
+        onConfirm={handleConfirmFromPopup}
+      />
     </div>
   );
 };

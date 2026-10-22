@@ -3,10 +3,16 @@ import { Product } from '../types';
 import { formatINR } from '../utils/currency';
 import { Plus, Minus, ShoppingCart, Check } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
+import { PackSizeModal } from './PackSizeModal';
 
 interface ProductCardProps {
   product: Product;
-  onAddToCart: (product: Product, quantity: number) => void;
+  onAddToCart: (
+    product: Product,
+    quantity: number,
+    packSize?: string,
+    packPrice?: number
+  ) => void;
   onOpenDetails: (product: Product) => void;
 }
 
@@ -18,6 +24,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const { t } = useLanguage();
   const [qty, setQty] = useState(1);
   const [addedAnim, setAddedAnim] = useState(false);
+  const [showPackSizeModal, setShowPackSizeModal] = useState(false);
 
   const cardRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
@@ -38,10 +45,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
     }
   };
 
-  const handleAdd = (e: React.MouseEvent) => {
+  const handleOpenPackSize = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isOutOfStock) return;
-    onAddToCart(product, Math.min(qty, product.stock));
+    setShowPackSizeModal(true);
+  };
+
+  const handleConfirmPackSize = (
+    confirmedProduct: Product,
+    selectedQty: number,
+    selectedPackSize: string,
+    selectedPrice: number
+  ) => {
+    onAddToCart(confirmedProduct, selectedQty, selectedPackSize, selectedPrice);
     setAddedAnim(true);
     setTimeout(() => setAddedAnim(false), 1200);
   };
@@ -169,7 +185,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <button
               id={`add-to-cart-${product.id}`}
               type="button"
-              onClick={handleAdd}
+              onClick={handleOpenPackSize}
               className={`flex-1 py-2 px-3 rounded-lg text-[12px] font-semibold flex items-center justify-center gap-1.5 shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-98 cursor-pointer ${
                 addedAnim
                   ? 'bg-[#15803d] text-white shadow-[#15803d]/30'
@@ -184,13 +200,22 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               ) : (
                 <>
                   <ShoppingCart className="w-4 h-4" />
-                  <span>{t('add')}</span>
+                  <span>{t('addToBasket') || 'Add to Basket'}</span>
                 </>
               )}
             </button>
           </div>
         )}
       </div>
+
+      {/* Pack Size Selection Modal Portal */}
+      <PackSizeModal
+        product={product}
+        isOpen={showPackSizeModal}
+        initialQty={qty}
+        onClose={() => setShowPackSizeModal(false)}
+        onConfirm={handleConfirmPackSize}
+      />
     </div>
   );
 };

@@ -1,3 +1,8 @@
+export interface PackSizeOption {
+  size: string;
+  price: number;
+}
+
 export interface Product {
   id: string;
   title: string;
@@ -19,11 +24,14 @@ export interface Product {
   nutrition?: string;
   batchNumber?: string;
   expiryDate?: string;
+  packSizes?: PackSizeOption[];
 }
 
 export interface CartItem {
   product: Product;
   quantity: number;
+  selectedPackSize?: string;
+  selectedPrice?: number;
 }
 
 export interface AisleCategory {

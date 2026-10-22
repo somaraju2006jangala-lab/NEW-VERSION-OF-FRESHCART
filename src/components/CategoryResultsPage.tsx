@@ -20,7 +20,12 @@ import { useLanguage } from '../context/LanguageContext';
 interface CategoryResultsPageProps {
   selectedCategory: string;
   products: Product[];
-  onAddToCart: (product: Product, quantity: number) => void;
+  onAddToCart: (
+    product: Product,
+    quantity: number,
+    packSize?: string,
+    packPrice?: number
+  ) => void;
   onOpenDetails: (product: Product) => void;
   onBackToStorefront: () => void;
   onSelectCategory: (category: string) => void;

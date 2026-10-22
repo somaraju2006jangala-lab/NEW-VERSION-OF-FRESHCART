@@ -567,6 +567,7 @@ export async function initializeDatabase(): Promise<void> {
       description TEXT NULL,
       sku VARCHAR(100) NULL,
       badge VARCHAR(100) NULL,
+      pack_sizes TEXT NULL,
       is_organic BOOLEAN NOT NULL DEFAULT FALSE,
       is_quick_prep BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -934,6 +935,9 @@ export async function initializeDatabase(): Promise<void> {
   } catch {}
   try {
     await currentPool.query('ALTER TABLE admins ADD COLUMN last_assigned_at TIMESTAMP NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE products ADD COLUMN pack_sizes TEXT NULL AFTER badge');
   } catch {}
   try {
     await currentPool.query(`
@@ -1796,7 +1800,7 @@ export async function getProductsFromDb(filters?: { category?: string; search?: 
   try {
     let sql = `
       SELECT product_id as id, name as title, category, supplier, price,
-             quantity as stock, unit, image, description, sku, badge,
+             quantity as stock, unit, image, description, sku, badge, pack_sizes as packSizesJson,
              is_organic as isOrganic, is_quick_prep as isQuickPrep,
              created_at as createdAt, updated_at as updatedAt
       FROM products
@@ -1818,14 +1822,23 @@ export async function getProductsFromDb(filters?: { category?: string; search?: 
     sql += ' ORDER BY id ASC';
 
     const [rows] = await pool.query<RowDataPacket[]>(sql, params);
-    return rows.map((r) => ({
-      ...r,
-      price: Number(r.price),
-      stock: Number(r.stock),
-      isOrganic: Boolean(r.isOrganic),
-      isQuickPrep: Boolean(r.isQuickPrep),
-      categoryLabel: r.category === 'produce' ? 'Fruits & Veggies' : r.category,
-    }));
+    return rows.map((r) => {
+      let packSizes: any[] | undefined = undefined;
+      if (r.packSizesJson) {
+        try {
+          packSizes = typeof r.packSizesJson === 'string' ? JSON.parse(r.packSizesJson) : r.packSizesJson;
+        } catch {}
+      }
+      return {
+        ...r,
+        price: Number(r.price),
+        stock: Number(r.stock),
+        packSizes,
+        isOrganic: Boolean(r.isOrganic),
+        isQuickPrep: Boolean(r.isQuickPrep),
+        categoryLabel: r.category === 'produce' ? 'Fruits & Veggies' : r.category,
+      };
+    });
   } catch (err: any) {
     console.warn('[MySQL] Error querying products:', err?.message);
     return [];
@@ -1840,7 +1853,7 @@ export async function findProductInDb(productId: string): Promise<any | null> {
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT product_id as id, name as title, category, supplier, price,
-              quantity as stock, unit, image, description, sku, badge,
+              quantity as stock, unit, image, description, sku, badge, pack_sizes as packSizesJson,
               is_organic as isOrganic, is_quick_prep as isQuickPrep
        FROM products
        WHERE product_id = ?
@@ -1849,10 +1862,17 @@ export async function findProductInDb(productId: string): Promise<any | null> {
     );
     if (rows.length === 0) return null;
     const r = rows[0];
+    let packSizes: any[] | undefined = undefined;
+    if (r.packSizesJson) {
+      try {
+        packSizes = typeof r.packSizesJson === 'string' ? JSON.parse(r.packSizesJson) : r.packSizesJson;
+      } catch {}
+    }
     return {
       ...r,
       price: Number(r.price),
       stock: Number(r.stock),
+      packSizes,
       isOrganic: Boolean(r.isOrganic),
       isQuickPrep: Boolean(r.isQuickPrep),
     };
@@ -1870,8 +1890,8 @@ export async function createProductInDb(p: any): Promise<boolean> {
   try {
     const productId = p.id || `prod-${Date.now()}`;
     await pool.query(
-      `INSERT INTO products (product_id, name, category, supplier, price, quantity, unit, image, description, sku, badge, is_organic, is_quick_prep)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO products (product_id, name, category, supplier, price, quantity, unit, image, description, sku, badge, pack_sizes, is_organic, is_quick_prep)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         productId,
         p.title || p.name,
@@ -1884,6 +1904,7 @@ export async function createProductInDb(p: any): Promise<boolean> {
         p.description || '',
         p.sku || `SKU-${Date.now().toString().slice(-4)}`,
         p.badge || '',
+        p.packSizes ? JSON.stringify(p.packSizes) : null,
         Boolean(p.isOrganic),
         Boolean(p.isQuickPrep),
       ]
@@ -1947,6 +1968,10 @@ export async function updateProductInDb(productId: string, updates: any): Promis
     if (updates.badge !== undefined) {
       fields.push('badge = ?');
       values.push(updates.badge);
+    }
+    if (updates.packSizes !== undefined) {
+      fields.push('pack_sizes = ?');
+      values.push(updates.packSizes ? JSON.stringify(updates.packSizes) : null);
     }
 
     if (fields.length === 0) return true;
@@ -2308,8 +2333,8 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
         const prodId = prod.id || prod.product_id || `prod-item`;
         const prodTitle = prod.title || prod.name || prod.product_name || 'Product';
         const qty = Math.max(1, Number(item.quantity) || 1);
-        const unit = prod.unit || '1 kg';
-        const price = Math.max(0, Number(prod.price) || 0);
+        const unit = item.selectedPackSize || prod.unit || '1 kg';
+        const price = Math.max(0, Number(item.selectedPrice ?? prod.price) || 0);
         const itemSubtotal = price * qty;
 
         await connection.query(

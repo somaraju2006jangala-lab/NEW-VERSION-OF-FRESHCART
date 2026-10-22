@@ -39,7 +39,7 @@ interface CustomerDashboardProps {
   cart: CartItem[];
   onOpenCart: () => void;
   onOpenCheckout: () => void;
-  onAddToCart: (product: Product, quantity: number) => void;
+  onAddToCart: (product: Product, quantity: number, packSize?: string, packPrice?: number) => void;
   onUpdateQty?: (productId: string, delta: number) => void;
   onRemoveItem?: (productId: string) => void;
   onBackToStorefront: () => void;
@@ -437,7 +437,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
   const handleReorderItems = (orderItems: CartItem[], orderId: string) => {
     orderItems.forEach((it) => {
-      onAddToCart(it.product, it.quantity);
+      onAddToCart(it.product, it.quantity, it.selectedPackSize, it.selectedPrice);
     });
     setReorderToast(t('reorderToastMsg', { count: orderItems.length, id: orderId }));
     setTimeout(() => setReorderToast(null), 3500);

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product } from '../types';
+import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import { STANDARD_UNITS } from './AddProductModal';
+import { getProductPackSizes } from '../utils/packSize';
 import { X, Check, Upload, Image as ImageIcon, Plus, Minus, Edit3 } from 'lucide-react';
 
 interface EditProductModalProps {
@@ -47,6 +48,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
   const [image, setImage] = useState('');
   const [imagePreview, setImagePreview] = useState('');
   const [description, setDescription] = useState('');
+  const [packSizes, setPackSizes] = useState<PackSizeOption[]>([]);
   const [error, setError] = useState('');
 
   // Populate form fields when product changes
@@ -82,6 +84,13 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
       setImage(product.image || '');
       setImagePreview(product.image || '');
       setDescription(product.description || '');
+
+      const initialSizes =
+        product.packSizes && product.packSizes.length > 0
+          ? product.packSizes
+          : getProductPackSizes(product);
+      setPackSizes(initialSizes);
+
       setError('');
     }
   }, [product]);
@@ -177,6 +186,10 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
 
     const finalImage = (image || imagePreview || product.image || DEFAULT_FALLBACK_IMAGE).trim();
 
+    const validPackSizes = packSizes.filter(
+      (ps) => ps.size.trim() && !isNaN(ps.price) && ps.price > 0
+    );
+
     const updatedProduct: Product = {
       ...product,
       title: trimmedTitle,
@@ -188,6 +201,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
       categoryLabel: finalCategoryLabel,
       image: finalImage,
       description: description.trim() || product.description || '',
+      packSizes: validPackSizes.length > 0 ? validPackSizes : undefined,
     };
 
     onSaveProduct(updatedProduct);
@@ -527,6 +541,71 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                 autoFocus
               />
             )}
+          </div>
+
+          {/* Pack Sizes & Prices Configuration */}
+          <div className="space-y-2 border border-[#e2e8f0] rounded-xl p-3 bg-[#f8fafc]">
+            <div className="flex items-center justify-between">
+              <label className="text-[12px] font-semibold text-[#0b1c30]">
+                Available Pack Sizes & Prices
+              </label>
+              <button
+                type="button"
+                id="add-pack-size-row-btn"
+                onClick={() => {
+                  setPackSizes([
+                    ...packSizes,
+                    { size: '500 g', price: Math.round(Number(price) * 0.6) || 40 },
+                  ]);
+                }}
+                className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Add Pack Size</span>
+              </button>
+            </div>
+            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+              {packSizes.map((ps, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={ps.size}
+                    onChange={(e) => {
+                      const next = [...packSizes];
+                      next[idx] = { ...next[idx], size: e.target.value };
+                      setPackSizes(next);
+                    }}
+                    placeholder="e.g. 500 g"
+                    className="flex-1 px-2.5 py-1 text-[12px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                  />
+                  <div className="relative w-24">
+                    <span className="absolute left-2 top-1 text-[12px] font-bold text-[#64748b]">₹</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={ps.price}
+                      onChange={(e) => {
+                        const next = [...packSizes];
+                        next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
+                        setPackSizes(next);
+                      }}
+                      className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={packSizes.length <= 1}
+                    onClick={() => {
+                      setPackSizes(packSizes.filter((_, i) => i !== idx));
+                    }}
+                    className="p-1 rounded-md text-[#64748b] hover:text-red-500 hover:bg-red-50 disabled:opacity-30 cursor-pointer"
+                    title="Remove pack size"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Description */}
