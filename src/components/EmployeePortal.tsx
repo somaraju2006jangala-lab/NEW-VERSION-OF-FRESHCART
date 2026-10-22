@@ -7,7 +7,9 @@ import {
 } from '../services/employeeService';
 import {
   fetchEmployeeAssignedDeliveries,
+  fetchOrderDetailsForDelivery,
   PendingDeliveryOrder,
+  PendingOrderItem,
 } from '../services/authService';
 import { verifyOrderOtp } from '../services/otpClientService';
 import { formatINR } from '../utils/currency';
@@ -31,6 +33,9 @@ import {
   KeyRound,
   RefreshCw,
   Search,
+  Package,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { USER_AVATAR_URL } from '../data/products';
 
@@ -68,6 +73,12 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
   const [otpVerifying, setOtpVerifying] = useState<Record<string, boolean>>({});
   const [otpErrors, setOtpErrors] = useState<Record<string, string>>({});
 
+  // Card expansion & ordered items state
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [orderItemsMap, setOrderItemsMap] = useState<Record<string, PendingOrderItem[]>>({});
+  const [loadingItemsMap, setLoadingItemsMap] = useState<Record<string, boolean>>({});
+  const [itemsErrorMap, setItemsErrorMap] = useState<Record<string, string>>({});
+
   // Fetch strictly assigned deliveries from backend using employee auth token
   const loadAssignedDeliveries = useCallback(async () => {
     setIsLoadingAssigned(true);
@@ -77,6 +88,17 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
       if (res.success && Array.isArray(res.orders)) {
         setAssignedOrders(res.orders);
         setWorkload(typeof res.workload === 'number' ? res.workload : res.orders.length);
+
+        // Pre-populate items map if items returned with order
+        const map: Record<string, PendingOrderItem[]> = {};
+        for (const ord of res.orders) {
+          if (Array.isArray(ord.items) && ord.items.length > 0) {
+            map[ord.id] = ord.items;
+          }
+        }
+        if (Object.keys(map).length > 0) {
+          setOrderItemsMap((prev) => ({ ...prev, ...map }));
+        }
       } else {
         setAssignedError(res.error || 'Failed to retrieve your assigned deliveries.');
       }
@@ -86,6 +108,53 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
       setIsLoadingAssigned(false);
     }
   }, []);
+
+  // Fetch ordered items on demand if not already loaded
+  const loadOrderItems = useCallback(
+    async (orderId: string, force: boolean = false) => {
+      if (!force && orderItemsMap[orderId] && orderItemsMap[orderId].length > 0) {
+        return;
+      }
+      setLoadingItemsMap((prev) => ({ ...prev, [orderId]: true }));
+      setItemsErrorMap((prev) => ({ ...prev, [orderId]: '' }));
+      try {
+        const res = await fetchOrderDetailsForDelivery(orderId);
+        if (res.success && Array.isArray(res.items)) {
+          setOrderItemsMap((prev) => ({ ...prev, [orderId]: res.items || [] }));
+        } else {
+          setItemsErrorMap((prev) => ({
+            ...prev,
+            [orderId]: res.error || 'Failed to retrieve ordered items from database.',
+          }));
+        }
+      } catch (err: any) {
+        setItemsErrorMap((prev) => ({
+          ...prev,
+          [orderId]: err?.message || 'Error communicating with database.',
+        }));
+      } finally {
+        setLoadingItemsMap((prev) => ({ ...prev, [orderId]: false }));
+      }
+    },
+    [orderItemsMap]
+  );
+
+  // Toggle order card expand/collapse
+  const handleToggleExpandOrder = (order: PendingDeliveryOrder) => {
+    const isCurrentlyExpanded = !!expandedOrderIds[order.id];
+    const willExpand = !isCurrentlyExpanded;
+
+    setExpandedOrderIds((prev) => ({ ...prev, [order.id]: willExpand }));
+
+    // If expanding and items are not loaded yet, fetch them
+    if (willExpand && (!orderItemsMap[order.id] || orderItemsMap[order.id].length === 0)) {
+      if (Array.isArray(order.items) && order.items.length > 0) {
+        setOrderItemsMap((prev) => ({ ...prev, [order.id]: order.items || [] }));
+      } else {
+        loadOrderItems(order.id);
+      }
+    }
+  };
 
   useEffect(() => {
     loadAssignedDeliveries();
@@ -428,22 +497,39 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                 const isCod =
                   (order.paymentMethod || '').toUpperCase() === 'COD' ||
                   (order.paymentMethod || '').toLowerCase().includes('cash');
+                const isExpanded = !!expandedOrderIds[order.id];
+                const items = orderItemsMap[order.id] || order.items || [];
+                const isLoadingItems = !!loadingItemsMap[order.id];
+                const itemsError = itemsErrorMap[order.id];
 
                 return (
                   <div
                     key={order.id}
                     id={`employee-assigned-order-card-${cleanId}`}
-                    className="border border-white/15 rounded-xl p-4 bg-black/40 hover:border-emerald-500/40 transition-all duration-150 space-y-3 shadow-md"
+                    onClick={() => handleToggleExpandOrder(order)}
+                    className={`border rounded-xl p-4 bg-black/40 hover:border-emerald-500/40 transition-all duration-150 space-y-3 shadow-md cursor-pointer select-none ${
+                      isExpanded
+                        ? 'border-emerald-500/50 bg-black/60 ring-1 ring-emerald-500/20'
+                        : 'border-white/15'
+                    }`}
                   >
                     {/* Header: Order ID & Amount */}
-                    <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+                    <div
+                      id={`order-card-header-${cleanId}`}
+                      className="flex items-center justify-between gap-2 border-b border-white/10 pb-2.5"
+                    >
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-[#38bdf8] font-mono text-xs">{order.id}</span>
+                        <span className="font-bold text-[#38bdf8] font-mono text-xs hover:underline">
+                          {order.id}
+                        </span>
                         <button
                           type="button"
-                          onClick={() => handleCopyOrderId(order.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCopyOrderId(order.id);
+                          }}
                           title="Copy Order ID"
-                          className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors"
+                          className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10 transition-colors cursor-pointer"
                         >
                           {copiedOrderId === order.id ? (
                             <Check className="w-3 h-3 text-[#10b981]" />
@@ -452,15 +538,28 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                           )}
                         </button>
                       </div>
-                      <div className="text-right">
+                      <div className="flex items-center gap-2 text-right">
                         <span className="font-bold text-white font-mono text-sm">
                           {formatINR(order.total)}
                         </span>
+                        <div
+                          className="p-1 text-slate-400 hover:text-white transition-colors"
+                          title={isExpanded ? 'Collapse order details' : 'Expand order details'}
+                        >
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4 text-emerald-400" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-slate-400" />
+                          )}
+                        </div>
                       </div>
                     </div>
 
                     {/* Customer & Address Details */}
-                    <div className="space-y-1.5 text-xs">
+                    <div
+                      id={`order-customer-details-${cleanId}`}
+                      className="space-y-1.5 text-xs"
+                    >
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-mono">
                           Customer
@@ -473,6 +572,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                         {order.customerPhone && (
                           <a
                             href={`tel:${order.customerPhone}`}
+                            onClick={(e) => e.stopPropagation()}
                             className="flex items-center gap-1 text-emerald-400 hover:underline"
                           >
                             <Phone className="w-3 h-3" />
@@ -482,6 +582,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                         {order.customerEmail && (
                           <a
                             href={`mailto:${order.customerEmail}`}
+                            onClick={(e) => e.stopPropagation()}
                             className="flex items-center gap-1 text-sky-400 hover:underline truncate max-w-[180px]"
                           >
                             <Mail className="w-3 h-3" />
@@ -510,8 +611,11 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                       </div>
                     </div>
 
-                    {/* Status & Payment Pills */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10">
+                    {/* Status & Payment Pills Area */}
+                    <div
+                      id={`order-status-area-${cleanId}`}
+                      className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/10"
+                    >
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono border ${
@@ -537,81 +641,266 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                           ● {order.status}
                         </span>
                       </div>
+
+                      <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                        {isExpanded ? (
+                          <>
+                            <span>Hide Items</span>
+                            <ChevronUp className="w-3 h-3" />
+                          </>
+                        ) : (
+                          <>
+                            <span>View Items & OTP</span>
+                            <ChevronDown className="w-3 h-3" />
+                          </>
+                        )}
+                      </span>
                     </div>
 
-                    {/* Delivery Completion Action */}
-                    <div className="pt-2 border-t border-white/10">
-                      {isCod ? (
-                        <button
-                          type="button"
-                          id={`employee-confirm-delivery-btn-${cleanId}`}
-                          onClick={() => handleConfirmCodDelivery(order)}
-                          disabled={deliveringOrderId === order.id}
-                          className="w-full py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 border border-sky-400/40 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50"
-                        >
-                          <Truck className="w-3.5 h-3.5" />
-                          <span>
-                            {deliveringOrderId === order.id ? 'Completing Delivery...' : 'Confirm Delivery (COD)'}
-                          </span>
-                        </button>
-                      ) : (
-                        <div className="space-y-2">
-                          <button
-                            type="button"
-                            id={`employee-verify-otp-btn-${cleanId}`}
-                            onClick={() =>
-                              setActiveOtpOrderId(activeOtpOrderId === order.id ? null : order.id)
-                            }
-                            className="w-full py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/40 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                            <span>
-                              {activeOtpOrderId === order.id ? 'Cancel OTP Input' : 'Enter Handover OTP'}
-                            </span>
-                          </button>
+                    {/* Collapsed state prompt */}
+                    {!isExpanded && (
+                      <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                        <span>
+                          {items.length > 0
+                            ? `${items.length} item${items.length > 1 ? 's' : ''} in this order`
+                            : 'Click card to view items'}
+                        </span>
+                        <span className="text-emerald-400 font-semibold hover:underline">
+                          View Items & OTP &rarr;
+                        </span>
+                      </div>
+                    )}
 
-                          {activeOtpOrderId === order.id && (
-                            <div className="bg-black/60 border border-white/20 rounded-xl p-3 space-y-2 animate-in fade-in">
-                              <div className="flex items-center justify-between text-xs text-white font-semibold">
-                                <span>Customer Handover OTP</span>
-                                <span className="text-[10px] text-slate-400">Ask customer for 6-digit code</span>
-                              </div>
-                              <input
-                                type="text"
-                                maxLength={6}
-                                id={`employee-otp-input-${cleanId}`}
-                                value={otpInputs[order.id] || ''}
-                                onChange={(e) => {
-                                  const v = e.target.value.replace(/\D/g, '');
-                                  setOtpInputs((prev) => ({ ...prev, [order.id]: v }));
-                                }}
-                                placeholder="000000"
-                                className="w-full px-3 py-2 bg-black/80 border border-white/25 rounded-lg text-center font-mono text-base tracking-widest text-emerald-400 focus:outline-none focus:border-emerald-500"
-                              />
-                              {otpErrors[order.id] && (
-                                <p className="text-[11px] text-red-400 font-medium text-center">
-                                  {otpErrors[order.id]}
-                                </p>
-                              )}
+                    {/* Expanded Section: Ordered Items first, Order Total next, OTP button below */}
+                    {isExpanded && (
+                      <div
+                        id={`order-expanded-details-${cleanId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="pt-3 border-t border-white/15 space-y-3 cursor-default select-text"
+                      >
+                        {/* 1. Ordered Items Display: Shown FIRST before OTP button */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs font-bold text-white font-mono border-b border-white/10 pb-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <Package className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Ordered Items</span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-normal">
+                              {isLoadingItems
+                                ? 'Loading...'
+                                : `${items.length} product${items.length !== 1 ? 's' : ''}`}
+                            </span>
+                          </div>
+
+                          {isLoadingItems ? (
+                            <div className="py-5 text-center space-y-2 bg-black/30 rounded-lg border border-white/5">
+                              <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin mx-auto" />
+                              <p className="text-xs text-slate-400">Loading ordered items from database...</p>
+                            </div>
+                          ) : itemsError ? (
+                            <div className="py-3 px-3 bg-red-950/40 border border-red-500/30 rounded-lg text-center space-y-2">
+                              <p className="text-xs text-red-300">{itemsError}</p>
                               <button
                                 type="button"
-                                id={`employee-submit-otp-btn-${cleanId}`}
-                                onClick={() => handleVerifyOtpDelivery(order)}
-                                disabled={
-                                  otpVerifying[order.id] || (otpInputs[order.id] || '').length !== 6
-                                }
-                                className="w-full py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1 cursor-pointer"
+                                onClick={() => loadOrderItems(order.id, true)}
+                                className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded text-xs font-bold cursor-pointer"
                               >
-                                <Sparkles className="w-3 h-3" />
-                                <span>
-                                  {otpVerifying[order.id] ? 'Verifying...' : 'Complete Delivery'}
-                                </span>
+                                Retry
                               </button>
+                            </div>
+                          ) : items.length === 0 ? (
+                            <div className="py-3 text-center text-xs text-slate-400 bg-white/5 rounded-lg border border-white/10">
+                              No ordered items found for this order.
+                            </div>
+                          ) : (
+                            <div
+                              id={`order-items-list-${cleanId}`}
+                              className="space-y-2 max-h-60 overflow-y-auto pr-1"
+                            >
+                              {items.map((item, idx) => {
+                                const itemTitle =
+                                  item.title ||
+                                  item.name ||
+                                  item.product?.title ||
+                                  item.product?.name ||
+                                  'Ordered Item';
+                                const itemImage = item.image || item.product?.image;
+                                const itemQty = item.quantity;
+                                const itemUnit = item.unit || item.product?.unit || 'unit';
+                                const itemPrice = item.price || item.product?.price || 0;
+                                const itemSubtotal =
+                                  item.subtotal || itemQty * itemPrice;
+
+                                return (
+                                  <div
+                                    key={item.id || item.productId || idx}
+                                    id={`order-item-${cleanId}-${idx}`}
+                                    className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-black/60 border border-white/10 text-xs hover:border-white/20 transition-colors"
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      {itemImage ? (
+                                        <img
+                                          src={itemImage}
+                                          alt={itemTitle}
+                                          className="w-10 h-10 object-cover rounded-md border border-white/15 bg-black/60 shrink-0"
+                                          onError={(e) => {
+                                            (e.currentTarget as HTMLElement).style.display = 'none';
+                                          }}
+                                        />
+                                      ) : (
+                                        <div className="w-10 h-10 rounded-md border border-white/10 bg-white/5 flex items-center justify-center shrink-0 text-slate-400">
+                                          <Package className="w-4 h-4" />
+                                        </div>
+                                      )}
+                                      <div className="min-w-0">
+                                        <p
+                                          id={`order-item-title-${cleanId}-${idx}`}
+                                          className="font-semibold text-white truncate"
+                                          title={itemTitle}
+                                        >
+                                          {itemTitle}
+                                        </p>
+                                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 font-mono mt-0.5">
+                                          <span
+                                            id={`order-item-qty-${cleanId}-${idx}`}
+                                            className="text-emerald-400 font-bold"
+                                          >
+                                            {itemQty} {itemUnit}
+                                          </span>
+                                          <span>&bull;</span>
+                                          <span id={`order-item-price-${cleanId}-${idx}`}>
+                                            {formatINR(itemPrice)} / {itemUnit}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="text-right shrink-0">
+                                      <span
+                                        id={`order-item-total-${cleanId}-${idx}`}
+                                        className="font-bold font-mono text-white text-xs"
+                                      >
+                                        {formatINR(itemSubtotal)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
+
+                        {/* 2. Order Total Section: Shown NEXT right after the items */}
+                        <div
+                          id={`order-total-section-${cleanId}`}
+                          className="pt-2 border-t border-white/10 space-y-1 font-mono text-xs"
+                        >
+                          {order.discount > 0 && (
+                            <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                              <span>Discount Applied</span>
+                              <span className="text-emerald-400">-{formatINR(order.discount)}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between font-bold text-sm text-white pt-1">
+                            <span className="text-slate-300">Total Order Amount</span>
+                            <span
+                              id={`order-total-amount-${cleanId}`}
+                              className="text-[#10b981] text-base"
+                            >
+                              {formatINR(order.total)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 3. Delivery Completion Action: Placed BELOW the ordered items and total */}
+                        <div className="pt-2 border-t border-white/10">
+                          {isCod ? (
+                            <button
+                              type="button"
+                              id={`employee-confirm-delivery-btn-${cleanId}`}
+                              onClick={() => handleConfirmCodDelivery(order)}
+                              disabled={deliveringOrderId === order.id || isLoadingItems}
+                              className="w-full py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 border border-sky-400/40 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50"
+                            >
+                              <Truck className="w-3.5 h-3.5" />
+                              <span>
+                                {deliveringOrderId === order.id
+                                  ? 'Completing Delivery...'
+                                  : 'Confirm Delivery (COD)'}
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="space-y-2">
+                              <button
+                                type="button"
+                                id={`employee-verify-otp-btn-${cleanId}`}
+                                disabled={isLoadingItems}
+                                onClick={() =>
+                                  setActiveOtpOrderId(
+                                    activeOtpOrderId === order.id ? null : order.id
+                                  )
+                                }
+                                className="w-full py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 border border-emerald-400/40 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <KeyRound className="w-3.5 h-3.5" />
+                                <span>
+                                  {isLoadingItems
+                                    ? 'Loading Order Details...'
+                                    : activeOtpOrderId === order.id
+                                    ? 'Cancel OTP Input'
+                                    : 'Enter Handover OTP'}
+                                </span>
+                              </button>
+
+                              {/* Preserved OTP Verification Form */}
+                              {activeOtpOrderId === order.id && (
+                                <div className="bg-black/60 border border-white/20 rounded-xl p-3 space-y-2 animate-in fade-in">
+                                  <div className="flex items-center justify-between text-xs text-white font-semibold">
+                                    <span>Customer Handover OTP</span>
+                                    <span className="text-[10px] text-slate-400">
+                                      Ask customer for 6-digit code
+                                    </span>
+                                  </div>
+                                  <input
+                                    type="text"
+                                    maxLength={6}
+                                    id={`employee-otp-input-${cleanId}`}
+                                    value={otpInputs[order.id] || ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value.replace(/\D/g, '');
+                                      setOtpInputs((prev) => ({ ...prev, [order.id]: v }));
+                                    }}
+                                    placeholder="000000"
+                                    className="w-full px-3 py-2 bg-black/80 border border-white/25 rounded-lg text-center font-mono text-base tracking-widest text-emerald-400 focus:outline-none focus:border-emerald-500"
+                                  />
+                                  {otpErrors[order.id] && (
+                                    <p className="text-[11px] text-red-400 font-medium text-center">
+                                      {otpErrors[order.id]}
+                                    </p>
+                                  )}
+                                  <button
+                                    type="button"
+                                    id={`employee-submit-otp-btn-${cleanId}`}
+                                    onClick={() => handleVerifyOtpDelivery(order)}
+                                    disabled={
+                                      otpVerifying[order.id] ||
+                                      (otpInputs[order.id] || '').length !== 6
+                                    }
+                                    className="w-full py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1 cursor-pointer"
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                    <span>
+                                      {otpVerifying[order.id]
+                                        ? 'Verifying...'
+                                        : 'Complete Delivery'}
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

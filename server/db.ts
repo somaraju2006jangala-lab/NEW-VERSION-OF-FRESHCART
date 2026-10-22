@@ -2418,20 +2418,31 @@ export async function findOrderInDb(orderId: string): Promise<any | null> {
 
     // Fetch order items
     const [itemRows] = await pool.query<RowDataPacket[]>(
-      `SELECT product_id as id, product_name as title, quantity, unit, price, subtotal
-       FROM order_items
-       WHERE order_id = ?`,
-      [order.id]
+      `SELECT oi.product_id as id, oi.product_name as title, oi.quantity, oi.unit, oi.price, oi.subtotal, p.image
+       FROM order_items oi
+       LEFT JOIN products p ON (oi.product_id = p.product_id OR oi.product_id = p.id)
+       WHERE oi.order_id IN (?, ?)`,
+      [order.id, altId]
     );
 
     order.items = itemRows.map((it) => ({
+      id: String(it.id),
+      productId: String(it.id),
+      title: it.title,
+      name: it.title,
+      quantity: Number(it.quantity) || 1,
+      unit: it.unit || 'unit',
+      price: Number(it.price) || 0,
+      subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+      image: it.image || undefined,
       product: {
-        id: it.id,
+        id: String(it.id),
         title: it.title,
-        price: Number(it.price),
-        unit: it.unit,
+        name: it.title,
+        price: Number(it.price) || 0,
+        unit: it.unit || 'unit',
+        image: it.image || undefined,
       },
-      quantity: Number(it.quantity),
     }));
 
     order.subtotal = Number(order.subtotal);
@@ -2564,9 +2575,10 @@ export async function findOrdersForCustomerInDb(customerId?: string): Promise<an
 
     if (orderIds.length > 0) {
       const [allItemRows] = await pool.query<RowDataPacket[]>(
-        `SELECT order_id, product_id as id, product_name as title, quantity, unit, price, subtotal
-         FROM order_items
-         WHERE order_id IN (?)`,
+        `SELECT oi.order_id, oi.product_id as id, oi.product_name as title, oi.quantity, oi.unit, oi.price, oi.subtotal, p.image
+         FROM order_items oi
+         LEFT JOIN products p ON (oi.product_id = p.product_id OR oi.product_id = p.id)
+         WHERE oi.order_id IN (?)`,
         [orderIds]
       );
       const itemsMap = new Map<string, any[]>();
@@ -2574,13 +2586,23 @@ export async function findOrdersForCustomerInDb(customerId?: string): Promise<an
         const oid = String(it.order_id || '');
         if (!itemsMap.has(oid)) itemsMap.set(oid, []);
         itemsMap.get(oid)!.push({
+          id: String(it.id),
+          productId: String(it.id),
+          title: it.title,
+          name: it.title,
+          quantity: Number(it.quantity) || 1,
+          unit: it.unit || 'unit',
+          price: Number(it.price) || 0,
+          subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+          image: it.image || undefined,
           product: {
-            id: it.id,
+            id: String(it.id),
             title: it.title,
-            price: Number(it.price),
-            unit: it.unit,
+            name: it.title,
+            price: Number(it.price) || 0,
+            unit: it.unit || 'unit',
+            image: it.image || undefined,
           },
-          quantity: Number(it.quantity),
         });
       }
 
@@ -2739,6 +2761,54 @@ export async function getOrdersToDeliverFromDb(options?: {
           assignedBy: r.assignedBy || null,
           assignmentStatus: r.assignmentStatus || 'unassigned',
         });
+      }
+    }
+
+    // Attach items for all deduplicated orders
+    if (deduplicatedOrders.length > 0) {
+      const orderIds = Array.from(
+        new Set(
+          deduplicatedOrders.flatMap((o) => [
+            o.id,
+            o.cleanOrderId,
+            `#${o.cleanOrderId}`,
+            o.orderId,
+          ])
+        )
+      );
+      const [itemRows] = await pool.query<RowDataPacket[]>(
+        `SELECT oi.order_id, oi.product_id as id, oi.product_name as title, oi.quantity, oi.unit, oi.price, oi.subtotal, p.image
+         FROM order_items oi
+         LEFT JOIN products p ON (oi.product_id = p.product_id OR oi.product_id = p.id)
+         WHERE oi.order_id IN (?)`,
+        [orderIds]
+      );
+      const itemsMap = new Map<string, any[]>();
+      for (const it of itemRows) {
+        const cleanOid = normalizeOrderId(it.order_id);
+        if (!itemsMap.has(cleanOid)) itemsMap.set(cleanOid, []);
+        itemsMap.get(cleanOid)!.push({
+          id: String(it.id),
+          productId: String(it.id),
+          title: it.title,
+          name: it.title,
+          quantity: Number(it.quantity) || 1,
+          unit: it.unit || 'unit',
+          price: Number(it.price) || 0,
+          subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+          image: it.image || undefined,
+          product: {
+            id: String(it.id),
+            title: it.title,
+            name: it.title,
+            price: Number(it.price) || 0,
+            unit: it.unit || 'unit',
+            image: it.image || undefined,
+          },
+        });
+      }
+      for (const ord of deduplicatedOrders) {
+        ord.items = itemsMap.get(ord.cleanOrderId) || [];
       }
     }
 
@@ -5700,6 +5770,54 @@ export async function getEmployeeAssignedOrdersFromDb(
         assignedBy: r.assignedBy,
         assignmentStatus: r.assignmentStatus,
       });
+    }
+
+    // Attach items for all assigned orders
+    if (orders.length > 0) {
+      const orderIds = Array.from(
+        new Set(
+          orders.flatMap((o) => [
+            o.id,
+            o.cleanOrderId,
+            `#${o.cleanOrderId}`,
+            o.orderId,
+          ])
+        )
+      );
+      const [itemRows] = await pool.query<RowDataPacket[]>(
+        `SELECT oi.order_id, oi.product_id as id, oi.product_name as title, oi.quantity, oi.unit, oi.price, oi.subtotal, p.image
+         FROM order_items oi
+         LEFT JOIN products p ON (oi.product_id = p.product_id OR oi.product_id = p.id)
+         WHERE oi.order_id IN (?)`,
+        [orderIds]
+      );
+      const itemsMap = new Map<string, any[]>();
+      for (const it of itemRows) {
+        const cleanOid = normalizeOrderId(it.order_id);
+        if (!itemsMap.has(cleanOid)) itemsMap.set(cleanOid, []);
+        itemsMap.get(cleanOid)!.push({
+          id: String(it.id),
+          productId: String(it.id),
+          title: it.title,
+          name: it.title,
+          quantity: Number(it.quantity) || 1,
+          unit: it.unit || 'unit',
+          price: Number(it.price) || 0,
+          subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+          image: it.image || undefined,
+          product: {
+            id: String(it.id),
+            title: it.title,
+            name: it.title,
+            price: Number(it.price) || 0,
+            unit: it.unit || 'unit',
+            image: it.image || undefined,
+          },
+        });
+      }
+      for (const ord of orders) {
+        ord.items = itemsMap.get(ord.cleanOrderId) || [];
+      }
     }
 
     return orders;

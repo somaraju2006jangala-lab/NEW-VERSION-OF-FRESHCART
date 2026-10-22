@@ -1166,6 +1166,26 @@ export async function fetchOrdersToDeliverCountFromBackend(): Promise<{ success:
   }
 }
 
+export interface PendingOrderItem {
+  id?: string;
+  productId?: string;
+  title: string;
+  name?: string;
+  quantity: number;
+  unit: string;
+  price: number;
+  subtotal: number;
+  image?: string;
+  product?: {
+    id?: string;
+    title?: string;
+    name?: string;
+    price?: number;
+    unit?: string;
+    image?: string;
+  };
+}
+
 export interface PendingDeliveryOrder {
   id: string;
   orderId: string;
@@ -1192,6 +1212,7 @@ export interface PendingDeliveryOrder {
   assignedAt?: string | null;
   assignedBy?: string | null;
   assignmentStatus?: string;
+  items?: PendingOrderItem[];
 }
 
 export interface ActiveDeliveryEmployee {
@@ -1335,6 +1356,50 @@ export async function assignOrderToEmployee(orderId: string, employeeId: string)
     return { success: false, error: data?.error || 'Failed to assign order.' };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Network error while assigning order.' };
+  }
+}
+
+/**
+ * Fetches full details and ordered items for a specific order.
+ * Works for both employees (for their assigned orders) and admins.
+ */
+export async function fetchOrderDetailsForDelivery(orderId: string): Promise<{
+  success: boolean;
+  order?: any;
+  items?: PendingOrderItem[];
+  error?: string;
+}> {
+  try {
+    const cleanId = orderId.replace(/^#/, '');
+    const adminToken = getStoredAdminToken();
+    const employeeToken = getStoredEmployeeToken();
+    const token = employeeToken || adminToken;
+    const role = employeeToken ? 'employee' : 'admin';
+
+    const res = await fetch(`/api/orders/${encodeURIComponent(cleanId)}`, {
+      headers: {
+        'x-admin-role': role,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success && data.order) {
+      return {
+        success: true,
+        order: data.order,
+        items: Array.isArray(data.order.items) ? data.order.items : [],
+      };
+    }
+    return {
+      success: false,
+      error: data?.error || 'Failed to retrieve order items from database.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Network error fetching order items.',
+    };
   }
 }
 

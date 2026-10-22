@@ -14,13 +14,18 @@ import {
   ShieldCheck,
   KeyRound,
   Eye,
+  Package,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { formatINR } from '../utils/currency';
 import { formatOrderDateTime } from '../utils/date';
 import { useLanguage } from '../context/LanguageContext';
 import {
   fetchOrdersToDeliverFromBackend,
+  fetchOrderDetailsForDelivery,
   PendingDeliveryOrder,
+  PendingOrderItem,
   ActiveDeliveryEmployee,
   getStoredAdminToken,
   assignOrderToEmployee,
@@ -84,6 +89,12 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
   const [otpVerifying, setOtpVerifying] = useState<Record<string, boolean>>({});
   const [otpError, setOtpError] = useState<Record<string, string>>({});
 
+  // Card expansion & ordered items state
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [orderItemsMap, setOrderItemsMap] = useState<Record<string, PendingOrderItem[]>>({});
+  const [loadingItemsMap, setLoadingItemsMap] = useState<Record<string, boolean>>({});
+  const [itemsErrorMap, setItemsErrorMap] = useState<Record<string, string>>({});
+
   // Fetch orders from backend MySQL database
   const loadOrders = useCallback(async () => {
     setIsLoading(true);
@@ -106,6 +117,17 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
         if (Array.isArray(res.activeEmployees)) {
           setActiveEmployees(res.activeEmployees);
         }
+
+        // Pre-populate items map if items returned with order
+        const map: Record<string, PendingOrderItem[]> = {};
+        for (const ord of res.orders) {
+          if (Array.isArray(ord.items) && ord.items.length > 0) {
+            map[ord.id] = ord.items;
+          }
+        }
+        if (Object.keys(map).length > 0) {
+          setOrderItemsMap((prev) => ({ ...prev, ...map }));
+        }
       } else {
         setError(res.error || 'Failed to fetch pending delivery orders from server.');
       }
@@ -115,6 +137,53 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
       setIsLoading(false);
     }
   }, []);
+
+  // Fetch ordered items on demand if not already loaded
+  const loadOrderItems = useCallback(
+    async (orderId: string, force: boolean = false) => {
+      if (!force && orderItemsMap[orderId] && orderItemsMap[orderId].length > 0) {
+        return;
+      }
+      setLoadingItemsMap((prev) => ({ ...prev, [orderId]: true }));
+      setItemsErrorMap((prev) => ({ ...prev, [orderId]: '' }));
+      try {
+        const res = await fetchOrderDetailsForDelivery(orderId);
+        if (res.success && Array.isArray(res.items)) {
+          setOrderItemsMap((prev) => ({ ...prev, [orderId]: res.items || [] }));
+        } else {
+          setItemsErrorMap((prev) => ({
+            ...prev,
+            [orderId]: res.error || 'Failed to retrieve ordered items from database.',
+          }));
+        }
+      } catch (err: any) {
+        setItemsErrorMap((prev) => ({
+          ...prev,
+          [orderId]: err?.message || 'Error communicating with database.',
+        }));
+      } finally {
+        setLoadingItemsMap((prev) => ({ ...prev, [orderId]: false }));
+      }
+    },
+    [orderItemsMap]
+  );
+
+  // Toggle order card expand/collapse
+  const handleToggleExpandOrder = (order: PendingDeliveryOrder) => {
+    const isCurrentlyExpanded = !!expandedOrderIds[order.id];
+    const willExpand = !isCurrentlyExpanded;
+
+    setExpandedOrderIds((prev) => ({ ...prev, [order.id]: willExpand }));
+
+    // If expanding and items are not loaded yet, fetch them
+    if (willExpand && (!orderItemsMap[order.id] || orderItemsMap[order.id].length === 0)) {
+      if (Array.isArray(order.items) && order.items.length > 0) {
+        setOrderItemsMap((prev) => ({ ...prev, [order.id]: order.items || [] }));
+      } else {
+        loadOrderItems(order.id);
+      }
+    }
+  };
 
   // Manual assign / reassign order
   const handleAssignOrder = async (orderId: string, employeeId: string) => {
@@ -865,20 +934,33 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                   const isCod =
                     order.paymentMethod.toUpperCase() === 'COD' ||
                     order.paymentMethod.toLowerCase().includes('cash');
+                  const isExpanded = !!expandedOrderIds[order.id];
+                  const items = orderItemsMap[order.id] || order.items || [];
+                  const isLoadingItems = !!loadingItemsMap[order.id];
+                  const itemsError = itemsErrorMap[order.id];
 
                   return (
                     <div
                       key={order.id}
                       id={`modal-order-card-${cleanId}`}
-                      className="border border-white/10 rounded-xl p-3.5 bg-black/30 backdrop-blur-md space-y-3"
+                      onClick={() => handleToggleExpandOrder(order)}
+                      className={`border rounded-xl p-3.5 bg-black/30 backdrop-blur-md space-y-3 cursor-pointer select-none transition-all duration-150 ${
+                        isExpanded
+                          ? 'border-emerald-500/50 bg-black/50 ring-1 ring-emerald-500/20'
+                          : 'border-white/10 hover:border-white/20'
+                      }`}
                     >
+                      {/* Header: Order ID & Amount */}
                       <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2">
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold text-[#38bdf8] font-mono text-xs">{order.id}</span>
                           <button
                             type="button"
-                            onClick={() => handleCopyOrderId(order.id)}
-                            className="text-slate-400 hover:text-white p-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopyOrderId(order.id);
+                            }}
+                            className="text-slate-400 hover:text-white p-1 cursor-pointer"
                           >
                             {copiedOrderId === order.id ? (
                               <Check className="w-3 h-3 text-[#10b981]" />
@@ -887,9 +969,18 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                             )}
                           </button>
                         </div>
-                        <span className="font-bold text-white font-mono text-xs">
-                          {formatINR(order.total)}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white font-mono text-xs">
+                            {formatINR(order.total)}
+                          </span>
+                          <div className="text-slate-400">
+                            {isExpanded ? (
+                              <ChevronUp className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                            )}
+                          </div>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -928,11 +1019,12 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                           {userRole === 'admin' && (
                             <button
                               type="button"
-                              onClick={() =>
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setActiveAssignOrderId(
                                   activeAssignOrderId === order.id ? null : order.id
-                                )
-                              }
+                                );
+                              }}
                               className="text-[10px] text-sky-400 hover:text-white underline cursor-pointer"
                             >
                               {order.assignedEmployeeId ? 'Reassign' : 'Assign'}
@@ -943,13 +1035,16 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
 
                       {/* Mobile Manual Assignment List */}
                       {activeAssignOrderId === order.id && (
-                        <div className="bg-[#091524] border border-white/20 rounded-xl p-3 space-y-2">
+                        <div
+                          className="bg-[#091524] border border-white/20 rounded-xl p-3 space-y-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <div className="flex items-center justify-between text-xs text-white font-semibold">
                             <span>Assign Delivery Employee</span>
                             <button
                               type="button"
                               onClick={() => setActiveAssignOrderId(null)}
-                              className="text-slate-400 hover:text-white"
+                              className="text-slate-400 hover:text-white cursor-pointer"
                             >
                               &times;
                             </button>
@@ -964,7 +1059,7 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                                   type="button"
                                   disabled={assigningOrderId === order.id}
                                   onClick={() => handleAssignOrder(order.id, emp.employeeId)}
-                                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs flex items-center justify-between bg-white/5 border border-white/10 text-white"
+                                  className="w-full text-left px-2 py-1.5 rounded-lg text-xs flex items-center justify-between bg-white/5 border border-white/10 text-white cursor-pointer hover:bg-white/10"
                                 >
                                   <span>{emp.name || emp.fullName}</span>
                                   <span className="text-[10px] text-sky-300 font-mono">
@@ -1002,57 +1097,195 @@ export const OrdersToDeliverModal: React.FC<OrdersToDeliverModalProps> = ({
                           </span>
                         </div>
 
-                        {/* Action on Mobile */}
-                        {isCod ? (
-                          <button
-                            type="button"
-                            onClick={() => handleConfirmDelivery(order)}
-                            disabled={deliveringOrderId === order.id}
-                            className="px-2.5 py-1 text-[11px] font-bold text-sky-300 hover:text-white bg-sky-950/80 border border-sky-500/40 rounded-lg flex items-center gap-1"
-                          >
-                            <Truck className="w-3.5 h-3.5" />
-                            <span>{deliveringOrderId === order.id ? 'Saving...' : 'Deliver'}</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setActiveOtpOrderId(activeOtpOrderId === order.id ? null : order.id)
-                            }
-                            className="px-2.5 py-1 text-[11px] font-bold text-emerald-300 hover:text-white bg-emerald-950/80 border border-emerald-500/40 rounded-lg flex items-center gap-1"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                            <span>Enter OTP</span>
-                          </button>
-                        )}
+                        <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                          {isExpanded ? (
+                            <>
+                              <span>Hide Items</span>
+                              <ChevronUp className="w-3 h-3" />
+                            </>
+                          ) : (
+                            <>
+                              <span>View Items</span>
+                              <ChevronDown className="w-3 h-3" />
+                            </>
+                          )}
+                        </span>
                       </div>
 
-                      {/* Mobile OTP input popover */}
-                      {activeOtpOrderId === order.id && !isCod && (
-                        <div className="bg-black/60 border border-white/20 rounded-xl p-3 space-y-2">
-                          <span className="text-xs text-white font-semibold block">Enter 6-Digit Delivery OTP</span>
-                          <input
-                            type="text"
-                            maxLength={6}
-                            value={otpInputs[order.id] || ''}
-                            onChange={(e) => {
-                              const v = e.target.value.replace(/\D/g, '');
-                              setOtpInputs((prev) => ({ ...prev, [order.id]: v }));
-                            }}
-                            placeholder="6-digit OTP"
-                            className="w-full px-2.5 py-1.5 bg-black/80 border border-white/20 rounded-lg text-center font-mono text-sm tracking-widest text-emerald-400 focus:outline-none focus:border-emerald-500"
-                          />
-                          {otpError[order.id] && (
-                            <p className="text-[10px] text-red-400">{otpError[order.id]}</p>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleVerifyOtp(order)}
-                            disabled={otpVerifying[order.id] || (otpInputs[order.id] || '').length !== 6}
-                            className="w-full py-1 text-xs font-bold text-white bg-emerald-600 rounded-lg"
-                          >
-                            {otpVerifying[order.id] ? 'Verifying...' : 'Complete Delivery'}
-                          </button>
+                      {/* Collapsed indicator */}
+                      {!isExpanded && (
+                        <div className="pt-1.5 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                          <span>
+                            {items.length > 0
+                              ? `${items.length} product${items.length !== 1 ? 's' : ''}`
+                              : 'Tap to view products'}
+                          </span>
+                          <span className="text-emerald-400 hover:underline">
+                            Details & OTP &rarr;
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Expanded Section */}
+                      {isExpanded && (
+                        <div
+                          id={`modal-order-expanded-details-${cleanId}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="pt-2 border-t border-white/10 space-y-2.5 cursor-default select-text"
+                        >
+                          {/* 1. Ordered Items Display */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-xs font-bold text-white font-mono border-b border-white/10 pb-1">
+                              <div className="flex items-center gap-1.5">
+                                <Package className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>Ordered Items</span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-normal">
+                                {isLoadingItems ? 'Loading...' : `${items.length} items`}
+                              </span>
+                            </div>
+
+                            {isLoadingItems ? (
+                              <div className="py-4 text-center space-y-1 bg-black/40 rounded-lg">
+                                <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin mx-auto" />
+                                <p className="text-xs text-slate-400">Loading products...</p>
+                              </div>
+                            ) : itemsError ? (
+                              <div className="py-2 px-2.5 bg-red-950/40 border border-red-500/30 rounded-lg text-center space-y-1.5">
+                                <p className="text-xs text-red-300">{itemsError}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => loadOrderItems(order.id, true)}
+                                  className="px-2 py-0.5 bg-red-800 text-white rounded text-xs"
+                                >
+                                  Retry
+                                </button>
+                              </div>
+                            ) : items.length === 0 ? (
+                              <div className="py-2 text-center text-xs text-slate-400">
+                                No items found for this order.
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                {items.map((item, idx) => {
+                                  const itemTitle =
+                                    item.title || item.name || item.product?.title || 'Item';
+                                  const itemImage = item.image || item.product?.image;
+                                  const itemQty = item.quantity;
+                                  const itemUnit = item.unit || item.product?.unit || 'unit';
+                                  const itemPrice = item.price || item.product?.price || 0;
+                                  const itemSubtotal = item.subtotal || itemQty * itemPrice;
+
+                                  return (
+                                    <div
+                                      key={item.id || item.productId || idx}
+                                      className="flex items-center justify-between gap-2 p-2 rounded-lg bg-black/50 border border-white/10 text-xs"
+                                    >
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        {itemImage ? (
+                                          <img
+                                            src={itemImage}
+                                            alt={itemTitle}
+                                            className="w-9 h-9 object-cover rounded-md border border-white/15 bg-black shrink-0"
+                                            onError={(e) => {
+                                              (e.currentTarget as HTMLElement).style.display = 'none';
+                                            }}
+                                          />
+                                        ) : (
+                                          <div className="w-9 h-9 rounded-md border border-white/10 bg-white/5 flex items-center justify-center shrink-0 text-slate-400">
+                                            <Package className="w-4 h-4" />
+                                          </div>
+                                        )}
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-white truncate" title={itemTitle}>
+                                            {itemTitle}
+                                          </p>
+                                          <p className="text-[11px] text-slate-400 font-mono">
+                                            <span className="text-emerald-400 font-bold">{itemQty} {itemUnit}</span> &bull; {formatINR(itemPrice)} / {itemUnit}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <span className="font-bold font-mono text-white text-xs shrink-0">
+                                        {formatINR(itemSubtotal)}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 2. Order Total Section */}
+                          <div className="pt-1.5 border-t border-white/10 flex items-center justify-between font-mono text-xs">
+                            <span className="text-slate-300 font-semibold">Total Order Amount</span>
+                            <span className="font-bold text-[#10b981] text-sm">{formatINR(order.total)}</span>
+                          </div>
+
+                          {/* 3. Action Section: Placed BELOW items and total */}
+                          <div className="pt-1.5 border-t border-white/10">
+                            {isCod ? (
+                              <button
+                                type="button"
+                                id={`modal-confirm-delivery-btn-${cleanId}`}
+                                onClick={() => handleConfirmDelivery(order)}
+                                disabled={deliveringOrderId === order.id || isLoadingItems}
+                                className="w-full py-1.5 text-xs font-bold text-sky-300 hover:text-white bg-sky-950/80 border border-sky-500/40 rounded-lg flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                              >
+                                <Truck className="w-3.5 h-3.5" />
+                                <span>{deliveringOrderId === order.id ? 'Saving...' : 'Confirm Delivery (COD)'}</span>
+                              </button>
+                            ) : (
+                              <div className="space-y-2">
+                                <button
+                                  type="button"
+                                  id={`modal-enter-otp-btn-${cleanId}`}
+                                  disabled={isLoadingItems}
+                                  onClick={() =>
+                                    setActiveOtpOrderId(activeOtpOrderId === order.id ? null : order.id)
+                                  }
+                                  className="w-full py-1.5 text-xs font-bold text-emerald-300 hover:text-white bg-emerald-950/80 border border-emerald-500/40 rounded-lg flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                                >
+                                  <KeyRound className="w-3.5 h-3.5" />
+                                  <span>
+                                    {isLoadingItems
+                                      ? 'Loading Details...'
+                                      : activeOtpOrderId === order.id
+                                      ? 'Cancel OTP'
+                                      : 'Enter Handover OTP'}
+                                  </span>
+                                </button>
+
+                                {/* Mobile OTP input popover */}
+                                {activeOtpOrderId === order.id && (
+                                  <div className="bg-black/80 border border-white/20 rounded-xl p-3 space-y-2">
+                                    <span className="text-xs text-white font-semibold block">Enter 6-Digit Delivery OTP</span>
+                                    <input
+                                      type="text"
+                                      maxLength={6}
+                                      value={otpInputs[order.id] || ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value.replace(/\D/g, '');
+                                        setOtpInputs((prev) => ({ ...prev, [order.id]: v }));
+                                      }}
+                                      placeholder="6-digit OTP"
+                                      className="w-full px-2.5 py-1.5 bg-black/90 border border-white/20 rounded-lg text-center font-mono text-sm tracking-widest text-emerald-400 focus:outline-none focus:border-emerald-500"
+                                    />
+                                    {otpError[order.id] && (
+                                      <p className="text-[10px] text-red-400">{otpError[order.id]}</p>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleVerifyOtp(order)}
+                                      disabled={otpVerifying[order.id] || (otpInputs[order.id] || '').length !== 6}
+                                      className="w-full py-1 text-xs font-bold text-white bg-emerald-600 rounded-lg cursor-pointer disabled:opacity-50"
+                                    >
+                                      {otpVerifying[order.id] ? 'Verifying...' : 'Complete Delivery'}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
