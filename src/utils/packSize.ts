@@ -39,6 +39,33 @@ export const STANDARD_UNITS = [
 ] as const;
 
 /**
+ * Standard selectable units in the Admin Portal unit dropdown.
+ */
+export const SELECTABLE_STANDARD_UNITS = [
+  '100 g',
+  '250 g',
+  '500 g',
+  '1 kg',
+  '2 kg',
+  '5 kg',
+  '100 ml',
+  '250 ml',
+  '500 ml',
+  '1 litre',
+  '2 litres',
+  '5 litres',
+  '1 piece',
+  '2 pieces',
+  '4 pieces',
+  '1 packet',
+  '1 box',
+  '1 bunch',
+  '1/2 dozen',
+  '1 dozen',
+  '2 dozen',
+] as const;
+
+/**
  * Normalizes and formats a unit string cleanly and consistently across products.
  */
 export function formatUnitString(rawUnit: string): string {
@@ -90,11 +117,11 @@ export function parseUnitQuantity(unitStr: string): ParsedUnitQuantity | null {
   // 1. Dozen
   if (raw.includes('dozen') || raw.includes('dogen') || raw.includes('½')) {
     if (raw.includes('1/2') || raw.includes('½') || raw.includes('0.5') || raw.includes('half')) {
-      return { amount: 0.5, unitType: 'count', baseUnits: 6 };
+      return { amount: 0.5, unitType: 'dozen', baseUnits: 6 };
     }
     const match = raw.match(/^([\d.]+)/);
     const amount = match ? parseFloat(match[1]) : 1;
-    return { amount, unitType: 'count', baseUnits: amount * 12 };
+    return { amount, unitType: 'dozen', baseUnits: amount * 12 };
   }
 
   // 2. Volume (ml, litre, liter, L)
@@ -334,3 +361,134 @@ export function getSuggestedPackSizesForUnit(params: {
  */
 export const determinePackSizesForUnit = getSuggestedPackSizesForUnit;
 export const getDefaultPackSizes = getProductPackSizes;
+
+export type UnitCategory = 'weight' | 'volume' | 'pieces' | 'dozen' | 'custom';
+
+/**
+ * Determines the unit category for any given unit string.
+ */
+export function getUnitCategory(rawUnit: string): UnitCategory {
+  if (!rawUnit) return 'custom';
+  const u = rawUnit.trim().toLowerCase();
+
+  // 1. Dozen
+  if (u.includes('dozen') || u.includes('dogen') || u.includes('½')) {
+    return 'dozen';
+  }
+
+  // 2. Volume (ml, litre, liter, l)
+  if (
+    u.includes('ml') ||
+    u.includes('milli') ||
+    u.includes('litre') ||
+    u.includes('liter') ||
+    /\b\d*\.?\d*\s*l\b/i.test(u)
+  ) {
+    return 'volume';
+  }
+
+  // 3. Weight (g, kg, gram, grams, gm, gms, kilo, kilogram, kilograms)
+  if (
+    u.includes('kg') ||
+    u.includes('kilo') ||
+    u.includes('gram') ||
+    u.includes('gm') ||
+    /\b\d*\.?\d*\s*g\b/i.test(u)
+  ) {
+    return 'weight';
+  }
+
+  // 4. Pieces
+  if (u.includes('piece') || u.includes('pc')) {
+    return 'pieces';
+  }
+
+  // 5. Custom
+  return 'custom';
+}
+
+/**
+ * Returns unit-dependent Quick Add preset strings for pack sizes based on the selected unit.
+ *
+ * - Weight (grams / kilograms): +100 g, +250 g, +500 g, +1 kg, +5 kg
+ * - Volume (millilitres / litres): +100 ml, +250 ml, +500 ml, +1 litre, +5 litres
+ * - Pieces: +1 piece, +2 pieces, +4 pieces
+ * - Dozen: +½ dozen, +1 dozen, +2 dozen
+ * - Custom: options relevant to that unit without showing unrelated options
+ */
+export function getQuickAddPresetsForUnit(unitStr: string): string[] {
+  if (!unitStr || !unitStr.trim()) {
+    return [];
+  }
+
+  const raw = unitStr.trim();
+  const category = getUnitCategory(raw);
+
+  if (category === 'weight') {
+    return ['100 g', '250 g', '500 g', '1 kg', '5 kg'];
+  }
+
+  if (category === 'volume') {
+    return ['100 ml', '250 ml', '500 ml', '1 litre', '5 litres'];
+  }
+
+  if (category === 'pieces') {
+    return ['1 piece', '2 pieces', '4 pieces'];
+  }
+
+  if (category === 'dozen') {
+    return ['½ dozen', '1 dozen', '2 dozen'];
+  }
+
+  // Container units configured in admin dropdown
+  const lower = raw.toLowerCase();
+  if (lower.includes('packet') || lower.includes('pack')) {
+    return ['1 packet', '2 packets', '4 packets'];
+  }
+  if (lower.includes('box')) {
+    return ['1 box', '2 boxes', '4 boxes'];
+  }
+  if (lower.includes('bunch')) {
+    return ['1 bunch', '2 bunches', '4 bunches'];
+  }
+
+  // Generic custom units (e.g. tin, bottle, can, tray, jar, sachet)
+  const cleanedUnit = raw.replace(/^[\d.]+\s*(x|×)?\s*/i, '').trim();
+  if (!cleanedUnit) {
+    return [raw];
+  }
+
+  const plural = cleanedUnit.endsWith('s')
+    ? cleanedUnit
+    : cleanedUnit.endsWith('ch') || cleanedUnit.endsWith('sh') || cleanedUnit.endsWith('x')
+    ? `${cleanedUnit}es`
+    : `${cleanedUnit}s`;
+
+  return [`1 ${cleanedUnit}`, `2 ${plural}`, `4 ${plural}`];
+}
+
+/**
+ * Checks whether two pack size labels refer to the same size,
+ * handling case sensitivity, extra whitespace, '1/2 dozen' vs '½ dozen', '100g' vs '100 g', and '1 L' vs '1 litre'.
+ */
+export function isSamePackSize(sizeA: string, sizeB: string): boolean {
+  if (!sizeA || !sizeB) return false;
+  const a = sizeA.trim().toLowerCase();
+  const b = sizeB.trim().toLowerCase();
+  if (a === b) return true;
+
+  // Normalize fractions (½ vs 1/2)
+  const normA = a.replace(/½/g, '1/2').replace(/\s+/g, ' ');
+  const normB = b.replace(/½/g, '1/2').replace(/\s+/g, ' ');
+  if (normA === normB) return true;
+
+  // Normalized unit string comparison
+  const fmtA = formatUnitString(normA).toLowerCase();
+  const fmtB = formatUnitString(normB).toLowerCase();
+  if (fmtA === fmtB) return true;
+
+  // Space-collapsed comparison
+  if (normA.replace(/\s+/g, '') === normB.replace(/\s+/g, '')) return true;
+
+  return false;
+}

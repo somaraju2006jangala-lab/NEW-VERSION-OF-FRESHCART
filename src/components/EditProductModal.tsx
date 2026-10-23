@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
-import { STANDARD_UNITS, getProductPackSizes } from '../utils/packSize';
+import {
+  STANDARD_UNITS,
+  SELECTABLE_STANDARD_UNITS,
+  getProductPackSizes,
+  getQuickAddPresetsForUnit,
+  isSamePackSize,
+  getPackSizeConversionFactor,
+  formatUnitString,
+} from '../utils/packSize';
 import { X, Check, Upload, Image as ImageIcon, Plus, Minus, Edit3, Sparkles } from 'lucide-react';
 
 interface EditProductModalProps {
@@ -58,9 +66,15 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
       setPrice(product.price ? product.price.toString() : '0');
       setQuantity(Math.max(0, product.stock || 0));
 
-      const isStandardUnit = STANDARD_UNITS.includes(product.unit as any);
-      if (isStandardUnit) {
-        setUnit(product.unit);
+      const formattedUnit = formatUnitString(product.unit || '');
+      const matchedSelectOption = SELECTABLE_STANDARD_UNITS.find(
+        (opt) =>
+          opt.toLowerCase() === (product.unit || '').trim().toLowerCase() ||
+          opt.toLowerCase() === formattedUnit.toLowerCase()
+      );
+
+      if (matchedSelectOption) {
+        setUnit(matchedSelectOption);
         setIsCustomUnit(false);
         setCustomUnit('');
       } else {
@@ -128,6 +142,24 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
 
   const handleQuantityDelta = (delta: number) => {
     setQuantity((prev) => Math.max(0, prev + delta));
+  };
+
+  const handleAddPresetPackSize = (preset: string) => {
+    const alreadyAdded = packSizes.some((ps) => isSamePackSize(ps.size, preset));
+    if (alreadyAdded) return;
+
+    const currentUnit = isCustomUnit ? customUnit.trim() : unit;
+    const numericPrice = parseFloat(price) || product.price || 50;
+    let newPrice = numericPrice;
+    const factor = getPackSizeConversionFactor(preset, currentUnit);
+    if (factor && factor > 0) {
+      newPrice = Math.max(1, Math.round(numericPrice * factor));
+    }
+
+    setPackSizes((prev) => [
+      ...prev,
+      { size: preset, price: newPrice, isAvailable: true },
+    ]);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -222,6 +254,9 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
       ...allCategories.filter((c) => c && c !== '__new__'),
     ])
   );
+
+  const activeUnit = isCustomUnit ? customUnit : unit;
+  const quickAddPresets = getQuickAddPresetsForUnit(activeUnit);
 
   return (
     <div
@@ -512,7 +547,19 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
               <button
                 type="button"
                 id="toggle-custom-unit-btn"
-                onClick={() => setIsCustomUnit(!isCustomUnit)}
+                onClick={() => {
+                  const nextState = !isCustomUnit;
+                  setIsCustomUnit(nextState);
+                  if (nextState) {
+                    if (!customUnit && unit && unit !== 'custom') {
+                      setCustomUnit(unit);
+                    }
+                  } else {
+                    if (!unit || unit === 'custom') {
+                      setUnit('1 kg');
+                    }
+                  }
+                }}
                 className="text-[11px] font-semibold text-emerald-400 hover:underline cursor-pointer"
               >
                 {isCustomUnit ? t('switchToStandardUnits') : t('enterCustomUnitBtn')}
@@ -611,49 +658,32 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
             {/* Quick Add Presets Bar */}
             <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/10">
               <span className="text-[11px] font-semibold text-slate-400">Quick add:</span>
-              {[
-                '100 g',
-                '250 g',
-                '500 g',
-                '1 kg',
-                '5 kg',
-                '100 ml',
-                '250 ml',
-                '500 ml',
-                '1 litre',
-                '5 litres',
-                '1 piece',
-                '2 pieces',
-                '4 pieces',
-                '1/2 dozen',
-                '1 dozen',
-                '2 dozen',
-              ].map((preset) => {
-                const alreadyAdded = packSizes.some(
-                  (ps) => ps.size.toLowerCase() === preset.toLowerCase()
-                );
-                return (
-                  <button
-                    key={preset}
-                    type="button"
-                    disabled={alreadyAdded}
-                    onClick={() => {
-                      const numericPrice = parseFloat(price) || product.price || 50;
-                      setPackSizes([
-                        ...packSizes,
-                        { size: preset, price: numericPrice, isAvailable: true },
-                      ]);
-                    }}
-                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
-                      alreadyAdded
-                        ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
-                        : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
-                    }`}
-                  >
-                    + {preset}
-                  </button>
-                );
-              })}
+              {quickAddPresets.length > 0 ? (
+                quickAddPresets.map((preset) => {
+                  const alreadyAdded = packSizes.some((ps) =>
+                    isSamePackSize(ps.size, preset)
+                  );
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      disabled={alreadyAdded}
+                      onClick={() => handleAddPresetPackSize(preset)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
+                        alreadyAdded
+                          ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
+                          : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
+                      }`}
+                    >
+                      + {preset}
+                    </button>
+                  );
+                })
+              ) : (
+                <span className="text-[11px] text-slate-400 italic">
+                  Enter a custom unit to see quick add options, or use &quot;Add Pack Size&quot; above.
+                </span>
+              )}
             </div>
 
             {/* Pack Size Rows */}

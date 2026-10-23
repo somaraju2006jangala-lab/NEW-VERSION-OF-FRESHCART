@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
-import { STANDARD_UNITS, getSuggestedPackSizesForUnit } from '../utils/packSize';
+import {
+  STANDARD_UNITS,
+  getSuggestedPackSizesForUnit,
+  getQuickAddPresetsForUnit,
+  isSamePackSize,
+  getPackSizeConversionFactor,
+} from '../utils/packSize';
 export { STANDARD_UNITS };
 import { X, Plus, Image as ImageIcon, Sparkles, Check } from 'lucide-react';
 
@@ -117,27 +123,28 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const handleUnitChange = (newUnit: string) => {
     setUnit(newUnit);
     setIsCustomUnit(false);
-    const numericPrice = parseFloat(price) || 99;
-    const derived = getSuggestedPackSizesForUnit({
-      unit: newUnit,
-      price: numericPrice,
-      category,
-      title,
-    });
-    setPackSizes(derived);
   };
 
   const handleCustomUnitApply = () => {
-    const trimmed = customUnit.trim();
-    if (!trimmed) return;
+    // Preserves existing pack sizes; quick add options dynamically update based on customUnit
+  };
+
+  const handleAddPresetPackSize = (preset: string) => {
+    const alreadyAdded = packSizes.some((ps) => isSamePackSize(ps.size, preset));
+    if (alreadyAdded) return;
+
+    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
     const numericPrice = parseFloat(price) || 99;
-    const derived = getSuggestedPackSizesForUnit({
-      unit: trimmed,
-      price: numericPrice,
-      category,
-      title,
-    });
-    setPackSizes(derived);
+    let newPrice = numericPrice;
+    const factor = getPackSizeConversionFactor(preset, selectedUnit);
+    if (factor && factor > 0) {
+      newPrice = Math.max(1, Math.round(numericPrice * factor));
+    }
+
+    setPackSizes((prev) => [
+      ...prev,
+      { size: preset, price: newPrice, isAvailable: true },
+    ]);
   };
 
   const handleRegeneratePackSizes = () => {
@@ -254,6 +261,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setIsCustomUnit(false);
     setPackSizes(getSuggestedPackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce' }));
   };
+
+  const activeUnit = isCustomUnit ? customUnit : unit;
+  const quickAddPresets = getQuickAddPresetsForUnit(activeUnit);
 
   return (
     <div
@@ -485,49 +495,32 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             {/* Quick Add Presets Bar */}
             <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/10">
               <span className="text-[11px] font-semibold text-slate-400">Quick add:</span>
-              {[
-                '100 g',
-                '250 g',
-                '500 g',
-                '1 kg',
-                '5 kg',
-                '100 ml',
-                '250 ml',
-                '500 ml',
-                '1 litre',
-                '5 litres',
-                '1 piece',
-                '2 pieces',
-                '4 pieces',
-                '1/2 dozen',
-                '1 dozen',
-                '2 dozen',
-              ].map((preset) => {
-                const alreadyAdded = packSizes.some(
-                  (ps) => ps.size.toLowerCase() === preset.toLowerCase()
-                );
-                return (
-                  <button
-                    key={preset}
-                    type="button"
-                    disabled={alreadyAdded}
-                    onClick={() => {
-                      const numericPrice = parseFloat(price) || 99;
-                      setPackSizes([
-                        ...packSizes,
-                        { size: preset, price: numericPrice, isAvailable: true },
-                      ]);
-                    }}
-                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
-                      alreadyAdded
-                        ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
-                        : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
-                    }`}
-                  >
-                    + {preset}
-                  </button>
-                );
-              })}
+              {quickAddPresets.length > 0 ? (
+                quickAddPresets.map((preset) => {
+                  const alreadyAdded = packSizes.some((ps) =>
+                    isSamePackSize(ps.size, preset)
+                  );
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      disabled={alreadyAdded}
+                      onClick={() => handleAddPresetPackSize(preset)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
+                        alreadyAdded
+                          ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
+                          : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
+                      }`}
+                    >
+                      + {preset}
+                    </button>
+                  );
+                })
+              ) : (
+                <span className="text-[11px] text-slate-400 italic">
+                  Enter a custom unit to see quick add options, or use &quot;Add Pack Size&quot; above.
+                </span>
+              )}
             </div>
 
             {/* Pack Size Rows */}
