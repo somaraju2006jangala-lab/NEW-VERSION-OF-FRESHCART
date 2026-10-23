@@ -226,20 +226,23 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
   return (
     <div
       id="edit-product-modal-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in"
+      className="edit-product-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in"
     >
-      <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-[#e2e8f0] flex flex-col max-h-[92vh]">
+      <div
+        id="edit-product-modal"
+        className="edit-product-modal bg-[#060b13]/90 backdrop-blur-2xl rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-white/10 flex flex-col max-h-[92vh] text-white"
+      >
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-[#e2e8f0] bg-[#f8fafc]">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/10 bg-white/[0.03]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-[#006b2c] text-white flex items-center justify-center shadow-xs">
               <Edit3 className="w-4 h-4" />
             </div>
             <div>
-              <h2 id="edit-product-modal-title" className="text-[17px] font-bold text-[#0b1c30] font-display">
+              <h2 id="edit-product-modal-title" className="text-[17px] font-bold text-white font-display">
                 {t('editProductTitle')}
               </h2>
-              <p className="text-[11px] text-[#565e74]">
+              <p className="text-[11px] text-slate-400">
                 {t('editProductSubtitle')}
               </p>
             </div>
@@ -248,7 +251,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
             type="button"
             id="close-edit-modal-btn"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg text-[#565e74] hover:bg-[#e2e8f0] hover:text-[#0b1c30] flex items-center justify-center transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-lg text-slate-400 hover:bg-white/10 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -259,7 +262,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
           {error && (
             <div
               id="edit-product-error-alert"
-              className="p-2.5 rounded-lg bg-[#fee2e2] text-[#b91c1c] text-[12px] font-semibold border border-[#fecaca]"
+              className="p-2.5 rounded-lg bg-red-950/80 text-red-200 text-[12px] font-semibold border border-red-800/80"
             >
               {error}
             </div>
@@ -267,7 +270,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
 
           {/* 1. Item / Product Name */}
           <div className="space-y-1">
-            <label htmlFor="edit-product-name" className="text-[12px] font-semibold text-[#0b1c30]">
+            <label htmlFor="edit-product-name" className="text-[12px] font-semibold text-slate-200">
               {t('productNameLabel')}
             </label>
             <input
@@ -277,13 +280,13 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="e.g. Basmati Rice"
-              className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
             />
           </div>
 
           {/* 2. Supplier */}
           <div className="space-y-1">
-            <label htmlFor="edit-product-supplier" className="text-[12px] font-semibold text-[#0b1c30]">
+            <label htmlFor="edit-product-supplier" className="text-[12px] font-semibold text-slate-200">
               {t('supplierLabel')}
             </label>
             <input
@@ -293,14 +296,14 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
               value={supplier}
               onChange={(e) => setSupplier(e.target.value)}
               placeholder={t('supplierPlaceholder')}
-              className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
             />
           </div>
 
           {/* 3. Category (Existing or New) */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label htmlFor="edit-product-category" className="text-[12px] font-semibold text-[#0b1c30]">
+              <label htmlFor="edit-product-category" className="text-[12px] font-semibold text-slate-200">
                 {t('categoryLabel')}
               </label>
               <button
@@ -314,7 +317,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     setCategory('produce');
                   }
                 }}
-                className="text-[11px] font-semibold text-[#006b2c] hover:underline cursor-pointer"
+                className="text-[11px] font-semibold text-emerald-400 hover:underline cursor-pointer"
               >
                 {isNewCategory ? '← Select Existing Category' : t('enterNewCategory')}
               </button>
@@ -331,7 +334,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     setCategory(e.target.value);
                   }
                 }}
-                className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
+                className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
               >
                 {dynamicCategories.map((catId) => {
                   const std = STANDARD_CATEGORY_OPTIONS.find((s) => s.id === catId);
@@ -349,12 +352,12 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                       : t('catGrains')
                     : catId;
                   return (
-                    <option key={catId} value={catId}>
+                    <option key={catId} value={catId} className="bg-[#0b121e] text-white">
                       {label}
                     </option>
                   );
                 })}
-                <option value="__new__">{t('enterNewCategory')}</option>
+                <option value="__new__" className="bg-[#0b121e] text-white">{t('enterNewCategory')}</option>
               </select>
             ) : (
               <input
@@ -363,27 +366,27 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                 value={newCategoryName}
                 onChange={(e) => setNewCategoryName(e.target.value)}
                 placeholder={t('newCategoryPlaceholder')}
-                className="w-full px-3 py-2 text-[13px] border border-[#006b2c] rounded-lg bg-[#f8fff9] text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                className="w-full px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 autoFocus
               />
             )}
           </div>
 
           {/* 4. Product Image Upload & Preview */}
-          <div className="space-y-2 border border-[#e2e8f0] rounded-xl p-3.5 bg-[#f8fafc]">
+          <div className="space-y-2 border border-white/10 rounded-xl p-3.5 bg-black/50 backdrop-blur-xs">
             <div className="flex items-center justify-between">
-              <label className="text-[12px] font-semibold text-[#0b1c30] flex items-center gap-1.5">
-                <ImageIcon className="w-3.5 h-3.5 text-[#006b2c]" />
+              <label className="text-[12px] font-semibold text-slate-200 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
                 <span>{t('imagePreview')}</span>
               </label>
-              <span className="text-[11px] text-[#565e74]">
+              <span className="text-[11px] text-slate-400">
                 {t('imageUploadHint')}
               </span>
             </div>
 
             <div className="flex items-center gap-3">
               {/* Image Preview Thumbnail */}
-              <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-[#cbd5e1] bg-white shadow-2xs shrink-0 flex items-center justify-center">
+              <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-white/15 bg-black/70 shadow-inner shrink-0 flex items-center justify-center">
                 <img
                   id="edit-product-image-preview"
                   src={imagePreview || image || DEFAULT_FALLBACK_IMAGE}
@@ -410,12 +413,12 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     type="button"
                     id="trigger-image-upload-btn"
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-3 py-1.5 rounded-lg bg-[#eff4ff] hover:bg-[#dce9ff] text-[#006b2c] text-[12px] font-semibold border border-[#cbdcfc] flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-[12px] font-semibold border border-emerald-500/30 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
                   >
                     <Upload className="w-3.5 h-3.5" />
                     <span>{t('uploadNewImage')}</span>
                   </button>
-                  <span className="text-[11px] text-[#64748b]">PNG, JPG, WebP</span>
+                  <span className="text-[11px] text-slate-400">PNG, JPG, WebP</span>
                 </div>
 
                 <input
@@ -427,7 +430,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     setImagePreview(e.target.value);
                   }}
                   placeholder="Or paste remote image URL (https://...)"
-                  className="w-full px-2.5 py-1 text-[11px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-1 focus:ring-[#006b2c]"
+                  className="w-full px-2.5 py-1 text-[11px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-[#006b2c]"
                 />
               </div>
             </div>
@@ -437,7 +440,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {/* 5. Quantity (Increase, Decrease, Direct Edit) */}
             <div className="space-y-1">
-              <label htmlFor="edit-product-stock-qty" className="text-[12px] font-semibold text-[#0b1c30]">
+              <label htmlFor="edit-product-stock-qty" className="text-[12px] font-semibold text-slate-200">
                 {t('stockQuantityLabel')}
               </label>
               <div className="flex items-center gap-1">
@@ -447,7 +450,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                   title="Decrease quantity by 1"
                   disabled={quantity <= 0}
                   onClick={() => handleQuantityDelta(-1)}
-                  className="w-8 h-8 rounded-lg bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30] flex items-center justify-center font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/15 text-white flex items-center justify-center font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                 >
                   <Minus className="w-3.5 h-3.5" />
                 </button>
@@ -462,14 +465,14 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     const val = parseInt(e.target.value, 10);
                     setQuantity(isNaN(val) ? 0 : Math.max(0, val));
                   }}
-                  className="flex-1 px-2 py-1.5 text-[13px] font-bold text-center tabular-nums border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                  className="flex-1 px-2 py-1.5 text-[13px] font-bold text-center tabular-nums border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 />
                 <button
                   type="button"
                   id="edit-qty-increment-btn"
                   title="Increase quantity by 1"
                   onClick={() => handleQuantityDelta(1)}
-                  className="w-8 h-8 rounded-lg bg-[#eff4ff] hover:bg-[#dce9ff] text-[#006b2c] flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+                  className="w-8 h-8 rounded-lg bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/30 flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
@@ -478,11 +481,11 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
 
             {/* 7. Price in Indian Rupees (₹) */}
             <div className="space-y-1">
-              <label htmlFor="edit-product-price" className="text-[12px] font-semibold text-[#0b1c30]">
+              <label htmlFor="edit-product-price" className="text-[12px] font-semibold text-slate-200">
                 {t('priceLabel')}
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-2 text-[14px] font-bold text-[#64748b]">
+                <span className="absolute left-3 top-2 text-[14px] font-bold text-slate-400">
                   ₹
                 </span>
                 <input
@@ -494,7 +497,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                   placeholder="e.g. 120"
-                  className="w-full pl-7 pr-3 py-1.5 text-[13px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                  className="w-full pl-7 pr-3 py-1.5 text-[13px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 />
               </div>
             </div>
@@ -503,14 +506,14 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
           {/* 6. Unit / Pack Size */}
           <div className="space-y-1">
             <div className="flex items-center justify-between">
-              <label htmlFor="edit-product-unit" className="text-[12px] font-semibold text-[#0b1c30]">
+              <label htmlFor="edit-product-unit" className="text-[12px] font-semibold text-slate-200">
                 {t('unitPackSizeLabel')}
               </label>
               <button
                 type="button"
                 id="toggle-custom-unit-btn"
                 onClick={() => setIsCustomUnit(!isCustomUnit)}
-                className="text-[11px] font-semibold text-[#006b2c] hover:underline cursor-pointer"
+                className="text-[11px] font-semibold text-emerald-400 hover:underline cursor-pointer"
               >
                 {isCustomUnit ? t('switchToStandardUnits') : t('enterCustomUnitBtn')}
               </button>
@@ -527,38 +530,38 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     setUnit(e.target.value);
                   }
                 }}
-                className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
+                className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
               >
-                <optgroup label="Weight">
-                  <option value="100 g">100 g</option>
-                  <option value="250 g">250 g</option>
-                  <option value="500 g">500 g</option>
-                  <option value="1 kg">1 kg</option>
-                  <option value="2 kg">2 kg</option>
-                  <option value="5 kg">5 kg</option>
+                <optgroup label="Weight" className="bg-[#0b121e] text-white">
+                  <option value="100 g" className="bg-[#0b121e] text-white">100 g</option>
+                  <option value="250 g" className="bg-[#0b121e] text-white">250 g</option>
+                  <option value="500 g" className="bg-[#0b121e] text-white">500 g</option>
+                  <option value="1 kg" className="bg-[#0b121e] text-white">1 kg</option>
+                  <option value="2 kg" className="bg-[#0b121e] text-white">2 kg</option>
+                  <option value="5 kg" className="bg-[#0b121e] text-white">5 kg</option>
                 </optgroup>
-                <optgroup label="Volume">
-                  <option value="100 ml">100 ml</option>
-                  <option value="250 ml">250 ml</option>
-                  <option value="500 ml">500 ml</option>
-                  <option value="1 litre">1 litre</option>
-                  <option value="2 litres">2 litres</option>
-                  <option value="5 litres">5 litres</option>
+                <optgroup label="Volume" className="bg-[#0b121e] text-white">
+                  <option value="100 ml" className="bg-[#0b121e] text-white">100 ml</option>
+                  <option value="250 ml" className="bg-[#0b121e] text-white">250 ml</option>
+                  <option value="500 ml" className="bg-[#0b121e] text-white">500 ml</option>
+                  <option value="1 litre" className="bg-[#0b121e] text-white">1 litre</option>
+                  <option value="2 litres" className="bg-[#0b121e] text-white">2 litres</option>
+                  <option value="5 litres" className="bg-[#0b121e] text-white">5 litres</option>
                 </optgroup>
-                <optgroup label="Pieces">
-                  <option value="1 piece">1 piece</option>
-                  <option value="2 pieces">2 pieces</option>
-                  <option value="4 pieces">4 pieces</option>
-                  <option value="1 packet">1 packet</option>
-                  <option value="1 box">1 box</option>
-                  <option value="1 bunch">1 bunch</option>
+                <optgroup label="Pieces" className="bg-[#0b121e] text-white">
+                  <option value="1 piece" className="bg-[#0b121e] text-white">1 piece</option>
+                  <option value="2 pieces" className="bg-[#0b121e] text-white">2 pieces</option>
+                  <option value="4 pieces" className="bg-[#0b121e] text-white">4 pieces</option>
+                  <option value="1 packet" className="bg-[#0b121e] text-white">1 packet</option>
+                  <option value="1 box" className="bg-[#0b121e] text-white">1 box</option>
+                  <option value="1 bunch" className="bg-[#0b121e] text-white">1 bunch</option>
                 </optgroup>
-                <optgroup label="Dozen">
-                  <option value="1/2 dozen">1/2 dozen</option>
-                  <option value="1 dozen">1 dozen</option>
-                  <option value="2 dozen">2 dozen</option>
+                <optgroup label="Dozen" className="bg-[#0b121e] text-white">
+                  <option value="1/2 dozen" className="bg-[#0b121e] text-white">1/2 dozen</option>
+                  <option value="1 dozen" className="bg-[#0b121e] text-white">1 dozen</option>
+                  <option value="2 dozen" className="bg-[#0b121e] text-white">2 dozen</option>
                 </optgroup>
-                <option value="custom">{t('enterCustomUnitBtn')}</option>
+                <option value="custom" className="bg-[#0b121e] text-white">{t('enterCustomUnitBtn')}</option>
               </select>
             ) : (
               <input
@@ -568,20 +571,20 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                 value={customUnit}
                 onChange={(e) => setCustomUnit(e.target.value)}
                 placeholder="e.g. 1 kg, 500 g, 250 g, 100 g, 1 litre, 500 ml, 1 piece, packet, box"
-                className="w-full px-3 py-2 text-[13px] border border-[#006b2c] rounded-lg bg-[#f8fff9] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                className="w-full px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 autoFocus
               />
             )}
           </div>
 
           {/* Pack Sizes, Prices, Stock & Availability Configuration */}
-          <div className="space-y-3 border border-[#cbd5e1] rounded-xl p-3.5 bg-[#f8fafc]">
+          <div className="space-y-3 border border-white/10 rounded-xl p-3.5 bg-black/50 backdrop-blur-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <label className="text-[13px] font-bold text-[#0b1c30] block">
+                <label className="text-[13px] font-bold text-white block">
                   Pack Sizes, Prices, Stock & Availability
                 </label>
-                <span className="text-[11px] text-[#64748b] block">
+                <span className="text-[11px] text-slate-400 block">
                   Configure independent prices, stock, and availability status for each pack size.
                 </span>
               </div>
@@ -606,8 +609,8 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
             </div>
 
             {/* Quick Add Presets Bar */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-[#e2e8f0]">
-              <span className="text-[11px] font-semibold text-[#64748b]">Quick add:</span>
+            <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/10">
+              <span className="text-[11px] font-semibold text-slate-400">Quick add:</span>
               {[
                 '100 g',
                 '250 g',
@@ -643,8 +646,8 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                     }}
                     className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
                       alreadyAdded
-                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
-                        : 'bg-white hover:bg-emerald-50 text-[#006b2c] border-[#cbdcfc] hover:border-[#006b2c]'
+                        ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
+                        : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
                     }`}
                   >
                     + {preset}
@@ -660,11 +663,11 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                 return (
                   <div
                     key={idx}
-                    className="p-2.5 rounded-xl border border-[#cbd5e1] bg-white flex flex-col sm:flex-row sm:items-center gap-2 shadow-2xs"
+                    className="p-2.5 rounded-xl border border-white/10 bg-black/60 flex flex-col sm:flex-row sm:items-center gap-2 shadow-xs"
                   >
                     {/* Size Input */}
                     <div className="flex-1 min-w-[110px]">
-                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                         Pack Size
                       </label>
                       <input
@@ -676,17 +679,17 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                           setPackSizes(next);
                         }}
                         placeholder="e.g. 500 g, 1 litre"
-                        className="w-full px-2.5 py-1 text-[12px] font-semibold border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                        className="w-full px-2.5 py-1 text-[12px] font-semibold border border-white/15 rounded-lg bg-black/70 text-white focus:ring-1 focus:ring-emerald-500"
                       />
                     </div>
 
                     {/* Price Input */}
                     <div className="w-24">
-                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                         Price (₹)
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2 top-1 text-[12px] font-bold text-[#64748b]">
+                        <span className="absolute left-2 top-1 text-[12px] font-bold text-slate-400">
                           ₹
                         </span>
                         <input
@@ -698,14 +701,14 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                             next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
                             setPackSizes(next);
                           }}
-                          className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                          className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/70 text-white focus:ring-1 focus:ring-emerald-500"
                         />
                       </div>
                     </div>
 
                     {/* Stock Input */}
                     <div className="w-24">
-                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                         Stock
                       </label>
                       <input
@@ -723,7 +726,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                           next[idx] = { ...next[idx], stock: val };
                           setPackSizes(next);
                         }}
-                        className="w-full px-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                        className="w-full px-2 py-1 text-[12px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/70 text-white placeholder-slate-500 focus:ring-1 focus:ring-emerald-500"
                       />
                     </div>
 
@@ -740,8 +743,8 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                         }}
                         className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors border ${
                           isAvail
-                            ? 'bg-[#dcfce7] text-[#15803d] border-[#86efac] hover:bg-[#bbf7d0]'
-                            : 'bg-[#fee2e2] text-[#b91c1c] border-[#fca5a5] hover:bg-[#fecaca]'
+                            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/70'
+                            : 'bg-red-950/70 text-red-300 border-red-500/40 hover:bg-red-900/70'
                         }`}
                       >
                         {isAvail ? (
@@ -763,7 +766,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
                         onClick={() => {
                           setPackSizes(packSizes.filter((_, i) => i !== idx));
                         }}
-                        className="p-1 rounded-lg text-[#64748b] hover:text-red-500 hover:bg-red-50 disabled:opacity-30 cursor-pointer transition-colors"
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/10 disabled:opacity-30 cursor-pointer transition-colors"
                         title="Remove this pack size"
                       >
                         <X className="w-4 h-4" />
@@ -777,7 +780,7 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
 
           {/* Description */}
           <div className="space-y-1">
-            <label htmlFor="edit-product-description" className="text-[12px] font-semibold text-[#0b1c30]">
+            <label htmlFor="edit-product-description" className="text-[12px] font-semibold text-slate-200">
               {t('productDescriptionLabel')}
             </label>
             <textarea
@@ -786,17 +789,17 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('productDescriptionPlaceholder')}
-              className="w-full px-3 py-1.5 text-[12px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              className="w-full px-3 py-1.5 text-[12px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
             />
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-2 border-t border-[#e2e8f0] flex items-center justify-end gap-2">
+          <div className="pt-2 border-t border-white/10 flex items-center justify-end gap-2">
             <button
               type="button"
               id="cancel-edit-btn"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-[13px] font-semibold text-[#64748b] hover:bg-[#f1f5f9] hover:text-[#0b1c30] transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-lg text-[13px] font-semibold text-slate-300 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
             >
               {t('cancel')}
             </button>
