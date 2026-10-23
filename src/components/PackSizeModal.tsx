@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Product, PackSizeOption } from '../types';
-import { getProductPackSizes } from '../utils/packSize';
+import { getAvailablePackSizes, getPackStock } from '../utils/packSize';
 import { formatINR } from '../utils/currency';
 import { useLanguage } from '../context/LanguageContext';
 import { X, Plus, Minus, ShoppingCart, Check, Scale } from 'lucide-react';
@@ -32,29 +32,31 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
 
   if (!isOpen || !product) return null;
 
-  const packSizes = getProductPackSizes(product);
-  const isOutOfStock = product.stock <= 0;
+  const packSizes = getAvailablePackSizes(product);
+  const isOutOfStock = product.stock <= 0 || packSizes.length === 0;
 
   // Find default selected pack size (match initialPackSize, product unit or first available)
-  const defaultPackSize =
+  const defaultPackSize: PackSizeOption =
     (initialPackSize &&
       packSizes.find((ps) => ps.size.toLowerCase() === initialPackSize.toLowerCase())) ||
     packSizes.find((ps) => ps.size.toLowerCase() === product.unit.toLowerCase()) ||
-    packSizes[0] || { size: product.unit, price: product.price };
+    packSizes[0] || { size: product.unit, price: product.price, isAvailable: false, stock: 0 };
 
   const [selectedPackSize, setSelectedPackSize] = useState<PackSizeOption>(defaultPackSize);
-  const [qty, setQty] = useState<number>(() => Math.max(1, Math.min(initialQty, Math.max(1, product.stock))));
+  const currentMaxStock = isOutOfStock ? 0 : getPackStock(defaultPackSize, product);
+  const [qty, setQty] = useState<number>(() => Math.max(1, Math.min(initialQty, Math.max(1, currentMaxStock))));
   const [added, setAdded] = useState(false);
 
   // Sync state when product, initialQty or initialPackSize changes
   useEffect(() => {
-    const defaultPs =
+    const defaultPs: PackSizeOption =
       (initialPackSize &&
         packSizes.find((ps) => ps.size.toLowerCase() === initialPackSize.toLowerCase())) ||
       packSizes.find((ps) => ps.size.toLowerCase() === product.unit.toLowerCase()) ||
-      packSizes[0] || { size: product.unit, price: product.price };
+      packSizes[0] || { size: product.unit, price: product.price, isAvailable: false, stock: 0 };
     setSelectedPackSize(defaultPs);
-    setQty(Math.max(1, Math.min(initialQty, Math.max(1, product.stock))));
+    const maxS = isOutOfStock ? 0 : getPackStock(defaultPs, product);
+    setQty(Math.max(1, Math.min(initialQty, Math.max(1, maxS))));
     setAdded(false);
   }, [product, initialQty, initialPackSize]);
 
@@ -78,11 +80,20 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
     };
   }, []);
 
-  const totalPrice = selectedPackSize.price * qty;
-  const isAtMaxStock = qty >= product.stock;
+  const effectiveMaxStock = isOutOfStock ? 0 : getPackStock(selectedPackSize, product);
+  const totalPrice = (selectedPackSize?.price || 0) * qty;
+  const isAtMaxStock = qty >= effectiveMaxStock && effectiveMaxStock > 0;
+
+  const handleSelectPack = (ps: PackSizeOption) => {
+    setSelectedPackSize(ps);
+    const maxS = getPackStock(ps, product);
+    if (qty > maxS) {
+      setQty(Math.max(1, maxS));
+    }
+  };
 
   const handleConfirm = () => {
-    if (isOutOfStock) return;
+    if (isOutOfStock || !selectedPackSize || effectiveMaxStock <= 0) return;
     setAdded(true);
     onConfirm(product, qty, selectedPackSize.size, selectedPackSize.price);
     setTimeout(() => {
@@ -160,57 +171,71 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
               </span>
             </div>
 
-            <div
-              id="pack-size-options-container"
-              className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1"
-            >
-              {packSizes.map((ps) => {
-                const isSelected = selectedPackSize.size === ps.size;
-                const sizeSlug = ps.size.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            {packSizes.length === 0 ? (
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-center text-amber-300 text-xs font-medium">
+                {t('unavailable') || 'This product is currently out of stock or unavailable.'}
+              </div>
+            ) : (
+              <div
+                id="pack-size-options-container"
+                className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1"
+              >
+                {packSizes.map((ps) => {
+                  const isSelected = selectedPackSize.size === ps.size;
+                  const sizeSlug = ps.size.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+                  const packStock = getPackStock(ps, product);
 
-                return (
-                  <button
-                    key={ps.size}
-                    type="button"
-                    id={`pack-size-opt-${sizeSlug}`}
-                    data-size={ps.size}
-                    data-price={ps.price}
-                    onClick={() => setSelectedPackSize(ps)}
-                    className={`relative p-3 rounded-2xl border text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-2.5 ${
-                      isSelected
-                        ? 'border-emerald-400 bg-emerald-500/15 ring-2 ring-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.18)]'
-                        : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06] text-slate-300'
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`text-sm font-bold ${
-                            isSelected ? 'text-white' : 'text-slate-200'
-                          }`}
-                        >
-                          {ps.size}
-                        </span>
-                      </div>
-                      <span className="text-xs font-semibold text-emerald-400 mt-0.5 block tabular-nums">
-                        {formatINR(ps.price)}
-                      </span>
-                    </div>
-
-                    {/* Radio Check Indicator */}
-                    <div
-                      className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                  return (
+                    <button
+                      key={ps.size}
+                      type="button"
+                      id={`pack-size-opt-${sizeSlug}`}
+                      data-size={ps.size}
+                      data-price={ps.price}
+                      onClick={() => handleSelectPack(ps)}
+                      className={`relative p-3 rounded-2xl border text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-2.5 ${
                         isSelected
-                          ? 'border-emerald-400 bg-emerald-500 text-white shadow-xs'
-                          : 'border-white/20 bg-transparent'
+                          ? 'border-emerald-400 bg-emerald-500/15 ring-2 ring-emerald-500/30 shadow-[0_0_20px_rgba(16,185,129,0.18)]'
+                          : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06] text-slate-300'
                       }`}
                     >
-                      {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-sm font-bold ${
+                              isSelected ? 'text-white' : 'text-slate-200'
+                            }`}
+                          >
+                            {ps.size}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs font-semibold text-emerald-400 tabular-nums">
+                            {formatINR(ps.price)}
+                          </span>
+                          {packStock > 0 && (
+                            <span className="text-[10px] text-slate-400">
+                              · {packStock} left
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Radio Check Indicator */}
+                      <div
+                        className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all ${
+                          isSelected
+                            ? 'border-emerald-400 bg-emerald-500 text-white shadow-xs'
+                            : 'border-white/20 bg-transparent'
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Quantity Stepper & Stock Availability */}
@@ -223,9 +248,9 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
                 {t('availableQuantity') || 'Quantity'}
               </span>
               <span className="text-[11px] text-slate-400 mt-0.5 block">
-                {isOutOfStock
+                {isOutOfStock || effectiveMaxStock <= 0
                   ? t('unavailable')
-                  : `${t('availableStock', { stock: product.stock })} (${product.unit})`}
+                  : `${effectiveMaxStock} available in stock`}
               </span>
             </div>
 
@@ -250,8 +275,8 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
                 type="button"
                 id="pack-size-qty-plus"
                 title="Increase quantity"
-                disabled={qty >= product.stock || isOutOfStock}
-                onClick={() => qty < product.stock && setQty(qty + 1)}
+                disabled={qty >= effectiveMaxStock || isOutOfStock}
+                onClick={() => qty < effectiveMaxStock && setQty(qty + 1)}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -261,7 +286,7 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
 
           {isAtMaxStock && !isOutOfStock && (
             <p className="text-[11px] text-amber-400 font-medium px-1">
-              Max available stock reached ({product.stock} {product.unit})
+              Max available stock reached for {selectedPackSize?.size} ({effectiveMaxStock} available)
             </p>
           )}
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Product, PackSizeOption } from '../types';
 import { formatINR } from '../utils/currency';
-import { getProductPackSizes } from '../utils/packSize';
+import { getAvailablePackSizes, getPackStock } from '../utils/packSize';
 import {
   X,
   ShoppingCart,
@@ -37,27 +37,27 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   const [showPackSizePopup, setShowPackSizePopup] = useState(false);
 
   // Available pack sizes for this product
-  const packSizes = product ? getProductPackSizes(product) : [];
+  const packSizes = product ? getAvailablePackSizes(product) : [];
+  const isOutOfStock = !product || product.stock <= 0 || packSizes.length === 0;
 
   const [selectedPackSize, setSelectedPackSize] = useState<PackSizeOption>(() => {
     if (!product) return { size: '1 kg', price: 0 };
-    const options = getProductPackSizes(product);
+    const options = getAvailablePackSizes(product);
     const matched = options.find(
       (opt) => opt.size.toLowerCase() === product.unit.toLowerCase()
     );
-    return matched || options[0] || { size: product.unit, price: product.price };
+    return matched || options[0] || { size: product.unit, price: product.price, isAvailable: false, stock: 0 };
   });
 
   // Reset quantity, pack size, and state when product changes
   useEffect(() => {
     if (product) {
-      const options = getProductPackSizes(product);
+      const options = getAvailablePackSizes(product);
       const matched = options.find(
         (opt) => opt.size.toLowerCase() === product.unit.toLowerCase()
       );
-      setSelectedPackSize(
-        matched || options[0] || { size: product.unit, price: product.price }
-      );
+      const chosen = matched || options[0] || { size: product.unit, price: product.price, isAvailable: false, stock: 0 };
+      setSelectedPackSize(chosen);
       setQty(1);
       setAdded(false);
       setShowPackSizePopup(false);
@@ -87,7 +87,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
 
   if (!product) return null;
 
-  const isOutOfStock = product.stock <= 0;
+  const currentMaxStock = isOutOfStock ? 0 : getPackStock(selectedPackSize, product);
 
   const handleOpenPackSizePopup = () => {
     if (isOutOfStock) return;
@@ -234,7 +234,13 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                       id={`pack-size-opt-${option.size.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
                       data-pack-size={option.size}
                       data-pack-price={option.price}
-                      onClick={() => setSelectedPackSize(option)}
+                      onClick={() => {
+                        setSelectedPackSize(option);
+                        const maxS = getPackStock(option, product);
+                        if (qty > maxS) {
+                          setQty(Math.max(1, maxS));
+                        }
+                      }}
                       className={`py-2 px-3 rounded-xl text-left transition-all duration-200 flex flex-col justify-between cursor-pointer border ${
                         isSelected
                           ? 'bg-[#00873a]/30 border-[#00c978] shadow-[0_0_14px_rgba(0,201,120,0.35)] ring-1 ring-[#00c978]/60 text-white'
@@ -339,8 +345,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             </span>
             <button
               type="button"
-              disabled={qty >= product.stock}
-              onClick={() => qty < product.stock && setQty(qty + 1)}
+              disabled={qty >= currentMaxStock || isOutOfStock}
+              onClick={() => qty < currentMaxStock && setQty(qty + 1)}
               aria-label="Increase quantity"
               className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-white/10 text-white transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer disabled:cursor-not-allowed"
             >

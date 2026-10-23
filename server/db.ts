@@ -862,6 +862,15 @@ export async function initializeDatabase(): Promise<void> {
   try {
     await currentPool.query('ALTER TABLE orders ADD COLUMN verified_by VARCHAR(100) NULL AFTER verified_at');
   } catch {}
+  try {
+    await currentPool.query('ALTER TABLE orders ADD COLUMN stock_deducted BOOLEAN NOT NULL DEFAULT FALSE AFTER verified_by');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE cart_items ADD COLUMN selected_pack_size VARCHAR(100) NULL');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE cart_items ADD COLUMN selected_price DECIMAL(10,2) NULL');
+  } catch {}
 
   // Ensure payments table supports UPI payment method and transaction details
   try {
@@ -1850,36 +1859,42 @@ export async function getProductsFromDb(filters?: { category?: string; search?: 
  */
 export async function findProductInDb(productId: string): Promise<any | null> {
   const pool = getPool();
-  try {
-    const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT product_id as id, name as title, category, supplier, price,
-              quantity as stock, unit, image, description, sku, badge, pack_sizes as packSizesJson,
-              is_organic as isOrganic, is_quick_prep as isQuickPrep
-       FROM products
-       WHERE product_id = ?
-       LIMIT 1`,
-      [productId]
-    );
-    if (rows.length === 0) return null;
-    const r = rows[0];
-    let packSizes: any[] | undefined = undefined;
-    if (r.packSizesJson) {
-      try {
-        packSizes = typeof r.packSizesJson === 'string' ? JSON.parse(r.packSizesJson) : r.packSizesJson;
-      } catch {}
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT product_id as id, name as title, category, supplier, price,
+                quantity as stock, unit, image, description, sku, badge, pack_sizes as packSizesJson,
+                is_organic as isOrganic, is_quick_prep as isQuickPrep
+         FROM products
+         WHERE product_id = ?
+         LIMIT 1`,
+        [productId]
+      );
+      if (rows.length === 0) return null;
+      const r = rows[0];
+      let packSizes: any[] | undefined = undefined;
+      if (r.packSizesJson) {
+        try {
+          packSizes = typeof r.packSizesJson === 'string' ? JSON.parse(r.packSizesJson) : r.packSizesJson;
+        } catch {}
+      }
+      return {
+        ...r,
+        price: Number(r.price),
+        stock: Number(r.stock),
+        packSizes,
+        isOrganic: Boolean(r.isOrganic),
+        isQuickPrep: Boolean(r.isQuickPrep),
+      };
+    } catch (err: any) {
+      if (attempt === 2) {
+        console.warn('[MySQL] Error finding product:', err?.message);
+        return null;
+      }
+      await new Promise((res) => setTimeout(res, 500));
     }
-    return {
-      ...r,
-      price: Number(r.price),
-      stock: Number(r.stock),
-      packSizes,
-      isOrganic: Boolean(r.isOrganic),
-      isQuickPrep: Boolean(r.isQuickPrep),
-    };
-  } catch (err: any) {
-    console.warn('[MySQL] Error finding product:', err?.message);
-    return null;
   }
+  return null;
 }
 
 /**
@@ -2228,14 +2243,73 @@ export async function clearCartInDb(customerId: string): Promise<boolean> {
 // -----------------------------------------------------------------------------
 
 /**
+/**
+ * Parses a unit quantity string (e.g. "500 g", "1 kg", "250 ml", "1 litre", "1 dozen", "½ dozen")
+ */
+export function parseUnitQuantityServer(str: string): { value: number; unit: string } | null {
+  if (!str) return null;
+  const cleaned = str.trim().toLowerCase();
+  const match = cleaned.match(/^([\d./]+)\s*(.*)$/);
+  if (!match) return null;
+  let numVal = 1;
+  const numStr = match[1];
+  if (numStr === '1/2' || numStr === '½') numVal = 0.5;
+  else if (numStr === '1/4' || numStr === '¼') numVal = 0.25;
+  else if (numStr === '3/4' || numStr === '¾') numVal = 0.75;
+  else numVal = parseFloat(numStr) || 1;
+  const unitStr = match[2].trim();
+  return { value: numVal, unit: unitStr };
+}
+
+/**
+ * Calculates conversion factor to convert quantity of packSize into baseUnit.
+ * E.g. packSize="500 g", baseUnit="1 kg" -> returns 0.5
+ */
+export function getPackSizeConversionFactorServer(packSize: string, baseUnit: string): number {
+  if (!packSize || !baseUnit) return 1;
+  if (packSize.trim().toLowerCase() === baseUnit.trim().toLowerCase()) return 1;
+  const p = parseUnitQuantityServer(packSize);
+  const b = parseUnitQuantityServer(baseUnit);
+  if (!p || !b) return 1;
+
+  // Weight
+  const weightToGrams: Record<string, number> = { g: 1, gram: 1, grams: 1, kg: 1000, kilogram: 1000, kilograms: 1000 };
+  if (weightToGrams[p.unit] && weightToGrams[b.unit]) {
+    const pGrams = p.value * weightToGrams[p.unit];
+    const bGrams = b.value * weightToGrams[b.unit];
+    return bGrams > 0 ? pGrams / bGrams : 1;
+  }
+
+  // Volume
+  const volumeToMl: Record<string, number> = { ml: 1, millilitre: 1, millilitres: 1, milliliter: 1, milliliters: 1, l: 1000, litre: 1000, litres: 1000, liter: 1000, liters: 1000 };
+  if (volumeToMl[p.unit] && volumeToMl[b.unit]) {
+    const pMl = p.value * volumeToMl[p.unit];
+    const bMl = b.value * volumeToMl[b.unit];
+    return bMl > 0 ? pMl / bMl : 1;
+  }
+
+  // Pieces & Dozen
+  const pieceCounts: Record<string, number> = { piece: 1, pieces: 1, pc: 1, pcs: 1, dozen: 12, dozens: 12 };
+  if (pieceCounts[p.unit] && pieceCounts[b.unit]) {
+    const pPcs = p.value * pieceCounts[p.unit];
+    const bPcs = b.value * pieceCounts[b.unit];
+    return bPcs > 0 ? pPcs / bPcs : 1;
+  }
+
+  return 1;
+}
+
+/**
  * Upserts / creates an order in MySQL, including order items and payment record.
  * Executes atomically within a MySQL transaction:
  * 1. Ensures customer exists in `customers` table and retrieves verified customer_id.
  * 2. Locks existing order to detect exact order_id format (avoiding # vs raw mismatches).
- * 3. Saves/updates order in `orders`.
- * 4. Saves order items in `order_items`.
- * 5. Updates or creates payment record in `payments` referencing verified order and customer.
- * 6. Commits on complete success, or rolls back on any error.
+ * 3. Validates each pack size, price, and stock against database row (FOR UPDATE).
+ * 4. Atomically deducts stock on order confirmation (once per order).
+ * 5. Saves/updates order in `orders`.
+ * 6. Saves verified order items in `order_items`.
+ * 7. Updates or creates payment record in `payments`.
+ * 8. Commits on complete success, or rolls back on any error.
  */
 export async function upsertOrderInDb(orderData: any): Promise<boolean> {
   const orderId = (orderData?.id || orderData?.orderId || '').trim();
@@ -2279,20 +2353,133 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
 
     // 2. Lock and check if order already exists under either ID format
     const [existingOrders] = await connection.query<RowDataPacket[]>(
-      `SELECT order_id, payment_id, payment_status, status FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      `SELECT order_id, payment_id, payment_status, status, stock_deducted FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
       [orderId, altId]
     );
 
     // Use exact generated order_id from database if already present, otherwise use provided orderId
     const actualOrderId = existingOrders.length > 0 ? existingOrders[0].order_id : orderId;
+    const isStockAlreadyDeducted = existingOrders.length > 0 && Boolean(existingOrders[0].stock_deducted);
+    const willDeductStock = !isStockAlreadyDeducted;
+
+    // Validate items, check availability, enforce authoritative prices, and deduct stock atomically
+    const validatedItems: any[] = [];
+    let calculatedSubtotal = 0;
+
+    if (Array.isArray(orderData.items) && orderData.items.length > 0) {
+      for (const item of orderData.items) {
+        const prod = item.product || item;
+        const prodId = prod.id || prod.product_id || '';
+        const qty = Math.max(1, Number(item.quantity) || 1);
+        const requestedPackSize = item.selectedPackSize || prod.unit || '';
+
+        const [prodRows] = await connection.query<RowDataPacket[]>(
+          `SELECT product_id, name, price, quantity, unit, pack_sizes FROM products WHERE product_id = ? OR id = ? FOR UPDATE`,
+          [prodId, prodId]
+        );
+
+        if (prodRows.length > 0) {
+          const pRow = prodRows[0];
+          const actualProdId = pRow.product_id;
+          const prodTitle = pRow.name || prod.title || 'Product';
+          const baseUnit = pRow.unit || '1 kg';
+          const packSize = requestedPackSize || baseUnit;
+
+          let packSizes: any[] | null = null;
+          if (pRow.pack_sizes) {
+            try {
+              packSizes = typeof pRow.pack_sizes === 'string' ? JSON.parse(pRow.pack_sizes) : pRow.pack_sizes;
+            } catch {}
+          }
+
+          let packOption: any = null;
+          if (Array.isArray(packSizes) && packSizes.length > 0) {
+            packOption = packSizes.find((ps: any) => ps.size.toLowerCase() === packSize.toLowerCase());
+            if (!packOption) {
+              throw new Error(`Pack size "${packSize}" is not configured for ${prodTitle}.`);
+            }
+            if (packOption.isAvailable === false) {
+              throw new Error(`Pack size "${packSize}" is currently unavailable for ${prodTitle}.`);
+            }
+          }
+
+          // Authoritative price from database
+          const itemPrice = packOption ? Number(packOption.price) : Number(pRow.price);
+          const itemSubtotal = itemPrice * qty;
+          calculatedSubtotal += itemSubtotal;
+
+          const factor = getPackSizeConversionFactorServer(packSize, baseUnit);
+
+          // Stock check and deduction if not already deducted
+          if (willDeductStock) {
+            if (packOption && packOption.stock !== undefined && packOption.stock !== null) {
+              const packStock = Math.max(0, Number(packOption.stock));
+              if (qty > packStock) {
+                throw new Error(`Insufficient stock for ${prodTitle} (${packSize}). Available: ${packStock}, requested: ${qty}.`);
+              }
+              packOption.stock = Math.max(0, packStock - qty);
+            } else {
+              const neededBaseStock = qty * factor;
+              if (neededBaseStock > Number(pRow.quantity)) {
+                const maxPacks = Math.max(0, Math.floor(Number(pRow.quantity) / (factor > 0 ? factor : 1)));
+                throw new Error(`Insufficient stock for ${prodTitle} (${packSize}). Available: ${maxPacks}, requested: ${qty}.`);
+              }
+            }
+
+            const newBaseQty = Math.max(0, Number(pRow.quantity) - (qty * factor));
+
+            await connection.query(
+              `UPDATE products SET quantity = ?, pack_sizes = ? WHERE product_id = ?`,
+              [newBaseQty, packSizes ? JSON.stringify(packSizes) : null, actualProdId]
+            );
+
+            await connection.query(
+              `INSERT INTO inventory_logs (product_id, previous_quantity, new_quantity, change_quantity, action, notes, operator)
+               VALUES (?, ?, ?, ?, 'CUSTOMER_SALE', ?, 'System')`,
+              [
+                actualProdId,
+                pRow.quantity,
+                newBaseQty,
+                -(qty * factor),
+                `Order ${actualOrderId} purchase: ${qty} × ${packSize}`,
+              ]
+            );
+          }
+
+          validatedItems.push({
+            productId: actualProdId,
+            productTitle: prodTitle,
+            quantity: qty,
+            unit: packSize,
+            price: itemPrice,
+            subtotal: itemSubtotal,
+          });
+        } else {
+          const itemPrice = Math.max(0, Number(item.selectedPrice ?? prod.price) || 0);
+          const itemSubtotal = itemPrice * qty;
+          calculatedSubtotal += itemSubtotal;
+          validatedItems.push({
+            productId: prodId || 'prod-item',
+            productTitle: prod.title || prod.name || 'Product',
+            quantity: qty,
+            unit: requestedPackSize || prod.unit || '1 kg',
+            price: itemPrice,
+            subtotal: itemSubtotal,
+          });
+        }
+      }
+    }
+
+    const finalSubtotal = calculatedSubtotal > 0 ? calculatedSubtotal : subtotal;
+    const finalTotal = Math.max(0, finalSubtotal - discount);
 
     // 3. Insert or update order
     await connection.query(
       `INSERT INTO orders (
          order_id, customer_id, customer_name, email, mobile, delivery_address,
-         subtotal, discount, total, coupon_code, status, payment_id, payment_method, payment_status
+         subtotal, discount, total, coupon_code, status, payment_id, payment_method, payment_status, stock_deducted
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          customer_id = VALUES(customer_id),
          status = VALUES(status),
@@ -2305,7 +2492,8 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
          total = VALUES(total),
          coupon_code = VALUES(coupon_code),
          payment_method = VALUES(payment_method),
-         payment_status = VALUES(payment_status)`,
+         payment_status = VALUES(payment_status),
+         stock_deducted = VALUES(stock_deducted)`,
       [
         actualOrderId,
         validCustomerId,
@@ -2313,34 +2501,27 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
         email,
         mobile,
         deliveryAddress,
-        subtotal,
+        finalSubtotal,
         discount,
-        total,
+        finalTotal,
         couponCode,
         status,
         paymentId,
         paymentMethod,
         paymentStatus,
+        isStockAlreadyDeducted || (willDeductStock && validatedItems.length > 0),
       ]
     );
 
     // 4. Insert order items if present
-    if (Array.isArray(orderData.items) && orderData.items.length > 0) {
+    if (validatedItems.length > 0) {
       await connection.query('DELETE FROM order_items WHERE order_id IN (?, ?)', [actualOrderId, altId]);
 
-      for (const item of orderData.items) {
-        const prod = item.product || item;
-        const prodId = prod.id || prod.product_id || `prod-item`;
-        const prodTitle = prod.title || prod.name || prod.product_name || 'Product';
-        const qty = Math.max(1, Number(item.quantity) || 1);
-        const unit = item.selectedPackSize || prod.unit || '1 kg';
-        const price = Math.max(0, Number(item.selectedPrice ?? prod.price) || 0);
-        const itemSubtotal = price * qty;
-
+      for (const vItem of validatedItems) {
         await connection.query(
           `INSERT INTO order_items (order_id, product_id, product_name, quantity, unit, price, subtotal)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [actualOrderId, prodId, prodTitle, qty, unit, price, itemSubtotal]
+          [actualOrderId, vItem.productId, vItem.productTitle, vItem.quantity, vItem.unit, vItem.price, vItem.subtotal]
         );
       }
     }
@@ -2364,7 +2545,7 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
              order_id = ?
          WHERE payment_id = ?`,
         [
-          total,
+          finalTotal,
           effectivePaymentMethod,
           paymentStatus || existingPayments[0].payment_status || 'PENDING',
           validCustomerId,
@@ -2390,7 +2571,7 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
           validCustomerId,
           effectivePaymentMethod,
           paymentStatus || 'PENDING',
-          total,
+          finalTotal,
         ]
       );
     }
@@ -2408,7 +2589,7 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
   } catch (err: any) {
     await connection.rollback();
     console.error('[MySQL Order Upsert] Error saving order to database:', err?.message);
-    return false;
+    throw err;
   } finally {
     connection.release();
   }
@@ -2459,6 +2640,8 @@ export async function findOrderInDb(orderId: string): Promise<any | null> {
       unit: it.unit || 'unit',
       price: Number(it.price) || 0,
       subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+      selectedPackSize: it.unit || 'unit',
+      selectedPrice: Number(it.price) || 0,
       image: it.image || undefined,
       product: {
         id: String(it.id),
@@ -2619,6 +2802,8 @@ export async function findOrdersForCustomerInDb(customerId?: string): Promise<an
           unit: it.unit || 'unit',
           price: Number(it.price) || 0,
           subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+          selectedPackSize: it.unit || 'unit',
+          selectedPrice: Number(it.price) || 0,
           image: it.image || undefined,
           product: {
             id: String(it.id),
@@ -2821,6 +3006,8 @@ export async function getOrdersToDeliverFromDb(options?: {
           unit: it.unit || 'unit',
           price: Number(it.price) || 0,
           subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+          selectedPackSize: it.unit || 'unit',
+          selectedPrice: Number(it.price) || 0,
           image: it.image || undefined,
           product: {
             id: String(it.id),
@@ -2904,6 +3091,67 @@ export async function updateOrderStatusInDb(
         [cleanId]
       );
       autoAssignEligibleOrders().catch(() => {});
+
+      // Restore inventory if stock was deducted for this order
+      try {
+        const [orderRows] = await pool.query<RowDataPacket[]>(
+          `SELECT order_id, stock_deducted FROM orders WHERE order_id IN (?, ?) OR LOWER(REPLACE(order_id, '#', '')) = ? LIMIT 1`,
+          [orderId, altId, cleanId]
+        );
+        if (orderRows.length > 0 && Boolean(orderRows[0].stock_deducted)) {
+          const actualOid = orderRows[0].order_id;
+          const [items] = await pool.query<RowDataPacket[]>(
+            `SELECT product_id, quantity, unit, price FROM order_items WHERE order_id = ?`,
+            [actualOid]
+          );
+          for (const it of items) {
+            const [prodRows] = await pool.query<RowDataPacket[]>(
+              `SELECT product_id, name, quantity, unit, pack_sizes FROM products WHERE product_id = ? LIMIT 1`,
+              [it.product_id]
+            );
+            if (prodRows.length > 0) {
+              const prod = prodRows[0];
+              let packSizes: any[] | null = null;
+              if (prod.pack_sizes) {
+                try {
+                  packSizes = typeof prod.pack_sizes === 'string' ? JSON.parse(prod.pack_sizes) : prod.pack_sizes;
+                } catch {}
+              }
+              const factor = getPackSizeConversionFactorServer(it.unit, prod.unit);
+              const restoredBaseQty = Number(prod.quantity) + (Number(it.quantity) * factor);
+              if (packSizes && Array.isArray(packSizes)) {
+                packSizes = packSizes.map((ps: any) => {
+                  if (ps.size.toLowerCase() === it.unit.toLowerCase() && ps.stock !== undefined && ps.stock !== null) {
+                    return { ...ps, stock: Number(ps.stock) + Number(it.quantity) };
+                  }
+                  return ps;
+                });
+              }
+              await pool.query(
+                `UPDATE products SET quantity = ?, pack_sizes = ? WHERE product_id = ?`,
+                [restoredBaseQty, packSizes ? JSON.stringify(packSizes) : null, prod.product_id]
+              );
+              await pool.query(
+                `INSERT INTO inventory_logs (product_id, previous_quantity, new_quantity, change_quantity, action, notes, operator)
+                 VALUES (?, ?, ?, ?, 'RESTOCK', ?, 'System')`,
+                [
+                  prod.product_id,
+                  prod.quantity,
+                  restoredBaseQty,
+                  Number(it.quantity) * factor,
+                  `Order ${actualOid} cancelled: restocked ${it.quantity} × ${it.unit}`,
+                ]
+              );
+            }
+          }
+          await pool.query(
+            `UPDATE orders SET stock_deducted = FALSE WHERE order_id = ?`,
+            [actualOid]
+          );
+        }
+      } catch (restockErr: any) {
+        console.warn('[MySQL] Error restoring stock on order cancellation:', restockErr?.message);
+      }
     } else if (isOrderEligibleForDelivery({ status: newStatus })) {
       autoAssignOrder(orderId).catch(() => {});
     }
@@ -5829,6 +6077,8 @@ export async function getEmployeeAssignedOrdersFromDb(
           unit: it.unit || 'unit',
           price: Number(it.price) || 0,
           subtotal: Number(it.subtotal) || (Number(it.price) * (Number(it.quantity) || 1)),
+          selectedPackSize: it.unit || 'unit',
+          selectedPrice: Number(it.price) || 0,
           image: it.image || undefined,
           product: {
             id: String(it.id),

@@ -1,6 +1,8 @@
 export interface PackSizeOption {
   size: string;
   price: number;
+  isAvailable?: boolean;
+  stock?: number;
 }
 
 export interface Product {

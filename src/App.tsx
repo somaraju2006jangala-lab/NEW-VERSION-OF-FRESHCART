@@ -4,7 +4,7 @@ import { INITIAL_PRODUCTS, INITIAL_INVENTORY_LOGS } from './data/products';
 import { INITIAL_COUPONS } from './data/coupons';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { getCustomerOrders, updateOrderStatus, deleteCustomerOrder } from './services/authService';
-import { getProductPackSizes, determinePackSizesForUnit } from './utils/packSize';
+import { getProductPackSizes, getAvailablePackSizes, getPackStock, getPackSizeConversionFactor } from './utils/packSize';
 import {
   fetchProductsFromBackend,
   saveProductToBackend,
@@ -259,10 +259,17 @@ function FreshCartStore() {
         .map((item) => {
           const matchingProduct = products.find((p) => p.id === item.product.id);
           if (matchingProduct) {
-            const safeQty = Math.min(item.quantity, matchingProduct.stock);
-            if (safeQty <= 0) return null;
             const selectedPackSize = item.selectedPackSize || matchingProduct.unit;
-            const configuredSize = matchingProduct.packSizes?.find((ps) => ps.size === selectedPackSize);
+            const configuredSize = matchingProduct.packSizes?.find(
+              (ps) => ps.size.toLowerCase() === selectedPackSize.toLowerCase()
+            );
+            // If pack is explicitly marked unavailable, remove from cart
+            if (configuredSize && configuredSize.isAvailable === false) {
+              return null;
+            }
+            const packStock = getPackStock(selectedPackSize, matchingProduct);
+            const safeQty = Math.min(item.quantity, packStock);
+            if (safeQty <= 0) return null;
             const selectedPrice = configuredSize ? configuredSize.price : (item.selectedPrice ?? matchingProduct.price);
             return {
               ...item,
@@ -616,22 +623,26 @@ function FreshCartStore() {
     const currentProduct = products.find((p) => p.id === product.id) || product;
     if (currentProduct.stock <= 0) return;
 
+    const availablePacks = getAvailablePackSizes(currentProduct);
     const chosenPackSize = packSize || currentProduct.unit;
-    const chosenPrice = packPrice !== undefined ? packPrice : currentProduct.price;
+    const matchingPack = availablePacks.find((ps) => ps.size.toLowerCase() === chosenPackSize.toLowerCase());
+
+    // If pack size is explicitly not available or disabled, reject
+    if (!matchingPack && availablePacks.length > 0) return;
+
+    const chosenPrice = packPrice !== undefined ? packPrice : (matchingPack?.price ?? currentProduct.price);
+    const maxStockForPack = getPackStock(chosenPackSize, currentProduct);
+    if (maxStockForPack <= 0) return;
 
     setCart((prev) => {
       const existing = prev.find(
         (item) =>
           item.product.id === currentProduct.id &&
-          (item.selectedPackSize || item.product.unit) === chosenPackSize
+          (item.selectedPackSize || item.product.unit).toLowerCase() === chosenPackSize.toLowerCase()
       );
 
-      // Check total quantity across ALL pack sizes of this product currently in cart
-      const totalProductQty = prev
-        .filter((item) => item.product.id === currentProduct.id)
-        .reduce((sum, item) => sum + item.quantity, 0);
-
-      const maxCanAdd = Math.max(0, currentProduct.stock - totalProductQty);
+      const existingQty = existing ? existing.quantity : 0;
+      const maxCanAdd = Math.max(0, maxStockForPack - existingQty);
       if (maxCanAdd <= 0) return prev;
 
       const toAdd = Math.min(quantity, maxCanAdd);
@@ -640,7 +651,7 @@ function FreshCartStore() {
       if (existing) {
         return prev.map((item) =>
           item.product.id === currentProduct.id &&
-          (item.selectedPackSize || item.product.unit) === chosenPackSize
+          (item.selectedPackSize || item.product.unit).toLowerCase() === chosenPackSize.toLowerCase()
             ? {
                 ...item,
                 quantity: item.quantity + toAdd,
@@ -669,29 +680,21 @@ function FreshCartStore() {
       const targetItem = prev.find(
         (item) =>
           item.product.id === productId &&
-          (!packSize || (item.selectedPackSize || item.product.unit) === packSize)
+          (!packSize || (item.selectedPackSize || item.product.unit).toLowerCase() === packSize.toLowerCase())
       );
       if (!targetItem) return prev;
 
-      const stockLimit = currentProduct ? currentProduct.stock : targetItem.product.stock;
+      const prod = currentProduct || targetItem.product;
+      const itemPackSize = targetItem.selectedPackSize || prod.unit;
+      const maxAllowed = getPackStock(itemPackSize, prod);
 
-      // Total quantity of other pack sizes of this product in cart
-      const otherQty = prev
-        .filter(
-          (item) =>
-            item.product.id === productId &&
-            item !== targetItem
-        )
-        .reduce((sum, item) => sum + item.quantity, 0);
-
-      const maxAllowedForThisItem = Math.max(0, stockLimit - otherQty);
       const targetQty = targetItem.quantity + delta;
 
       if (targetQty <= 0) {
         return prev.filter((item) => item !== targetItem);
       }
 
-      const finalQty = Math.min(targetQty, maxAllowedForThisItem);
+      const finalQty = Math.min(targetQty, maxAllowed);
       if (finalQty <= 0) {
         return prev.filter((item) => item !== targetItem);
       }
@@ -709,7 +712,7 @@ function FreshCartStore() {
     setCart((prev) =>
       prev.filter((item) => {
         if (item.product.id !== productId) return true;
-        if (packSize && (item.selectedPackSize || item.product.unit) !== packSize) return true;
+        if (packSize && (item.selectedPackSize || item.product.unit).toLowerCase() !== packSize.toLowerCase()) return true;
         return false;
       })
     );
@@ -721,19 +724,30 @@ function FreshCartStore() {
 
   // When a customer purchases a product, reduce the available quantity accordingly
   const handleOrderPlaced = (purchasedItems: CartItem[], placedOrder?: CustomerOrder) => {
-    const qtyByProductId: Record<string, number> = {};
-    purchasedItems.forEach((it) => {
-      qtyByProductId[it.product.id] = (qtyByProductId[it.product.id] || 0) + it.quantity;
-    });
-
     setProducts((prev) =>
       prev.map((p) => {
-        const totalPurchased = qtyByProductId[p.id];
-        if (totalPurchased) {
-          const newStock = Math.max(0, p.stock - totalPurchased);
-          return { ...p, stock: newStock };
+        const itemsForThisProduct = purchasedItems.filter((it) => it.product.id === p.id);
+        if (itemsForThisProduct.length === 0) return p;
+
+        let newStock = p.stock;
+        let newPackSizes = p.packSizes ? [...p.packSizes] : undefined;
+
+        for (const it of itemsForThisProduct) {
+          const packLabel = it.selectedPackSize || p.unit;
+          const factor = getPackSizeConversionFactor(packLabel, p.unit) || 1;
+          newStock = Math.max(0, newStock - (it.quantity * factor));
+
+          if (newPackSizes) {
+            newPackSizes = newPackSizes.map((ps) => {
+              if (ps.size.toLowerCase() === packLabel.toLowerCase() && ps.stock !== undefined && ps.stock !== null) {
+                return { ...ps, stock: Math.max(0, ps.stock - it.quantity) };
+              }
+              return ps;
+            });
+          }
         }
-        return p;
+
+        return { ...p, stock: newStock, packSizes: newPackSizes };
       })
     );
 
@@ -807,18 +821,15 @@ function FreshCartStore() {
 
   const handleUpdateProductPrice = (productId: string, newPrice: number) => {
     const targetProduct = products.find((p) => p.id === productId);
-    const updatedPackSizes = targetProduct?.packSizes?.map((ps) => {
+    if (!targetProduct) return;
+
+    // Only update the pack size matching the product's base unit; never change other pack sizes!
+    const updatedPackSizes = targetProduct.packSizes?.map((ps) => {
       if (ps.size.toLowerCase() === targetProduct.unit.toLowerCase()) {
         return { ...ps, price: newPrice };
       }
-      const ratio = targetProduct.price > 0 ? ps.price / targetProduct.price : 1;
-      return { ...ps, price: Math.max(1, Math.round(newPrice * ratio)) };
-    }) || (targetProduct ? determinePackSizesForUnit({
-      unit: targetProduct.unit,
-      price: newPrice,
-      category: targetProduct.category,
-      title: targetProduct.title,
-    }) : undefined);
+      return ps;
+    });
 
     setProducts((prev) =>
       prev.map((p) =>
@@ -828,13 +839,11 @@ function FreshCartStore() {
       )
     );
 
-    if (targetProduct) {
-      saveProductToBackend({
-        ...targetProduct,
-        price: newPrice,
-        packSizes: updatedPackSizes,
-      });
-    }
+    saveProductToBackend({
+      ...targetProduct,
+      price: newPrice,
+      packSizes: updatedPackSizes,
+    });
   };
 
   const handleAddProduct = (newProduct: Product) => {
@@ -888,19 +897,12 @@ function FreshCartStore() {
 
   const handleUpdateProductUnit = (productId: string, newUnit: string) => {
     const targetProduct = products.find((p) => p.id === productId);
-    const newPackSizes = targetProduct
-      ? determinePackSizesForUnit({
-          unit: newUnit,
-          price: targetProduct.price,
-          category: targetProduct.category,
-          title: targetProduct.title,
-        })
-      : undefined;
+    if (!targetProduct) return;
 
     setProducts((prev) =>
       prev.map((p) =>
         p.id === productId
-          ? { ...p, unit: newUnit, packSizes: newPackSizes }
+          ? { ...p, unit: newUnit }
           : p
       )
     );
@@ -908,23 +910,21 @@ function FreshCartStore() {
     setCart((prev) =>
       prev.map((item) =>
         item.product.id === productId
-          ? { ...item, product: { ...item.product, unit: newUnit, packSizes: newPackSizes } }
+          ? { ...item, product: { ...item.product, unit: newUnit } }
           : item
       )
     );
 
     if (activeModalProduct && activeModalProduct.id === productId) {
       setActiveModalProduct((prev) =>
-        prev ? { ...prev, unit: newUnit, packSizes: newPackSizes } : null
+        prev ? { ...prev, unit: newUnit } : null
       );
     }
 
-    if (targetProduct) {
-      saveProductToBackend({
-        ...targetProduct,
-        unit: newUnit,
-        packSizes: newPackSizes,
-      });
+    saveProductToBackend({
+      ...targetProduct,
+      unit: newUnit,
+    });
 
       const { date, time, timestamp } = createLogTimestamp();
       const logEntry: InventoryLog = {
@@ -938,10 +938,9 @@ function FreshCartStore() {
         quantityChange: 0,
         newStock: targetProduct.stock,
         operator: 'Admin Portal',
-        notes: `Updated unit for ${targetProduct.title} to "${newUnit}" (Pack sizes auto-determined)`,
+        notes: `Updated unit for ${targetProduct.title} to "${newUnit}"`,
       };
       setInventoryLogs((prevLogs) => [logEntry, ...prevLogs]);
-    }
   };
 
   const handleEditProduct = (updatedProduct: Product) => {

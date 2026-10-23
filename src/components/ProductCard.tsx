@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Product } from '../types';
 import { formatINR } from '../utils/currency';
+import { getAvailablePackSizes } from '../utils/packSize';
 import { Plus, Minus, ShoppingCart, Check } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { PackSizeModal } from './PackSizeModal';
@@ -29,7 +30,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
 
-  const isOutOfStock = product.stock <= 0;
+  const availablePackSizes = getAvailablePackSizes(product);
+  const isOutOfStock = product.stock <= 0 || availablePackSizes.length === 0;
 
   const handleIncrement = (e: React.MouseEvent) => {
     e.stopPropagation();

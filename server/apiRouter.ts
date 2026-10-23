@@ -1207,13 +1207,18 @@ apiRouter.post('/api/orders', async (req: Request, res: Response) => {
 
     const saved = await upsertOrderInDb(orderData);
     if (!saved) {
-      sendJson(res, 500, { success: false, error: 'Failed to save order to database.' });
+      sendJson(res, 400, { success: false, error: 'Failed to save order to database.' });
       return;
     }
 
     sendJson(res, 200, { success: true, order: orderData });
   } catch (err: any) {
-    sendJson(res, 500, { success: false, error: err?.message || 'Failed to save order.' });
+    const isValidationErr =
+      err?.message?.includes('Insufficient stock') ||
+      err?.message?.includes('not configured') ||
+      err?.message?.includes('currently unavailable') ||
+      err?.message?.includes('not found in inventory');
+    sendJson(res, isValidationErr ? 400 : 500, { success: false, error: err?.message || 'Failed to save order.' });
   }
 });
 
@@ -1325,7 +1330,12 @@ apiRouter.post(
         activeOrderConfirmations.delete(orderId);
       }
     } catch (err: any) {
-      sendJson(res, 500, { success: false, error: err?.message || 'Server error confirming order.' });
+      const isValidationErr =
+        err?.message?.includes('Insufficient stock') ||
+        err?.message?.includes('not configured') ||
+        err?.message?.includes('currently unavailable') ||
+        err?.message?.includes('not found in inventory');
+      sendJson(res, isValidationErr ? 400 : 500, { success: false, error: err?.message || 'Server error confirming order.' });
     }
   }
 );

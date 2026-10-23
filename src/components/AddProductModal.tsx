@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
-import { determinePackSizesForUnit, STANDARD_UNITS } from '../utils/packSize';
+import { STANDARD_UNITS, getSuggestedPackSizesForUnit } from '../utils/packSize';
 export { STANDARD_UNITS };
-import { X, Plus, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { X, Plus, Image as ImageIcon, Sparkles, Check } from 'lucide-react';
 
 interface AddProductModalProps {
   isOpen: boolean;
@@ -90,7 +90,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [customUnit, setCustomUnit] = useState('');
   const [isCustomUnit, setIsCustomUnit] = useState(false);
   const [packSizes, setPackSizes] = useState<PackSizeOption[]>(() =>
-    determinePackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce', title: '' })
+    getSuggestedPackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce', title: '' })
   );
   const [error, setError] = useState('');
 
@@ -102,7 +102,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setUnit(preset.unit);
     setIsCustomUnit(false);
     const numericPrice = parseFloat(price) || 99;
-    const derived = determinePackSizesForUnit({
+    const derived = getSuggestedPackSizesForUnit({
       unit: preset.unit,
       price: numericPrice,
       category: preset.category,
@@ -118,7 +118,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setUnit(newUnit);
     setIsCustomUnit(false);
     const numericPrice = parseFloat(price) || 99;
-    const derived = determinePackSizesForUnit({
+    const derived = getSuggestedPackSizesForUnit({
       unit: newUnit,
       price: numericPrice,
       category,
@@ -131,7 +131,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     const trimmed = customUnit.trim();
     if (!trimmed) return;
     const numericPrice = parseFloat(price) || 99;
-    const derived = determinePackSizesForUnit({
+    const derived = getSuggestedPackSizesForUnit({
       unit: trimmed,
       price: numericPrice,
       category,
@@ -143,7 +143,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const handleRegeneratePackSizes = () => {
     const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
     const numericPrice = parseFloat(price) || 99;
-    const derived = determinePackSizesForUnit({
+    const derived = getSuggestedPackSizesForUnit({
       unit: selectedUnit || '1 kg',
       price: numericPrice,
       category,
@@ -155,14 +155,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const handleAddPackSizeRow = () => {
     const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
     const numericPrice = parseFloat(price) || 99;
-    const sampleSize = selectedUnit.toLowerCase().includes('l')
-      ? '2 L'
-      : selectedUnit.toLowerCase().includes('dozen')
-      ? '3 dozen'
-      : '2 kg';
     setPackSizes([
       ...packSizes,
-      { size: sampleSize, price: Math.round(numericPrice * 1.85) },
+      { size: selectedUnit || '1 unit', price: numericPrice, isAvailable: true },
     ]);
   };
 
@@ -200,19 +195,29 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
     const categoryObj = CATEGORY_OPTIONS.find((c) => c.id === category);
 
-    const validPackSizes = packSizes.filter(
-      (ps) => ps.size.trim() && !isNaN(ps.price) && ps.price > 0
-    );
+    const validPackSizes = packSizes
+      .filter((ps) => ps.size && ps.size.trim() && !isNaN(Number(ps.price)) && Number(ps.price) > 0)
+      .map((ps) => ({
+        size: ps.size.trim(),
+        price: Math.max(1, Math.round(Number(ps.price) || 0)),
+        isAvailable: ps.isAvailable !== false && (ps as any).available !== false,
+        stock:
+          ps.stock !== undefined && ps.stock !== null && String(ps.stock).trim() !== '' && !isNaN(Number(ps.stock))
+            ? Math.max(0, Math.floor(Number(ps.stock)))
+            : undefined,
+      }));
 
     const finalPackSizes =
       validPackSizes.length > 0
         ? validPackSizes
-        : determinePackSizesForUnit({
-            unit: selectedUnit,
-            price: numericPrice,
-            category,
-            title: title.trim(),
-          });
+        : [
+            {
+              size: selectedUnit,
+              price: numericPrice,
+              isAvailable: true,
+              stock: Math.max(0, numericQty),
+            },
+          ];
 
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -247,7 +252,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setUnit('1 kg');
     setDescription('');
     setIsCustomUnit(false);
-    setPackSizes(determinePackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce' }));
+    setPackSizes(getSuggestedPackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce' }));
   };
 
   return (
@@ -350,11 +355,35 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     }}
                     className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
                   >
-                    {STANDARD_UNITS.map((u) => (
-                      <option key={u} value={u}>
-                        {u}
-                      </option>
-                    ))}
+                    <optgroup label="Weight">
+                      <option value="100 g">100 g</option>
+                      <option value="250 g">250 g</option>
+                      <option value="500 g">500 g</option>
+                      <option value="1 kg">1 kg</option>
+                      <option value="2 kg">2 kg</option>
+                      <option value="5 kg">5 kg</option>
+                    </optgroup>
+                    <optgroup label="Volume">
+                      <option value="100 ml">100 ml</option>
+                      <option value="250 ml">250 ml</option>
+                      <option value="500 ml">500 ml</option>
+                      <option value="1 litre">1 litre</option>
+                      <option value="2 litres">2 litres</option>
+                      <option value="5 litres">5 litres</option>
+                    </optgroup>
+                    <optgroup label="Pieces">
+                      <option value="1 piece">1 piece</option>
+                      <option value="2 pieces">2 pieces</option>
+                      <option value="4 pieces">4 pieces</option>
+                      <option value="1 packet">1 packet</option>
+                      <option value="1 box">1 box</option>
+                      <option value="1 bunch">1 bunch</option>
+                    </optgroup>
+                    <optgroup label="Dozen">
+                      <option value="1/2 dozen">1/2 dozen</option>
+                      <option value="1 dozen">1 dozen</option>
+                      <option value="2 dozen">2 dozen</option>
+                    </optgroup>
                     <option value="custom">{t('enterCustomUnitBtn')}</option>
                   </select>
                 </div>
@@ -423,81 +452,197 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             </div>
           </div>
 
-          {/* Pack Sizes & Prices Configuration (Automatically derived from Unit & customizable) */}
-          <div className="space-y-2 border border-[#e2e8f0] rounded-xl p-3 bg-[#f8fafc]">
-            <div className="flex items-center justify-between">
+          {/* Pack Sizes, Prices, Stock & Availability Configuration */}
+          <div className="space-y-3 border border-[#cbd5e1] rounded-xl p-3.5 bg-[#f8fafc]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <label className="text-[12px] font-semibold text-[#0b1c30] block">
-                  Available Pack Sizes & Prices
+                <label className="text-[13px] font-bold text-[#0b1c30] block">
+                  Pack Sizes, Prices, Stock & Availability
                 </label>
-                <span className="text-[10px] text-[#64748b] block">
-                  Auto-determined by unit ({isCustomUnit ? customUnit || 'custom' : unit})
+                <span className="text-[11px] text-[#64748b] block">
+                  Configure independent prices, stock, and availability status for each pack size.
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  id="auto-generate-pack-sizes-add-btn"
-                  onClick={handleRegeneratePackSizes}
-                  className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
-                  title="Auto-determine pack sizes from configured unit and price"
-                >
-                  <Sparkles className="w-3 h-3 text-[#006b2c]" />
-                  <span>Auto-derive</span>
-                </button>
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <button
                   type="button"
                   id="add-pack-size-row-add-modal-btn"
                   onClick={handleAddPackSizeRow}
-                  className="text-[11px] font-semibold text-[#006b2c] hover:underline flex items-center gap-1 cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-[#006b2c] text-white hover:bg-[#00873a] text-[11px] font-bold flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
                 >
-                  <Plus className="w-3 h-3" />
-                  <span>Add Size</span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Pack Size</span>
                 </button>
               </div>
             </div>
 
-            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-              {packSizes.map((ps, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={ps.size}
-                    onChange={(e) => {
-                      const next = [...packSizes];
-                      next[idx] = { ...next[idx], size: e.target.value };
-                      setPackSizes(next);
-                    }}
-                    placeholder="e.g. 500 g"
-                    className="flex-1 px-2.5 py-1 text-[12px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
-                  />
-                  <div className="relative w-24">
-                    <span className="absolute left-2 top-1 text-[12px] font-bold text-[#64748b]">₹</span>
-                    <input
-                      type="number"
-                      min="1"
-                      value={ps.price}
-                      onChange={(e) => {
-                        const next = [...packSizes];
-                        next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
-                        setPackSizes(next);
-                      }}
-                      className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
-                    />
-                  </div>
+            {/* Quick Add Presets Bar */}
+            <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-[#e2e8f0]">
+              <span className="text-[11px] font-semibold text-[#64748b]">Quick add:</span>
+              {[
+                '100 g',
+                '250 g',
+                '500 g',
+                '1 kg',
+                '5 kg',
+                '100 ml',
+                '250 ml',
+                '500 ml',
+                '1 litre',
+                '5 litres',
+                '1 piece',
+                '2 pieces',
+                '4 pieces',
+                '1/2 dozen',
+                '1 dozen',
+                '2 dozen',
+              ].map((preset) => {
+                const alreadyAdded = packSizes.some(
+                  (ps) => ps.size.toLowerCase() === preset.toLowerCase()
+                );
+                return (
                   <button
+                    key={preset}
                     type="button"
-                    disabled={packSizes.length <= 1}
+                    disabled={alreadyAdded}
                     onClick={() => {
-                      setPackSizes(packSizes.filter((_, i) => i !== idx));
+                      const numericPrice = parseFloat(price) || 99;
+                      setPackSizes([
+                        ...packSizes,
+                        { size: preset, price: numericPrice, isAvailable: true },
+                      ]);
                     }}
-                    className="p-1 rounded-md text-[#64748b] hover:text-red-500 hover:bg-red-50 disabled:opacity-30 cursor-pointer"
-                    title="Remove pack size"
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
+                      alreadyAdded
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
+                        : 'bg-white hover:bg-emerald-50 text-[#006b2c] border-[#cbdcfc] hover:border-[#006b2c]'
+                    }`}
                   >
-                    <X className="w-3.5 h-3.5" />
+                    + {preset}
                   </button>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+
+            {/* Pack Size Rows */}
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              {packSizes.map((ps, idx) => {
+                const isAvail = ps.isAvailable !== false && (ps as any).available !== false;
+                return (
+                  <div
+                    key={idx}
+                    className="p-2.5 rounded-xl border border-[#cbd5e1] bg-white flex flex-col sm:flex-row sm:items-center gap-2 shadow-2xs"
+                  >
+                    {/* Size Input */}
+                    <div className="flex-1 min-w-[110px]">
+                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                        Pack Size
+                      </label>
+                      <input
+                        type="text"
+                        value={ps.size}
+                        onChange={(e) => {
+                          const next = [...packSizes];
+                          next[idx] = { ...next[idx], size: e.target.value };
+                          setPackSizes(next);
+                        }}
+                        placeholder="e.g. 500 g, 1 litre"
+                        className="w-full px-2.5 py-1 text-[12px] font-semibold border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                      />
+                    </div>
+
+                    {/* Price Input */}
+                    <div className="w-24">
+                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                        Price (₹)
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1 text-[12px] font-bold text-[#64748b]">
+                          ₹
+                        </span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={ps.price}
+                          onChange={(e) => {
+                            const next = [...packSizes];
+                            next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
+                            setPackSizes(next);
+                          }}
+                          className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Stock Input */}
+                    <div className="w-24">
+                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                        Stock
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={ps.stock !== undefined ? ps.stock : ''}
+                        placeholder="Mapped"
+                        title="Pack-size specific stock (or leave blank for mapped product inventory)"
+                        onChange={(e) => {
+                          const next = [...packSizes];
+                          const val =
+                            e.target.value.trim() === ''
+                              ? undefined
+                              : Math.max(0, parseInt(e.target.value, 10) || 0);
+                          next[idx] = { ...next[idx], stock: val };
+                          setPackSizes(next);
+                        }}
+                        className="w-full px-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                      />
+                    </div>
+
+                    {/* Availability Toggle & Remove */}
+                    <div className="pt-2 sm:pt-3.5 flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        id={`toggle-add-availability-${idx}`}
+                        title={isAvail ? 'Mark as Unavailable' : 'Mark as Available'}
+                        onClick={() => {
+                          const next = [...packSizes];
+                          next[idx] = { ...next[idx], isAvailable: !isAvail };
+                          setPackSizes(next);
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors border ${
+                          isAvail
+                            ? 'bg-[#dcfce7] text-[#15803d] border-[#86efac] hover:bg-[#bbf7d0]'
+                            : 'bg-[#fee2e2] text-[#b91c1c] border-[#fca5a5] hover:bg-[#fecaca]'
+                        }`}
+                      >
+                        {isAvail ? (
+                          <>
+                            <Check className="w-3 h-3 stroke-[3]" />
+                            <span>Available</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-3 h-3 stroke-[3]" />
+                            <span>Unavailable</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={packSizes.length <= 1}
+                        onClick={() => {
+                          setPackSizes(packSizes.filter((_, i) => i !== idx));
+                        }}
+                        className="p-1 rounded-lg text-[#64748b] hover:text-red-500 hover:bg-red-50 disabled:opacity-30 cursor-pointer transition-colors"
+                        title="Remove this pack size"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
