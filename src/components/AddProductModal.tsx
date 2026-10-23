@@ -256,19 +256,25 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/50 backdrop-blur-xs animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-[#e2e8f0] flex flex-col max-h-[90vh]">
+    <div
+      id="add-product-modal-backdrop"
+      className="add-product-modal-backdrop edit-product-modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in"
+    >
+      <div
+        id="add-product-modal"
+        className="add-product-modal edit-product-modal bg-[#060b13]/90 backdrop-blur-2xl rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden border border-white/10 flex flex-col max-h-[90vh] text-white"
+      >
         {/* Modal Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-[#e2e8f0] bg-[#f8fafc]">
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-white/10 bg-white/[0.03]">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[#006b2c] text-white flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-[#006b2c] text-white flex items-center justify-center shadow-xs">
               <Plus className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-[17px] font-bold text-[#0b1c30] font-display">
+              <h2 className="text-[17px] font-bold text-white font-display">
                 {t('addProductTitle')}
               </h2>
-              <p className="text-[11px] text-[#565e74]">
+              <p className="text-[11px] text-slate-400">
                 {t('addProductSubtitle')}
               </p>
             </div>
@@ -276,7 +282,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg text-[#565e74] hover:bg-[#e2e8f0] hover:text-[#0b1c30] flex items-center justify-center transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-lg text-slate-400 hover:bg-white/10 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -285,14 +291,14 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4">
           {error && (
-            <div className="p-2.5 rounded-lg bg-[#fee2e2] text-[#b91c1c] text-[12px] font-semibold border border-[#fecaca]">
+            <div className="p-2.5 rounded-lg bg-red-950/80 text-red-200 text-[12px] font-semibold border border-red-800/80">
               {error}
             </div>
           )}
 
           {/* Product Name */}
           <div className="space-y-1">
-            <label className="text-[12px] font-semibold text-[#0b1c30]">
+            <label className="text-[12px] font-semibold text-slate-200">
               {t('productNameLabel')}
             </label>
             <input
@@ -301,20 +307,20 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={t('productNamePlaceholder')}
-              className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
             />
           </div>
 
           {/* Category & Unit */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[12px] font-semibold text-[#0b1c30]">
+              <label className="text-[12px] font-semibold text-slate-200">
                 {t('categoryLabel')}
               </label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as Product['category'])}
-                className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
+                className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
               >
                 {CATEGORY_OPTIONS.map((c) => {
                   const catLabel =
@@ -330,7 +336,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       ? t('catSnacks')
                       : t('catGrains');
                   return (
-                    <option key={c.id} value={c.id}>
+                    <option key={c.id} value={c.id} className="bg-[#0b121e] text-white">
                       {catLabel}
                     </option>
                   );
@@ -339,7 +345,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             </div>
 
             <div className="space-y-1">
-              <label className="text-[12px] font-semibold text-[#0b1c30]">
+              <label className="text-[12px] font-semibold text-slate-200">
                 {t('unitPackSizeLabel')}
               </label>
               {!isCustomUnit ? (
@@ -353,38 +359,38 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                         handleUnitChange(e.target.value);
                       }
                     }}
-                    className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
+                    className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
                   >
-                    <optgroup label="Weight">
-                      <option value="100 g">100 g</option>
-                      <option value="250 g">250 g</option>
-                      <option value="500 g">500 g</option>
-                      <option value="1 kg">1 kg</option>
-                      <option value="2 kg">2 kg</option>
-                      <option value="5 kg">5 kg</option>
+                    <optgroup label="Weight" className="bg-[#0b121e] text-white">
+                      <option value="100 g" className="bg-[#0b121e] text-white">100 g</option>
+                      <option value="250 g" className="bg-[#0b121e] text-white">250 g</option>
+                      <option value="500 g" className="bg-[#0b121e] text-white">500 g</option>
+                      <option value="1 kg" className="bg-[#0b121e] text-white">1 kg</option>
+                      <option value="2 kg" className="bg-[#0b121e] text-white">2 kg</option>
+                      <option value="5 kg" className="bg-[#0b121e] text-white">5 kg</option>
                     </optgroup>
-                    <optgroup label="Volume">
-                      <option value="100 ml">100 ml</option>
-                      <option value="250 ml">250 ml</option>
-                      <option value="500 ml">500 ml</option>
-                      <option value="1 litre">1 litre</option>
-                      <option value="2 litres">2 litres</option>
-                      <option value="5 litres">5 litres</option>
+                    <optgroup label="Volume" className="bg-[#0b121e] text-white">
+                      <option value="100 ml" className="bg-[#0b121e] text-white">100 ml</option>
+                      <option value="250 ml" className="bg-[#0b121e] text-white">250 ml</option>
+                      <option value="500 ml" className="bg-[#0b121e] text-white">500 ml</option>
+                      <option value="1 litre" className="bg-[#0b121e] text-white">1 litre</option>
+                      <option value="2 litres" className="bg-[#0b121e] text-white">2 litres</option>
+                      <option value="5 litres" className="bg-[#0b121e] text-white">5 litres</option>
                     </optgroup>
-                    <optgroup label="Pieces">
-                      <option value="1 piece">1 piece</option>
-                      <option value="2 pieces">2 pieces</option>
-                      <option value="4 pieces">4 pieces</option>
-                      <option value="1 packet">1 packet</option>
-                      <option value="1 box">1 box</option>
-                      <option value="1 bunch">1 bunch</option>
+                    <optgroup label="Pieces" className="bg-[#0b121e] text-white">
+                      <option value="1 piece" className="bg-[#0b121e] text-white">1 piece</option>
+                      <option value="2 pieces" className="bg-[#0b121e] text-white">2 pieces</option>
+                      <option value="4 pieces" className="bg-[#0b121e] text-white">4 pieces</option>
+                      <option value="1 packet" className="bg-[#0b121e] text-white">1 packet</option>
+                      <option value="1 box" className="bg-[#0b121e] text-white">1 box</option>
+                      <option value="1 bunch" className="bg-[#0b121e] text-white">1 bunch</option>
                     </optgroup>
-                    <optgroup label="Dozen">
-                      <option value="1/2 dozen">1/2 dozen</option>
-                      <option value="1 dozen">1 dozen</option>
-                      <option value="2 dozen">2 dozen</option>
+                    <optgroup label="Dozen" className="bg-[#0b121e] text-white">
+                      <option value="1/2 dozen" className="bg-[#0b121e] text-white">1/2 dozen</option>
+                      <option value="1 dozen" className="bg-[#0b121e] text-white">1 dozen</option>
+                      <option value="2 dozen" className="bg-[#0b121e] text-white">2 dozen</option>
                     </optgroup>
-                    <option value="custom">{t('enterCustomUnitBtn')}</option>
+                    <option value="custom" className="bg-[#0b121e] text-white">{t('enterCustomUnitBtn')}</option>
                   </select>
                 </div>
               ) : (
@@ -395,7 +401,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     onChange={(e) => setCustomUnit(e.target.value)}
                     onBlur={handleCustomUnitApply}
                     placeholder="e.g. 500 g, 1 kg, 1 L, 1 dozen"
-                    className="flex-1 px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                    className="flex-1 px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                   />
                   <button
                     type="button"
@@ -403,7 +409,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       setIsCustomUnit(false);
                       handleUnitChange(unit);
                     }}
-                    className="px-2.5 py-1 text-[11px] text-[#565e74] hover:text-[#0b1c30] underline cursor-pointer"
+                    className="px-2.5 py-1 text-[11px] text-emerald-400 hover:text-emerald-300 underline cursor-pointer"
                   >
                     {t('switchToStandardUnits')}
                   </button>
@@ -415,11 +421,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           {/* Price & Quantity */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[12px] font-semibold text-[#0b1c30]">
+              <label className="text-[12px] font-semibold text-slate-200">
                 {t('priceLabel')}
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-2 text-[14px] font-bold text-[#64748b]">
+                <span className="absolute left-3 top-2 text-[14px] font-bold text-slate-400">
                   ₹
                 </span>
                 <input
@@ -430,13 +436,13 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                   placeholder="e.g. 80"
-                  className="w-full pl-7 pr-3 py-2 text-[13px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                  className="w-full pl-7 pr-3 py-2 text-[13px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 />
               </div>
             </div>
 
             <div className="space-y-1">
-              <label className="text-[12px] font-semibold text-[#0b1c30]">
+              <label className="text-[12px] font-semibold text-slate-200">
                 {t('stockQuantityLabel')}
               </label>
               <input
@@ -447,19 +453,19 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 placeholder="e.g. 50"
-                className="w-full px-3 py-2 text-[13px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                className="w-full px-3 py-2 text-[13px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
               />
             </div>
           </div>
 
           {/* Pack Sizes, Prices, Stock & Availability Configuration */}
-          <div className="space-y-3 border border-[#cbd5e1] rounded-xl p-3.5 bg-[#f8fafc]">
+          <div className="space-y-3 border border-white/10 rounded-xl p-3.5 bg-black/50 backdrop-blur-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
-                <label className="text-[13px] font-bold text-[#0b1c30] block">
+                <label className="text-[13px] font-bold text-white block">
                   Pack Sizes, Prices, Stock & Availability
                 </label>
-                <span className="text-[11px] text-[#64748b] block">
+                <span className="text-[11px] text-slate-400 block">
                   Configure independent prices, stock, and availability status for each pack size.
                 </span>
               </div>
@@ -477,8 +483,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             </div>
 
             {/* Quick Add Presets Bar */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-[#e2e8f0]">
-              <span className="text-[11px] font-semibold text-[#64748b]">Quick add:</span>
+            <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/10">
+              <span className="text-[11px] font-semibold text-slate-400">Quick add:</span>
               {[
                 '100 g',
                 '250 g',
@@ -514,8 +520,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                     }}
                     className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
                       alreadyAdded
-                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed opacity-60'
-                        : 'bg-white hover:bg-emerald-50 text-[#006b2c] border-[#cbdcfc] hover:border-[#006b2c]'
+                        ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
+                        : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
                     }`}
                   >
                     + {preset}
@@ -531,11 +537,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 return (
                   <div
                     key={idx}
-                    className="p-2.5 rounded-xl border border-[#cbd5e1] bg-white flex flex-col sm:flex-row sm:items-center gap-2 shadow-2xs"
+                    className="p-2.5 rounded-xl border border-white/10 bg-black/60 flex flex-col sm:flex-row sm:items-center gap-2 shadow-xs"
                   >
                     {/* Size Input */}
                     <div className="flex-1 min-w-[110px]">
-                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                         Pack Size
                       </label>
                       <input
@@ -547,17 +553,17 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                           setPackSizes(next);
                         }}
                         placeholder="e.g. 500 g, 1 litre"
-                        className="w-full px-2.5 py-1 text-[12px] font-semibold border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                        className="w-full px-2.5 py-1 text-[12px] font-semibold border border-white/15 rounded-lg bg-black/70 text-white focus:ring-1 focus:ring-emerald-500"
                       />
                     </div>
 
                     {/* Price Input */}
                     <div className="w-24">
-                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                         Price (₹)
                       </label>
                       <div className="relative">
-                        <span className="absolute left-2 top-1 text-[12px] font-bold text-[#64748b]">
+                        <span className="absolute left-2 top-1 text-[12px] font-bold text-slate-400">
                           ₹
                         </span>
                         <input
@@ -569,14 +575,14 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                             next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
                             setPackSizes(next);
                           }}
-                          className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                          className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/70 text-white focus:ring-1 focus:ring-emerald-500"
                         />
                       </div>
                     </div>
 
                     {/* Stock Input */}
                     <div className="w-24">
-                      <label className="text-[10px] font-semibold text-[#64748b] block mb-0.5">
+                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
                         Stock
                       </label>
                       <input
@@ -594,7 +600,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                           next[idx] = { ...next[idx], stock: val };
                           setPackSizes(next);
                         }}
-                        className="w-full px-2 py-1 text-[12px] font-bold tabular-nums border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] focus:ring-1 focus:ring-[#006b2c]"
+                        className="w-full px-2 py-1 text-[12px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/70 text-white placeholder-slate-500 focus:ring-1 focus:ring-emerald-500"
                       />
                     </div>
 
@@ -611,8 +617,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                         }}
                         className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors border ${
                           isAvail
-                            ? 'bg-[#dcfce7] text-[#15803d] border-[#86efac] hover:bg-[#bbf7d0]'
-                            : 'bg-[#fee2e2] text-[#b91c1c] border-[#fca5a5] hover:bg-[#fecaca]'
+                            ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900/70'
+                            : 'bg-red-950/70 text-red-300 border-red-500/40 hover:bg-red-900/70'
                         }`}
                       >
                         {isAvail ? (
@@ -634,7 +640,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                         onClick={() => {
                           setPackSizes(packSizes.filter((_, i) => i !== idx));
                         }}
-                        className="p-1 rounded-lg text-[#64748b] hover:text-red-500 hover:bg-red-50 disabled:opacity-30 cursor-pointer transition-colors"
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/10 disabled:opacity-30 cursor-pointer transition-colors"
                         title="Remove this pack size"
                       >
                         <X className="w-4 h-4" />
@@ -647,10 +653,10 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
           </div>
 
           {/* Image & Quick Presets */}
-          <div className="space-y-2">
+          <div className="space-y-2 border border-white/10 rounded-xl p-3.5 bg-black/50 backdrop-blur-xs">
             <div className="flex items-center justify-between">
-              <label className="text-[12px] font-semibold text-[#0b1c30] flex items-center gap-1.5">
-                <ImageIcon className="w-3.5 h-3.5 text-[#006b2c]" />
+              <label className="text-[12px] font-semibold text-slate-200 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
                 {t('presetImageLabel')}
               </label>
             </div>
@@ -662,12 +668,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 value={image}
                 onChange={(e) => setImage(e.target.value)}
                 placeholder="https://images.unsplash.com/..."
-                className="flex-1 px-3 py-2 text-[12px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                className="flex-1 px-3 py-2 text-[12px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
               />
               <img
                 src={image || DEFAULT_FALLBACK_IMAGE}
                 alt="Preview"
-                className="w-10 h-10 rounded-lg object-cover border border-[#cbd5e1] bg-[#f8fafc] shrink-0"
+                className="w-10 h-10 rounded-lg object-cover border border-white/15 bg-black/70 shrink-0"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = DEFAULT_FALLBACK_IMAGE;
                 }}
@@ -683,8 +689,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   onClick={() => handleApplyPreset(preset)}
                   className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
                     image === preset.url
-                      ? 'bg-[#eff4ff] border-[#006b2c] text-[#006b2c] font-semibold'
-                      : 'bg-[#f8fafc] border-[#e2e8f0] text-[#64748b] hover:border-[#cbd5e1]'
+                      ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-300 font-semibold'
+                      : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20 hover:text-white'
                   }`}
                 >
                   {preset.name}
@@ -695,7 +701,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
           {/* Description */}
           <div className="space-y-1">
-            <label className="text-[12px] font-semibold text-[#0b1c30]">
+            <label className="text-[12px] font-semibold text-slate-200">
               {t('productDescriptionLabel')}
             </label>
             <textarea
@@ -704,16 +710,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('productDescriptionPlaceholder')}
-              className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
             />
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-2 border-t border-[#e2e8f0] flex items-center justify-end gap-2">
+          <div className="pt-2 border-t border-white/10 flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-[13px] font-semibold text-[#64748b] hover:bg-[#f1f5f9] hover:text-[#0b1c30] transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-lg text-[13px] font-semibold text-slate-300 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
             >
               {t('cancel')}
             </button>

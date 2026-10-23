@@ -7,7 +7,6 @@ import { useLanguage } from '../context/LanguageContext';
 import { DEFAULT_DELIVERY_RULES, getApplicableDeliveryChargeRule } from '../services/settingsService';
 import { LanguageSelector } from './LanguageSelector';
 import { AddProductModal } from './AddProductModal';
-import { getProductPackSizes, STANDARD_UNITS } from '../utils/packSize';
 import { EditProductModal } from './EditProductModal';
 import { CouponModal } from './CouponModal';
 import { CustomerOrdersLedger } from './CustomerOrdersLedger';
@@ -972,8 +971,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
   const [tempPrice, setTempPrice] = useState<number>(0);
-  const [editingCustomUnitId, setEditingCustomUnitId] = useState<string | null>(null);
-  const [customUnitInput, setCustomUnitInput] = useState<string>('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [deleteConfirmProduct, setDeleteConfirmProduct] = useState<Product | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -1908,17 +1905,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     setEditingPriceId(null);
   };
 
-  const handleSaveCustomUnit = (productId: string) => {
-    const trimmed = customUnitInput.trim();
-    if (trimmed) {
-      onUpdateProductUnit(productId, trimmed);
-      const prod = products.find((p) => p.id === productId);
-      setPulseToast(`Updated unit for "${prod?.title || 'product'}" to "${trimmed}"`);
-      setTimeout(() => setPulseToast(null), 2500);
-    }
-    setEditingCustomUnitId(null);
-  };
-
   return (
     <div className="w-full min-h-screen bg-transparent text-[#0b1c30] pb-16 relative z-10">
       {/* Top Admin Action Bar */}
@@ -2525,89 +2511,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                           )}
                         </td>
 
-                        {/* Unit Column with direct editing & custom unit support */}
+                        {/* Unit / Pack Size Column */}
                         <td className="py-3 px-4">
-                          {editingCustomUnitId === p.id ? (
-                            <div className="flex items-center gap-1">
-                              <input
-                                type="text"
-                                value={customUnitInput}
-                                onChange={(e) => setCustomUnitInput(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') handleSaveCustomUnit(p.id);
-                                  if (e.key === 'Escape') setEditingCustomUnitId(null);
-                                }}
-                                placeholder="e.g. 500 g"
-                                className="w-24 px-2 py-1 text-[12px] font-bold border border-[#006b2c] rounded-lg bg-white text-[#0b1c30] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
-                                autoFocus
-                              />
-                              <button
-                                type="button"
-                                title="Save unit"
-                                onClick={() => handleSaveCustomUnit(p.id)}
-                                className="w-6 h-6 rounded-md bg-[#006b2c] text-white flex items-center justify-center hover:bg-[#00873a] cursor-pointer shrink-0"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                title="Cancel"
-                                onClick={() => setEditingCustomUnitId(null)}
-                                className="w-6 h-6 rounded-md bg-[#f1f5f9] text-[#64748b] flex items-center justify-center hover:bg-[#e2e8f0] cursor-pointer shrink-0"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1">
-                              <select
-                                value={p.unit}
-                                onChange={(e) => {
-                                  if (e.target.value === '__custom__') {
-                                    setEditingCustomUnitId(p.id);
-                                    setCustomUnitInput(p.unit);
-                                  } else {
-                                    onUpdateProductUnit(p.id, e.target.value);
-                                    setPulseToast(`Updated unit for "${p.title}" to "${e.target.value}"`);
-                                    setTimeout(() => setPulseToast(null), 2500);
-                                  }
-                                }}
-                                className="px-2 py-1 text-[12px] font-bold border border-[#cbd5e1] rounded-lg bg-white text-[#0b1c30] hover:border-[#006b2c] focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
-                                title="Edit product unit / pack size"
-                              >
-                                {!STANDARD_UNITS.includes(p.unit as any) && (
-                                  <option value={p.unit}>{p.unit} (Custom)</option>
-                                )}
-                                {STANDARD_UNITS.map((u) => (
-                                  <option key={u} value={u}>
-                                    {u}
-                                  </option>
-                                ))}
-                                <option value="__custom__">{t('customUnitOption')}</option>
-                              </select>
-                              <button
-                                type="button"
-                                title="Enter custom unit"
-                                onClick={() => {
-                                  setEditingCustomUnitId(p.id);
-                                  setCustomUnitInput(p.unit);
-                                }}
-                                className="w-6 h-6 rounded-md hover:bg-[#f1f5f9] text-[#94a3b8] hover:text-[#006b2c] flex items-center justify-center cursor-pointer transition-colors shrink-0"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
-                          <div className="mt-1 flex flex-wrap gap-1 max-w-[170px]" title="Available pack sizes for this product">
-                            {getProductPackSizes(p).map((ps, idx) => (
-                              <span
-                                key={idx}
-                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#eff4ff] text-[#006b2c] border border-[#cbdcfc]"
-                              >
-                                {ps.size}
-                              </span>
-                            ))}
-                          </div>
+                          <span className="text-[13px] font-medium text-[#475569]">
+                            {p.unit}
+                          </span>
                         </td>
 
                         <td className="py-3 px-4">

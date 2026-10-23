@@ -931,7 +931,7 @@ div.product-details-modal {
 }
 
 /* ==========================================================================
-   DEEP BLACK, SEMI-OPAQUE, LIQUID-GLASS EDIT PRODUCT MODAL & BACKDROP
+   DEEP BLACK, SEMI-OPAQUE, LIQUID-GLASS PRODUCT MODALS & BACKDROPS
    - Deep rich black background: rgba(6, 11, 19, 0.90) / 90% opacity (85-92%)
    - Darken and blur content behind modal: rgba(0, 0, 0, 0.82), backdrop blur 12px
    - Liquid glass surface: subtle glass sheen highlight on top border, backdrop blur 24px
@@ -940,7 +940,9 @@ div.product-details-modal {
    ========================================================================== */
 
 #edit-product-modal-backdrop,
-.edit-product-modal-backdrop {
+.edit-product-modal-backdrop,
+#add-product-modal-backdrop,
+.add-product-modal-backdrop {
   background-color: rgba(0, 0, 0, 0.82) !important;
   background: rgba(0, 0, 0, 0.82) !important;
   -webkit-backdrop-filter: blur(12px) !important;
@@ -949,7 +951,9 @@ div.product-details-modal {
 }
 
 #edit-product-modal,
-.edit-product-modal {
+.edit-product-modal,
+#add-product-modal,
+.add-product-modal {
   background-color: rgba(6, 11, 19, 0.90) !important;
   background: rgba(6, 11, 19, 0.90) !important;
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
@@ -961,7 +965,9 @@ div.product-details-modal {
 }
 
 #edit-product-modal::before,
-.edit-product-modal::before {
+.edit-product-modal::before,
+#add-product-modal::before,
+.add-product-modal::before {
   content: '';
   position: absolute;
   top: 0;
