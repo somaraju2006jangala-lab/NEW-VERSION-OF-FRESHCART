@@ -2110,31 +2110,46 @@ export async function getCartForCustomerInDb(customerId: string): Promise<any[]>
 
     // 2. Fetch cart items joined with products
     const [items] = await pool.query<RowDataPacket[]>(
-      `SELECT ci.quantity, p.product_id as id, p.name as title, p.price, p.unit,
+      `SELECT ci.quantity, ci.selected_pack_size as selectedPackSize, ci.selected_price as selectedPrice,
+              p.product_id as id, p.name as title, p.price, p.unit,
               p.quantity as stock, p.image, p.category, p.supplier, p.badge,
-              p.is_organic as isOrganic, p.is_quick_prep as isQuickPrep
+              p.is_organic as isOrganic, p.is_quick_prep as isQuickPrep, p.pack_sizes as packSizesJson
        FROM cart_items ci
        JOIN products p ON ci.product_id = p.product_id
        WHERE ci.cart_id = ? AND ci.quantity > 0`,
       [cartId]
     );
 
-    return items.map((i) => ({
-      product: {
-        id: i.id,
-        title: i.title,
-        price: Number(i.price),
-        unit: i.unit,
-        stock: Number(i.stock),
-        image: i.image,
-        category: i.category,
-        supplier: i.supplier,
-        badge: i.badge,
-        isOrganic: Boolean(i.isOrganic),
-        isQuickPrep: Boolean(i.isQuickPrep),
-      },
-      quantity: Number(i.quantity),
-    }));
+    return items.map((i) => {
+      let packSizes: any[] | undefined = undefined;
+      if (i.packSizesJson) {
+        try {
+          packSizes = typeof i.packSizesJson === 'string' ? JSON.parse(i.packSizesJson) : i.packSizesJson;
+        } catch {}
+      }
+      return {
+        product: {
+          id: i.id,
+          title: i.title,
+          price: Number(i.price),
+          unit: i.unit,
+          stock: Number(i.stock),
+          image: i.image,
+          category: i.category,
+          supplier: i.supplier,
+          badge: i.badge,
+          isOrganic: Boolean(i.isOrganic),
+          isQuickPrep: Boolean(i.isQuickPrep),
+          packSizes,
+        },
+        quantity: Number(i.quantity),
+        selectedPackSize: i.selectedPackSize || i.unit,
+        selectedPrice:
+          i.selectedPrice !== null && i.selectedPrice !== undefined
+            ? Number(i.selectedPrice)
+            : Number(i.price),
+      };
+    });
   } catch (err: any) {
     console.warn('[MySQL] Error retrieving customer cart:', err?.message);
     return [];
@@ -2148,7 +2163,9 @@ export async function getCartForCustomerInDb(customerId: string): Promise<any[]>
 export async function saveCartItemInDb(
   customerId: string,
   productId: string,
-  quantity: number
+  quantity: number,
+  selectedPackSize?: string,
+  selectedPrice?: number
 ): Promise<boolean> {
   if (!customerId || !productId) return false;
   const pool = getPool();
@@ -2177,12 +2194,15 @@ export async function saveCartItemInDb(
       return true;
     }
 
-    // Upsert cart item
+    // Upsert cart item with optional pack size and price
     await pool.query(
-      `INSERT INTO cart_items (cart_id, product_id, quantity)
-       VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)`,
-      [cartId, productId, quantity]
+      `INSERT INTO cart_items (cart_id, product_id, quantity, selected_pack_size, selected_price)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE 
+         quantity = VALUES(quantity),
+         selected_pack_size = COALESCE(VALUES(selected_pack_size), selected_pack_size),
+         selected_price = COALESCE(VALUES(selected_price), selected_price)`,
+      [cartId, productId, quantity, selectedPackSize || null, selectedPrice !== undefined ? selectedPrice : null]
     );
 
     return true;

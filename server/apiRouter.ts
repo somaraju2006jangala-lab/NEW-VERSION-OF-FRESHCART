@@ -90,6 +90,7 @@ import {
   isOrderEligibleForDelivery,
   type AdminRecord,
 } from './db.ts';
+import { handleAssistantChat } from './assistantService.ts';
 
 ensureEnvLoaded();
 
@@ -1080,13 +1081,19 @@ apiRouter.post(['/api/cart/items', '/cart/items'], async (req: Request, res: Res
       return;
     }
 
-    const { productId, quantity } = req.body || {};
+    const { productId, quantity, selectedPackSize, selectedPrice } = req.body || {};
     if (!productId) {
       sendJson(res, 400, { success: false, error: 'productId is required.' });
       return;
     }
 
-    await saveCartItemInDb(auth.customerId, productId, Number(quantity) || 0);
+    await saveCartItemInDb(
+      auth.customerId,
+      productId,
+      Number(quantity) || 0,
+      selectedPackSize,
+      selectedPrice !== undefined ? Number(selectedPrice) : undefined
+    );
     const items = await getCartForCustomerInDb(auth.customerId);
     sendJson(res, 200, { success: true, items });
   } catch (err: any) {
@@ -1131,6 +1138,57 @@ apiRouter.delete(['/api/cart', '/cart'], async (req: Request, res: Response) => 
     sendJson(res, 200, { success: true, items: [] });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to clear cart.' });
+  }
+});
+
+// =============================================================================
+// AI SHOPPING & VOICE ASSISTANT ENDPOINTS
+// =============================================================================
+
+/**
+ * GET /api/assistant/health
+ * Returns AI Assistant status and active configuration
+ */
+apiRouter.get(['/api/assistant/health', '/assistant/health'], (_req: Request, res: Response) => {
+  const hasKey = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0;
+  sendJson(res, 200, {
+    success: true,
+    status: 'online',
+    provider: 'Google Gemini Live API',
+    geminiLiveModel: 'gemini-3.1-flash-live-preview',
+    verifiedLiveModels: ['gemini-3.1-flash-live-preview', 'gemini-3.8-live'],
+    contentModels: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    apiKeyConfigured: hasKey,
+    voiceRecognitionSupported: true,
+    supportedLanguages: ['en-IN', 'hi-IN', 'te-IN'],
+  });
+});
+
+/**
+ * POST /api/assistant/chat
+ * Primary AI Assistant interaction endpoint.
+ * Accepts typed messages or voice transcripts and executes validated shopping actions.
+ */
+apiRouter.post(['/api/assistant/chat', '/assistant/chat'], async (req: Request, res: Response) => {
+  try {
+    const auth = extractAuthCustomer(req);
+    if (!auth.authenticated || !auth.customerId) {
+      sendJson(res, 401, {
+        success: false,
+        message: 'Authentication required. Please log in to your FreshCart customer account.',
+        intent: 'AUTH_REQUIRED',
+      });
+      return;
+    }
+
+    await handleAssistantChat(req, res, auth);
+  } catch (err: any) {
+    console.error('[Assistant] Error processing chat request:', err);
+    sendJson(res, 500, {
+      success: false,
+      message: 'The AI assistant encountered a temporary issue. Please try again.',
+      error: err?.message,
+    });
   }
 });
 

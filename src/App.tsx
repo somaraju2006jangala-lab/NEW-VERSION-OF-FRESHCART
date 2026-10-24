@@ -47,6 +47,9 @@ import { CategoryResultsPage } from './components/CategoryResultsPage';
 import { CursorReactiveBackground } from './components/CursorReactiveBackground';
 import { RefreshCw, Sparkles } from 'lucide-react';
 import { createLogTimestamp, formatLogDateTime } from './utils/date';
+import { AssistantChatModal } from './components/AssistantChatModal';
+import { FloatingAssistantButton } from './components/FloatingAssistantButton';
+import { AssistantMessage, stopAssistantSpeaking } from './services/assistantService';
 
 const STORAGE_PRODUCTS_KEY = 'freshcart_products_inr_v2';
 const STORAGE_COUPONS_KEY = 'freshcart_coupons_v1';
@@ -230,6 +233,33 @@ function FreshCartStore() {
     }
   };
 
+
+  // FreshCart AI Assistant Session State (In-Memory ONLY - Fresh session every login!)
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [assistantSessionMessages, setAssistantSessionMessages] = useState<AssistantMessage[]>([]);
+
+  // PHASE 9: Fresh chat on every new authenticated session and cleanup on logout
+  useEffect(() => {
+    setAssistantSessionMessages([]);
+    setIsAssistantOpen(false);
+    stopAssistantSpeaking();
+  }, [currentUser?.id]);
+
+  // Synchronize cart with MySQL database for authenticated customer
+  useEffect(() => {
+    if (currentUser?.token) {
+      fetch('/api/cart', {
+        headers: { Authorization: `Bearer ${currentUser.token}` },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.success && Array.isArray(data.items) && data.items.length > 0) {
+            setCart(data.items);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentUser?.id, currentUser?.token]);
 
   // Cart state: starts with no pre-seeded items (NO minimum product requirement)
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -671,6 +701,23 @@ function FreshCartStore() {
         },
       ];
     });
+
+    // Synchronize to MySQL database for authenticated customer
+    if (currentUser?.token) {
+      fetch('/api/cart/items', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentUser.token}`,
+        },
+        body: JSON.stringify({
+          productId: currentProduct.id,
+          quantity: quantity,
+          selectedPackSize: chosenPackSize,
+          selectedPrice: chosenPrice,
+        }),
+      }).catch(() => {});
+    }
   };
 
   const handleUpdateCartQty = (productId: string, delta: number, packSize?: string) => {
@@ -716,10 +763,23 @@ function FreshCartStore() {
         return false;
       })
     );
+
+    if (currentUser?.token) {
+      fetch(`/api/cart/items/${encodeURIComponent(productId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${currentUser.token}` },
+      }).catch(() => {});
+    }
   };
 
   const handleClearCart = () => {
     setCart([]);
+    if (currentUser?.token) {
+      fetch('/api/cart', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${currentUser.token}` },
+      }).catch(() => {});
+    }
   };
 
   // When a customer purchases a product, reduce the available quantity accordingly
@@ -1403,6 +1463,34 @@ function FreshCartStore() {
             cartCount={cartCount}
             onNavigateToCart={() => navigateToView('cart')}
           />
+        )}
+
+      {/* FreshCart AI Shopping & Voice Assistant (Only in Authenticated Customer Portal) */}
+      {currentUser &&
+        currentView !== 'admin' &&
+        currentView !== 'employee' &&
+        currentView !== 'login' &&
+        currentView !== 'register' && (
+          <>
+            <FloatingAssistantButton
+              isOpen={isAssistantOpen}
+              onClick={() => setIsAssistantOpen(true)}
+            />
+            <AssistantChatModal
+              isOpen={isAssistantOpen}
+              onClose={() => setIsAssistantOpen(false)}
+              customerToken={currentUser.token}
+              customerName={currentUser.name}
+              onAddToCart={handleAddToCart}
+              onUpdateCartQty={handleUpdateCartQty}
+              onRemoveCartItem={handleRemoveCartItem}
+              onClearCart={handleClearCart}
+              onNavigateToCart={() => navigateToView('cart')}
+              onSyncCartFromBackend={(items) => setCart(items)}
+              sessionMessages={assistantSessionMessages}
+              setSessionMessages={setAssistantSessionMessages}
+            />
+          </>
         )}
     </div>
   );
