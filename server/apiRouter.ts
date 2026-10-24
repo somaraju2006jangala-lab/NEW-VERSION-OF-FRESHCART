@@ -128,6 +128,8 @@ function extractAuthCustomer(req: Request): {
     token = authHeader.trim().slice(7).trim();
   } else if (req.query?.token && typeof req.query.token === 'string') {
     token = req.query.token.trim();
+  } else if (req.body?.token && typeof req.body.token === 'string') {
+    token = req.body.token.trim();
   }
 
   if (token) {
@@ -145,7 +147,11 @@ function extractAuthCustomer(req: Request): {
     }
   }
 
-  const customHeader = (req.headers['x-customer-id'] as string) || (req.query.customerId as string) || '';
+  const customHeader =
+    (req.headers['x-customer-id'] as string) ||
+    (req.query?.customerId as string) ||
+    (req.body?.customerId as string) ||
+    (token && !token.includes('.') ? token : '');
   if (customHeader && customHeader.trim()) {
     const clean = customHeader.trim();
     return {
@@ -1157,7 +1163,9 @@ apiRouter.get(['/api/assistant/health', '/assistant/health'], (_req: Request, re
     provider: 'Google Gemini Live API',
     geminiLiveModel: 'gemini-3.1-flash-live-preview',
     verifiedLiveModels: ['gemini-3.1-flash-live-preview', 'gemini-3.8-live'],
-    contentModels: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'],
+    contentModels: ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite-preview', 'gemini-flash-lite-latest'],
+    visionModels: ['gemini-3.1-flash-lite', 'gemini-3.1-flash-lite-preview', 'gemini-flash-lite-latest'],
+    imageUnderstandingSupported: hasKey,
     apiKeyConfigured: hasKey,
     voiceRecognitionSupported: true,
     supportedLanguages: ['en-IN', 'hi-IN', 'te-IN'],

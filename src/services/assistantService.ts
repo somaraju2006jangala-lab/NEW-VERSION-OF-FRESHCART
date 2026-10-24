@@ -21,6 +21,37 @@ export interface AssistantCouponCard {
   description?: string;
 }
 
+export interface RecognizedGroceryItem {
+  id: string;
+  rawText: string;
+  itemName: string;
+  requestedQuantity?: number;
+  requestedUnit?: string;
+  unclear?: boolean;
+  status: 'matched' | 'unavailable' | 'unclear';
+  productId?: string;
+  productTitle?: string;
+  productImage?: string;
+  category?: string;
+  selectedPackSize?: string;
+  price?: number;
+  packsCount?: number;
+  subtotal?: number;
+  availablePackSizes?: { size: string; price: number; isAvailable?: boolean; stock?: number }[];
+  error?: string;
+}
+
+export interface GroceryListReview {
+  listId: string;
+  totalItems: number;
+  matchedCount: number;
+  unavailableCount: number;
+  unclearCount?: number;
+  estimatedSubtotal: number;
+  items: RecognizedGroceryItem[];
+  confirmed?: boolean;
+}
+
 export interface AssistantMessage {
   id: string;
   sender: 'customer' | 'assistant';
@@ -31,6 +62,7 @@ export interface AssistantMessage {
   language?: string;
   products?: AssistantProductCard[];
   coupons?: AssistantCouponCard[];
+  groceryListReview?: GroceryListReview;
   quickReplies?: string[];
   requiresConfirmation?: boolean;
   pendingAction?: any;
@@ -55,6 +87,7 @@ export interface AssistantChatResponse {
   cartItems?: any[];
   products?: any[];
   coupons?: any[];
+  groceryListReview?: GroceryListReview;
   cartSummary?: {
     itemCount: number;
     subtotal: number;
@@ -82,6 +115,8 @@ export async function sendAssistantMessage(
     quantity?: number;
     packSize?: string;
     price?: number;
+    image?: string;
+    [key: string]: any;
   }
 ): Promise<AssistantChatResponse> {
   const headers: Record<string, string> = {

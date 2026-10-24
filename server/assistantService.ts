@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import {
   getPool,
   getProductsFromDb,
@@ -18,10 +18,24 @@ export const GEMINI_LIVE_FALLBACK_MODEL = 'gemini-3.8-live';
 
 // Supported Gemini text/multimodal models in priority order (verified active & quota-friendly)
 export const GEMINI_MODELS = [
-  'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
+  'gemini-3.1-flash-lite-preview',
   'gemini-flash-lite-latest',
+  'gemini-3-flash-preview',
+  'gemini-3.5-flash-lite',
   'gemini-3.5-flash',
+  'gemini-3.8-flash',
+];
+
+// Verified Gemini Vision models supporting multimodal image understanding
+export const GEMINI_VISION_MODELS = [
+  'gemini-3.1-flash-lite',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-flash-lite-latest',
+  'gemini-3-flash-preview',
+  'gemini-3.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.8-flash',
 ];
 
 export type SupportedLanguage = 'en-IN' | 'hi-IN' | 'te-IN';
@@ -68,6 +82,7 @@ export interface AssistantApiResponse {
   cartItems?: any[];
   products?: any[];
   coupons?: any[];
+  groceryListReview?: GroceryListReview;
   cartSummary?: {
     itemCount: number;
     subtotal: number;
@@ -82,6 +97,9 @@ export interface AssistantApiResponse {
   suggestedAction?: 'ADD_TO_CART' | 'VIEW_CART' | 'APPLY_COUPON' | 'NONE';
   error?: string;
 }
+
+// In-memory set to prevent duplicate additions caused by repeated clicks or request retries
+const confirmedGroceryLists = new Set<string>();
 
 /**
  * Detects language from user message text or explicit request code
@@ -221,6 +239,452 @@ No markdown formatting, no code fences, no extra text.
   }
 
   return null;
+}
+
+/**
+ * Safely parses raw image input (data URL or base64) into mimeType and clean base64 data.
+ */
+export function parseImageData(rawImage: any): { mimeType: string; base64Data: string } | null {
+  if (typeof rawImage !== 'string' || !rawImage.trim()) return null;
+  const trimmed = rawImage.trim();
+
+  // Match data URL: data:image/png;base64,....
+  const dataUrlMatch = trimmed.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/s);
+  if (dataUrlMatch) {
+    const mimeType = dataUrlMatch[1].toLowerCase();
+    const base64Data = dataUrlMatch[2].trim().replace(/\s+/g, '');
+    if (!base64Data) return null;
+    return { mimeType, base64Data };
+  }
+
+  // Raw base64 string
+  const cleanBase64 = trimmed.replace(/\s+/g, '');
+  if (/^[A-Za-z0-9+/=]+$/.test(cleanBase64) && cleanBase64.length > 50) {
+    return { mimeType: 'image/jpeg', base64Data: cleanBase64 };
+  }
+
+  return null;
+}
+
+export interface RecognizedGroceryItem {
+  id: string;
+  rawText: string;
+  itemName: string;
+  requestedQuantity?: number;
+  requestedUnit?: string;
+  unclear?: boolean;
+  status: 'matched' | 'unavailable' | 'unclear';
+  productId?: string;
+  productTitle?: string;
+  productImage?: string;
+  category?: string;
+  selectedPackSize?: string;
+  price?: number;
+  packsCount?: number;
+  subtotal?: number;
+  availablePackSizes?: { size: string; price: number; isAvailable?: boolean; stock?: number }[];
+  error?: string;
+}
+
+export interface GroceryListReview {
+  listId: string;
+  totalItems: number;
+  matchedCount: number;
+  unavailableCount: number;
+  unclearCount: number;
+  estimatedSubtotal: number;
+  items: RecognizedGroceryItem[];
+  confirmed?: boolean;
+}
+
+export interface ImageAnalysisResult {
+  success: boolean;
+  description: string;
+  isGroceryOrFood: boolean;
+  isGroceryList?: boolean;
+  groceryListReview?: GroceryListReview;
+  matchedProducts: any[];
+  suggestedReplies: string[];
+  error?: string;
+}
+
+/**
+ * Normalizes user requested quantity and unit into base units for compatible pack matching.
+ */
+function normalizeQuantityAndUnit(
+  qty?: number | null,
+  unitStr?: string | null
+): { baseQty: number; baseUnit: string } {
+  const u = (unitStr || '').toLowerCase().trim();
+  const q = Number(qty) || 1;
+
+  if (u.includes('kg') || u.includes('kilo')) return { baseQty: q * 1000, baseUnit: 'g' };
+  if (u.includes('gm') || u.includes('gram') || u === 'g') return { baseQty: q, baseUnit: 'g' };
+  if (u.includes('litre') || u.includes('liter') || u === 'l') return { baseQty: q * 1000, baseUnit: 'ml' };
+  if (u.includes('ml') || u.includes('millilitre') || u.includes('milliliter')) return { baseQty: q, baseUnit: 'ml' };
+  if (u.includes('dozen')) return { baseQty: q * 12, baseUnit: 'piece' };
+  if (u.includes('half dozen')) return { baseQty: q * 6, baseUnit: 'piece' };
+  return { baseQty: q, baseUnit: u || 'piece' };
+}
+
+/**
+ * Finds the most compatible pack size for a product and calculates required pack count.
+ */
+export function resolveGroceryListItemPack(
+  product: any,
+  requestedQty?: number | null,
+  requestedUnit?: string | null
+): {
+  selectedPackSize: string;
+  price: number;
+  packsCount: number;
+  subtotal: number;
+  availablePackSizes: Array<{ size: string; price: number; isAvailable?: boolean; stock?: number }>;
+} {
+  const rawPacks =
+    Array.isArray(product.packSizes) && product.packSizes.length > 0
+      ? product.packSizes
+      : [{ size: product.unit || '1 unit', price: Number(product.price) }];
+
+  const availablePackSizes = rawPacks.filter((ps: any) => ps.isAvailable !== false && ps.stock !== 0);
+  const packs = availablePackSizes.length > 0 ? availablePackSizes : rawPacks;
+
+  const reqNorm = normalizeQuantityAndUnit(requestedQty, requestedUnit);
+  let bestPack = packs[0];
+  let calculatedPacks = Math.max(1, Number(requestedQty) || 1);
+
+  // Search for matching pack size
+  let bestMatchFound = false;
+
+  for (const p of packs) {
+    const pParts = String(p.size).match(/^([\d./]+)\s*(.*)$/);
+    if (pParts) {
+      let pNum = 1;
+      if (pParts[1] === '1/2') pNum = 0.5;
+      else if (!isNaN(Number(pParts[1]))) pNum = Number(pParts[1]);
+      const packNorm = normalizeQuantityAndUnit(pNum, pParts[2]);
+
+      if (packNorm.baseUnit === reqNorm.baseUnit) {
+        // Exact quantity match (e.g. 1 kg requested, 1 kg pack size)
+        if (reqNorm.baseQty === packNorm.baseQty) {
+          bestPack = p;
+          calculatedPacks = 1;
+          bestMatchFound = true;
+          break;
+        }
+        // Exact multiple match (e.g. 2 kg requested, 1 kg pack size -> 2 packs; or 2 litres requested, 1 litre pack size -> 2 packs)
+        if (reqNorm.baseQty > packNorm.baseQty && reqNorm.baseQty % packNorm.baseQty === 0) {
+          const quotient = Math.round(reqNorm.baseQty / packNorm.baseQty);
+          if (!bestMatchFound || quotient < calculatedPacks) {
+            bestPack = p;
+            calculatedPacks = quotient;
+            bestMatchFound = true;
+          }
+        }
+      }
+    }
+  }
+
+  // If no exact unit multiple found, default to 1 pack of closest size
+  if (!bestMatchFound) {
+    calculatedPacks = 1;
+  }
+
+  const price = Number(bestPack.price);
+  const subtotal = price * calculatedPacks;
+
+  return {
+    selectedPackSize: bestPack.size,
+    price,
+    packsCount: calculatedPacks,
+    subtotal,
+    availablePackSizes: packs,
+  };
+}
+
+/**
+ * Multimodal image analysis using Gemini Vision models.
+ * Reads handwritten and printed grocery lists, extracts items/quantities,
+ * matches with live catalog, and crafts helpful responses in the customer's language.
+ */
+export async function analyzeImageWithGemini(
+  imageData: { mimeType: string; base64Data: string },
+  userQuery: string,
+  preferredLang: SupportedLanguage = 'en-IN',
+  allProducts: any[]
+): Promise<ImageAnalysisResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !apiKey.trim()) {
+    return {
+      success: false,
+      description: 'Image analysis is currently unavailable because the AI service API key is not configured.',
+      isGroceryOrFood: false,
+      matchedProducts: [],
+      suggestedReplies: [],
+      error: 'GEMINI_API_KEY_NOT_CONFIGURED',
+    };
+  }
+
+  const catalogSummary = allProducts
+    .map(
+      (p) =>
+        `- ${p.title} (Category: ${p.category || 'produce'}, Unit: ${p.unit || '1 unit'}, Price: ₹${p.price})`
+    )
+    .join('\n');
+
+  const langInstruction =
+    preferredLang === 'hi-IN'
+      ? 'Hindi (हिन्दी)'
+      : preferredLang === 'te-IN'
+      ? 'Telugu (తెలుగు)'
+      : 'English';
+
+  const prompt = `
+You are the FreshCart AI Shopping Assistant brain with optical character recognition (OCR) and computer vision.
+The customer has uploaded an image for shopping assistance.
+
+Live FreshCart Product Catalog:
+${catalogSummary}
+
+Customer message or query (if any): "${userQuery || ''}"
+Customer preferred language: ${preferredLang} (${langInstruction})
+
+Determine the image type:
+1. HANDWRITTEN OR PRINTED GROCERY SHOPPING LIST (paper note, notepad, receipt, whiteboard, sticky note, or digital list of items).
+2. PHOTO OF PHYSICAL GROCERIES (e.g. actual bananas, tomatoes, apples, milk on a counter or in a basket).
+3. NON-GROCERY IMAGE (e.g. person, vehicle, document not containing groceries, electronics).
+
+INSTRUCTIONS FOR GROCERY LISTS:
+- Set "isGroceryList": true.
+- Set "isGroceryOrFood": true.
+- Provide a friendly, helpful description of the shopping list in ${langInstruction}.
+- Extract each item listed:
+  - rawText: string (the exact line or phrase from the list)
+  - itemName: string (clean English grocery product name, e.g. "Rice", "Tomatoes", "Milk", "Bananas")
+  - requestedQuantity: number or null (e.g. 2, 1, 500)
+  - requestedUnit: string or null (e.g. "kg", "g", "dozen", "litres", "ml", "pieces", "packet")
+  - unclear: boolean (true if text was smudged, crossed out, or difficult to decipher)
+
+INSTRUCTIONS FOR PHOTO OF PHYSICAL GROCERIES:
+- Set "isGroceryList": false.
+- Set "isGroceryOrFood": true.
+- Provide description and list detectedItems with itemName and matchedCatalogTitle.
+
+INSTRUCTIONS FOR NON-GROCERY:
+- Set "isGroceryList": false.
+- Set "isGroceryOrFood": false.
+- Describe what is visible and politely invite customer to search for fresh groceries.
+
+OUTPUT ONLY VALID JSON:
+No markdown formatting, no code fences, no extra text.
+{
+  "isGroceryList": boolean,
+  "isGroceryOrFood": boolean,
+  "description": "Friendly, useful description of what is seen in the image in ${langInstruction}",
+  "listItems": [
+    {
+      "rawText": "string",
+      "itemName": "string",
+      "requestedQuantity": number,
+      "requestedUnit": "string",
+      "unclear": boolean
+    }
+  ],
+  "detectedItems": [
+    {
+      "itemName": "item name in English",
+      "matchedCatalogTitle": "exact or closest title from catalog or null"
+    }
+  ],
+  "suggestedReplies": ["short quick reply 1", "short quick reply 2"]
+}
+`.trim();
+
+  let lastError: any = null;
+
+  for (const model of GEMINI_VISION_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: imageData.mimeType,
+                    data: imageData.base64Data,
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        lastError = errJson?.error?.message || `HTTP ${response.status}`;
+        continue;
+      }
+
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) continue;
+
+      const cleaned = rawText.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      if (parsed && typeof parsed.description === 'string') {
+        // CASE A: Recognized Grocery List (Handwritten or Printed)
+        if (parsed.isGroceryList === true && Array.isArray(parsed.listItems)) {
+          const recognizedItems: RecognizedGroceryItem[] = [];
+          const matchedProductsMap = new Map<string, any>();
+
+          for (let i = 0; i < parsed.listItems.length; i++) {
+            const it = parsed.listItems[i];
+            const raw = it.rawText || `${it.itemName || ''} ${it.requestedQuantity || ''} ${it.requestedUnit || ''}`.trim();
+            const itemId = `item-${i + 1}`;
+
+            if (it.unclear === true) {
+              recognizedItems.push({
+                id: itemId,
+                rawText: raw,
+                itemName: it.itemName || 'Unclear Item',
+                unclear: true,
+                status: 'unclear',
+                error: 'Unclear handwriting. Please clarify item name.',
+              });
+              continue;
+            }
+
+            const matchedCatalog = matchProductInCatalog(it.itemName, allProducts);
+            if (matchedCatalog.length > 0) {
+              const product = matchedCatalog[0];
+              const packRes = resolveGroceryListItemPack(product, it.requestedQuantity, it.requestedUnit);
+
+              recognizedItems.push({
+                id: itemId,
+                rawText: raw,
+                itemName: it.itemName,
+                requestedQuantity: it.requestedQuantity ?? undefined,
+                requestedUnit: it.requestedUnit ?? undefined,
+                status: 'matched',
+                productId: product.id,
+                productTitle: product.title,
+                productImage: product.image,
+                category: product.category,
+                selectedPackSize: packRes.selectedPackSize,
+                price: packRes.price,
+                packsCount: packRes.packsCount,
+                subtotal: packRes.subtotal,
+                availablePackSizes: packRes.availablePackSizes,
+              });
+
+              matchedProductsMap.set(product.id, product);
+            } else {
+              recognizedItems.push({
+                id: itemId,
+                rawText: raw,
+                itemName: it.itemName,
+                requestedQuantity: it.requestedQuantity ?? undefined,
+                requestedUnit: it.requestedUnit ?? undefined,
+                status: 'unavailable',
+                error: 'Currently not available in FreshCart catalogue',
+              });
+            }
+          }
+
+          const matchedCount = recognizedItems.filter((it) => it.status === 'matched').length;
+          const unavailableCount = recognizedItems.filter((it) => it.status === 'unavailable').length;
+          const unclearCount = recognizedItems.filter((it) => it.status === 'unclear').length;
+          const estimatedSubtotal = recognizedItems
+            .filter((it) => it.status === 'matched')
+            .reduce((sum, it) => sum + (it.subtotal || 0), 0);
+
+          const review: GroceryListReview = {
+            listId: `list-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            totalItems: recognizedItems.length,
+            matchedCount,
+            unavailableCount,
+            unclearCount,
+            estimatedSubtotal,
+            items: recognizedItems,
+            confirmed: false,
+          };
+
+          return {
+            success: true,
+            description: parsed.description,
+            isGroceryOrFood: true,
+            isGroceryList: true,
+            groceryListReview: review,
+            matchedProducts: Array.from(matchedProductsMap.values()),
+            suggestedReplies: ['Confirm and Add All to Cart', 'View Cart', 'Show All Products'],
+          };
+        }
+
+        // CASE B: Standard Product Photo or General Food items
+        const matchedMap = new Map<string, any>();
+
+        if (Array.isArray(parsed.detectedItems)) {
+          for (const item of parsed.detectedItems) {
+            if (item.matchedCatalogTitle) {
+              const matched = matchProductInCatalog(item.matchedCatalogTitle, allProducts);
+              for (const p of matched) {
+                matchedMap.set(p.id, p);
+              }
+            }
+            if (item.itemName) {
+              const matched = matchProductInCatalog(item.itemName, allProducts);
+              for (const p of matched) {
+                matchedMap.set(p.id, p);
+              }
+            }
+          }
+        }
+
+        if (userQuery && userQuery.trim()) {
+          const userMatches = matchProductInCatalog(userQuery, allProducts);
+          for (const p of userMatches) {
+            matchedMap.set(p.id, p);
+          }
+        }
+
+        const matchedProducts = Array.from(matchedMap.values());
+
+        return {
+          success: true,
+          description: parsed.description,
+          isGroceryOrFood: Boolean(parsed.isGroceryOrFood),
+          isGroceryList: false,
+          matchedProducts,
+          suggestedReplies: Array.isArray(parsed.suggestedReplies) ? parsed.suggestedReplies : [],
+        };
+      }
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+      continue;
+    }
+  }
+
+  return {
+    success: false,
+    description: 'We could not complete the image analysis at this time. Please ensure the image is clear or try again shortly.',
+    isGroceryOrFood: false,
+    matchedProducts: [],
+    suggestedReplies: [],
+    error: lastError || 'ALL_VISION_MODELS_FAILED',
+  };
 }
 
 /**
@@ -990,6 +1454,7 @@ export async function handleAssistantChat(
 
   const {
     message,
+    image,
     pendingAction,
     language,
     productId,
@@ -999,7 +1464,7 @@ export async function handleAssistantChat(
   } = req.body || {};
   const userText = (message || '').trim();
 
-  if (!userText && !pendingAction && !productId) {
+  if (!userText && !pendingAction && !productId && !image) {
     res.status(400).json({
       success: false,
       message: 'Please provide a message or shopping command.',
@@ -1015,6 +1480,220 @@ export async function handleAssistantChat(
   const allProducts = await getProductsFromDb();
   const storeSettings = await getSettingsFromDb();
   const deliveryRules = storeSettings?.deliveryChargeRules || [{ minOrderAmount: 500, deliveryCharge: 0 }];
+
+  // Handle uploaded image through Gemini Vision models
+  if (image) {
+    const imageData = parseImageData(image);
+    if (!imageData) {
+      res.status(400).json({
+        success: false,
+        message: 'Unsupported or corrupted image format. Please capture a photo or upload a JPG, PNG, or WebP image.',
+        intent: 'IMAGE_ERROR',
+        error: 'UNSUPPORTED_IMAGE_FORMAT',
+      });
+      return;
+    }
+
+    const visionResult = await analyzeImageWithGemini(imageData, userText, userLang, allProducts);
+    if (!visionResult.success) {
+      res.status(500).json({
+        success: false,
+        message: visionResult.description || 'Image analysis failed. Please try again with a clearer photo.',
+        intent: 'IMAGE_ERROR',
+        error: visionResult.error || 'IMAGE_ANALYSIS_FAILED',
+      });
+      return;
+    }
+
+    let quickReplies = visionResult.suggestedReplies;
+    if (!quickReplies || quickReplies.length === 0) {
+      if (visionResult.matchedProducts.length > 0) {
+        quickReplies = userLang === 'hi-IN'
+          ? ['कार्ट देखें', 'सभी उत्पाद', 'सब्जियां']
+          : userLang === 'te-IN'
+          ? ['కార్ట్ చూడండి', 'అన్ని ఉత్పత్తులు', 'కూరగాయలు']
+          : ['View Cart', 'Show All Products', 'View Deals'];
+      } else {
+        quickReplies = userLang === 'hi-IN'
+          ? ['सभी उत्पाद', 'सब्जियां', 'फल']
+          : userLang === 'te-IN'
+          ? ['అన్ని ఉత్పత్తులు', 'కూరగాయలు', 'పండ్లు']
+          : ['Show All Products', 'View Vegetables', 'View Fruits'];
+      }
+    }
+
+    // If image was a recognized grocery shopping list, return review structure without adding to cart
+    if (visionResult.isGroceryList && visionResult.groceryListReview) {
+      res.json({
+        success: true,
+        intent: 'GROCERY_LIST_REVIEW',
+        actionExecuted: false,
+        cartUpdated: false,
+        language: userLang,
+        message: visionResult.description,
+        spokenMessage: visionResult.description,
+        groceryListReview: visionResult.groceryListReview,
+        products: visionResult.matchedProducts,
+        requiresConfirmation: true,
+        pendingAction: {
+          intent: 'CONFIRM_GROCERY_LIST',
+          listId: visionResult.groceryListReview.listId,
+          items: visionResult.groceryListReview.items.filter((it: any) => it.status === 'matched'),
+        },
+        quickReplies: ['Confirm and Add All to Cart', 'View Cart', 'Show All Products'],
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      intent: 'IMAGE_ANALYSIS',
+      actionExecuted: false,
+      cartUpdated: false,
+      language: userLang,
+      message: visionResult.description,
+      spokenMessage: visionResult.description,
+      products: visionResult.matchedProducts,
+      quickReplies,
+    });
+    return;
+  }
+
+  // Check if customer is confirming a recognized grocery list
+  if (pendingAction && pendingAction.intent === 'CONFIRM_GROCERY_LIST') {
+    // Check if user cancelled
+    const isCancel = /^(cancel|no|stop|nahi|वద్దు|రద్దు)/i.test(userText.trim());
+    if (isCancel) {
+      res.json({
+        success: true,
+        intent: 'GROCERY_LIST_CANCELLED',
+        actionExecuted: false,
+        language: userLang,
+        message: 'Grocery list addition cancelled. Your items were not added to the cart.',
+        spokenMessage: 'Grocery list addition was cancelled.',
+        quickReplies: ['Show All Products', 'View Cart'],
+      });
+      return;
+    }
+
+    // Check for duplicate addition prevention (idempotency across retries or double clicks)
+    if (pendingAction.listId && confirmedGroceryLists.has(pendingAction.listId)) {
+      const currentCart = await getCartForCustomerInDb(customerId);
+      const subtotal = currentCart.reduce(
+        (sum, it) => sum + (it.selectedPrice ?? it.product.price) * it.quantity,
+        0
+      );
+      const totalCount = currentCart.reduce((sum, it) => sum + it.quantity, 0);
+
+      res.json({
+        success: true,
+        intent: 'GROCERY_LIST_ALREADY_CONFIRMED',
+        actionExecuted: true,
+        cartUpdated: true,
+        cartItems: currentCart,
+        cartSummary: {
+          itemCount: totalCount,
+          subtotal,
+          deliveryFee: subtotal >= 500 ? 0 : 40,
+          discount: 0,
+          total: subtotal + (subtotal >= 500 ? 0 : 40),
+        },
+        language: userLang,
+        message: `Your grocery list items are already in your cart! Cart Subtotal: ₹${subtotal} (${totalCount} ${totalCount === 1 ? 'pack' : 'packs'}).`,
+        spokenMessage: `Your grocery list items are already in your cart.`,
+        quickReplies: ['View Cart', 'Show All Products'],
+      });
+      return;
+    }
+
+    const listItems = Array.isArray(pendingAction.items) ? pendingAction.items : [];
+    if (listItems.length === 0) {
+      res.json({
+        success: false,
+        message: 'No items were selected to add to the cart.',
+        intent: 'GROCERY_LIST_EMPTY',
+      });
+      return;
+    }
+
+    // Record listId to prevent duplicate cart additions
+    if (pendingAction.listId) {
+      confirmedGroceryLists.add(pendingAction.listId);
+    }
+
+    const currentCart = await getCartForCustomerInDb(customerId);
+    const addedProducts: any[] = [];
+    const failedProducts: any[] = [];
+
+    for (const item of listItems) {
+      if (!item.productId) continue;
+      const qty = Math.max(1, Number(item.quantity || item.packsCount || 1));
+      const packSize = item.packSize || item.selectedPackSize;
+      const price = item.price !== undefined ? Number(item.price) : undefined;
+
+      // Preserve existing cart items by accumulating quantity if item already exists
+      const existingItem = currentCart.find(
+        (it) => it.product.id === item.productId && (!packSize || it.selectedPackSize === packSize)
+      );
+      const targetQty = (existingItem ? existingItem.quantity : 0) + qty;
+
+      const success = await saveCartItemInDb(customerId, item.productId, targetQty, packSize, price);
+      if (success) {
+        addedProducts.push({
+          productId: item.productId,
+          title: item.productTitle || item.title || item.productId,
+          quantity: qty,
+          packSize,
+          price,
+          subtotal: price ? price * qty : undefined,
+        });
+      } else {
+        failedProducts.push(item.productTitle || item.productId);
+      }
+    }
+
+    const updatedCart = await getCartForCustomerInDb(customerId);
+    const subtotal = updatedCart.reduce(
+      (sum, it) => sum + (it.selectedPrice ?? it.product.price) * it.quantity,
+      0
+    );
+    const totalCount = updatedCart.reduce((sum, it) => sum + it.quantity, 0);
+
+    let confirmationMsg = '';
+    if (userLang === 'hi-IN') {
+      confirmationMsg = `बधाई हो! आपकी किराने की सूची से ${addedProducts.length} सामान कार्ट में सफलतापूर्वक जोड़ दिए गए हैं। कार्ट कुल: ₹${subtotal} (${totalCount} सामान)।`;
+    } else if (userLang === 'te-IN') {
+      confirmationMsg = `అభినందనలు! మీ కిరాణా జాబితా నుండి ${addedProducts.length} వస్తువులు కార్ట్‌కు విజయవంతంగా చేర్చబడ్డాయి. కార్ట్ మొత్తం: ₹${subtotal} (${totalCount} వస్తువులు).`;
+    } else {
+      confirmationMsg = `Success! Added ${addedProducts.length} ${addedProducts.length === 1 ? 'item' : 'items'} from your grocery list to your cart. Cart Subtotal: ₹${subtotal} (${totalCount} ${totalCount === 1 ? 'pack' : 'packs'} total).`;
+    }
+
+    if (failedProducts.length > 0) {
+      confirmationMsg += ` Note: ${failedProducts.join(', ')} could not be added due to inventory restrictions.`;
+    }
+
+    res.json({
+      success: true,
+      intent: 'GROCERY_LIST_CONFIRMED',
+      actionExecuted: true,
+      cartUpdated: true,
+      cartItems: updatedCart,
+      cartSummary: {
+        itemCount: totalCount,
+        subtotal,
+        deliveryFee: subtotal >= 500 ? 0 : 40,
+        discount: 0,
+        total: subtotal + (subtotal >= 500 ? 0 : 40),
+      },
+      language: userLang,
+      message: confirmationMsg,
+      spokenMessage: `Successfully added ${addedProducts.length} items from your grocery list to your cart.`,
+      addedItems: addedProducts,
+      failedItems: failedProducts,
+      quickReplies: ['View Cart', 'Show All Products'],
+    });
+    return;
+  }
 
   // 1. Check if user is confirming a pending action (e.g. Confirm Clear Cart)
   if (pendingAction && pendingAction.intent === 'CLEAR_CART') {

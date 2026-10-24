@@ -20,12 +20,19 @@ import {
   Square,
   RotateCcw,
   Camera,
+  Trash2,
+  ClipboardList,
+  CheckCircle2,
+  HelpCircle,
+  Edit3,
 } from 'lucide-react';
 import { Product, CartItem } from '../types';
 import {
   AssistantMessage,
   AssistantProductCard,
   AssistantCouponCard,
+  RecognizedGroceryItem,
+  GroceryListReview,
   sendAssistantMessage,
   VoiceRecognitionManager,
   speakAssistantResponse,
@@ -253,6 +260,331 @@ const AssistantProductCardItem: React.FC<AssistantProductCardItemProps> = ({
   );
 };
 
+interface GroceryListReviewCardProps {
+  review: GroceryListReview;
+  onConfirmAll: (items: RecognizedGroceryItem[], listId: string) => void;
+  isSubmitting?: boolean;
+}
+
+const GroceryListReviewCard: React.FC<GroceryListReviewCardProps> = ({
+  review,
+  onConfirmAll,
+  isSubmitting = false,
+}) => {
+  const [items, setItems] = useState<RecognizedGroceryItem[]>(() => [...review.items]);
+  const [isConfirmed, setIsConfirmed] = useState<boolean>(Boolean(review.confirmed));
+  const [isEditingPacks, setIsEditingPacks] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (review.confirmed) {
+      setIsConfirmed(true);
+    }
+  }, [review.confirmed]);
+
+  const matchedItems = items.filter((it) => it.status === 'matched' && it.productId);
+  const unavailableItems = items.filter((it) => it.status === 'unavailable');
+  const unclearItems = items.filter((it) => it.status === 'unclear');
+
+  const totalPacks = matchedItems.reduce((acc, it) => acc + (it.packsCount || 1), 0);
+  const totalSubtotal = matchedItems.reduce(
+    (acc, it) => acc + (it.subtotal ?? (it.price ?? 0) * (it.packsCount || 1)),
+    0
+  );
+
+  const handleUpdateItemQty = (id: string, delta: number) => {
+    if (isConfirmed) return;
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        const newPacks = Math.max(1, (it.packsCount || 1) + delta);
+        const unitPrice = it.price ?? 0;
+        return {
+          ...it,
+          packsCount: newPacks,
+          subtotal: unitPrice * newPacks,
+        };
+      })
+    );
+  };
+
+  const handleSelectPackSize = (id: string, packSize: string, price: number) => {
+    if (isConfirmed) return;
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        const count = it.packsCount || 1;
+        return {
+          ...it,
+          selectedPackSize: packSize,
+          price: price,
+          subtotal: price * count,
+        };
+      })
+    );
+  };
+
+  const handleRemoveItem = (id: string) => {
+    if (isConfirmed) return;
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  };
+
+  const handleConfirm = () => {
+    if (isConfirmed || isSubmitting || matchedItems.length === 0) return;
+    onConfirmAll(matchedItems, review.listId);
+    setIsConfirmed(true);
+  };
+
+  return (
+    <div className="rounded-2xl bg-gradient-to-b from-[#102334] to-[#0a1724] border border-emerald-500/40 p-3.5 shadow-xl shadow-black/40 space-y-3.5">
+      {/* Header */}
+      <div className="flex items-center justify-between pb-2.5 border-b border-white/10">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center ring-1 ring-emerald-500/40">
+            <ClipboardList className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
+              <span>Grocery List Review</span>
+              <span className="text-[10px] font-normal px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                {matchedItems.length} matched
+              </span>
+            </h4>
+            <p className="text-[10px] text-slate-300 mt-0.5">
+              Review recognised items and adjust quantities before adding to cart
+            </p>
+          </div>
+        </div>
+
+        {matchedItems.length > 0 && !isConfirmed && (
+          <button
+            type="button"
+            onClick={() => setIsEditingPacks((prev) => !prev)}
+            className={`px-2 py-1 rounded-lg text-[10.5px] font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+              isEditingPacks
+                ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/50'
+                : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+            }`}
+          >
+            <Edit3 className="w-3 h-3" />
+            <span>{isEditingPacks ? 'Done Editing' : 'Edit Items'}</span>
+          </button>
+        )}
+      </div>
+
+      {/* Matched Items List */}
+      {matchedItems.length > 0 ? (
+        <div className="space-y-2">
+          {matchedItems.map((item) => {
+            const hasMultiplePacks =
+              Array.isArray(item.availablePackSizes) && item.availablePackSizes.length > 1;
+
+            return (
+              <div
+                key={item.id}
+                className="p-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 transition-all space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  {/* Thumbnail and title */}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {item.productImage ? (
+                      <img
+                        src={item.productImage}
+                        alt={item.productTitle || item.itemName}
+                        className="w-10 h-10 rounded-lg object-cover bg-white/5 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                        <ShoppingCart className="w-4 h-4" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold text-white truncate max-w-[160px] sm:max-w-[200px]">
+                          {item.productTitle || item.itemName}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span>List: <strong className="text-slate-300 font-medium">{item.rawText}</strong></span>
+                        <span>•</span>
+                        <span className="text-emerald-300 font-semibold">₹{item.price}</span>
+                        <span>/</span>
+                        <span>{item.selectedPackSize}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right side: Stepper + Subtotal + Remove */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Stepper controls */}
+                    <div className="flex items-center gap-1 bg-white/10 border border-white/15 rounded-lg px-1.5 py-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateItemQty(item.id, -1)}
+                        disabled={isConfirmed || (item.packsCount || 1) <= 1}
+                        className="w-5 h-5 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white flex items-center justify-center cursor-pointer transition-colors"
+                        title="Decrease packs"
+                      >
+                        <Minus className="w-2.5 h-2.5" />
+                      </button>
+                      <span className="w-6 text-center text-xs font-bold text-white select-none">
+                        {item.packsCount || 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateItemQty(item.id, 1)}
+                        disabled={isConfirmed}
+                        className="w-5 h-5 rounded hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white flex items-center justify-center cursor-pointer transition-colors"
+                        title="Increase packs"
+                      >
+                        <Plus className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+
+                    {/* Subtotal */}
+                    <div className="text-right min-w-[50px]">
+                      <span className="text-xs font-bold text-emerald-400">
+                        ₹{(item.price ?? 0) * (item.packsCount || 1)}
+                      </span>
+                      <div className="text-[9px] text-slate-400">
+                        {item.packsCount || 1} {(item.packsCount || 1) === 1 ? 'pack' : 'packs'}
+                      </div>
+                    </div>
+
+                    {/* Remove Item button */}
+                    {!isConfirmed && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveItem(item.id)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                        title="Remove Item"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pack Size Selector if multiple pack sizes or edit mode active */}
+                {(isEditingPacks || hasMultiplePacks) && hasMultiplePacks && (
+                  <div className="pt-1.5 border-t border-white/5 flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] text-slate-400 font-medium">Pack size:</span>
+                    {item.availablePackSizes?.map((ps) => {
+                      const isChosen = item.selectedPackSize?.toLowerCase() === ps.size.toLowerCase();
+                      return (
+                        <button
+                          key={ps.size}
+                          type="button"
+                          disabled={isConfirmed}
+                          onClick={() => handleSelectPackSize(item.id, ps.size, ps.price)}
+                          className={`px-2 py-0.5 rounded text-[10.5px] font-semibold transition-all cursor-pointer flex items-center gap-1 ${
+                            isChosen
+                              ? 'bg-emerald-600 text-white ring-1 ring-emerald-400 shadow-xs'
+                              : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                          }`}
+                        >
+                          <span>{ps.size}</span>
+                          <span className="opacity-80 font-normal">₹{ps.price}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="p-3 rounded-xl bg-white/5 text-center text-xs text-slate-400">
+          No items remaining in this list.
+        </div>
+      )}
+
+      {/* Unavailable Items Section */}
+      {unavailableItems.length > 0 && (
+        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-1">
+          <div className="flex items-center gap-1.5 font-semibold text-amber-300">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>Currently Unavailable in Store ({unavailableItems.length}):</span>
+          </div>
+          <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-200/90 pl-1">
+            {unavailableItems.map((u) => (
+              <li key={u.id}>
+                <span className="font-medium text-amber-100">{u.itemName}</span>
+                {u.rawText && u.rawText !== u.itemName && (
+                  <span className="text-amber-300/70 text-[10px]"> (from &quot;{u.rawText}&quot;)</span>
+                )}
+                {' — not in current inventory'}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Unclear Handwriting Section */}
+      {unclearItems.length > 0 && (
+        <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs space-y-1">
+          <div className="flex items-center gap-1.5 font-semibold text-indigo-300">
+            <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>Unclear Items Requiring Clarification ({unclearItems.length}):</span>
+          </div>
+          <p className="text-[10.5px] text-indigo-200/80">
+            The following handwriting could not be confidently identified. Please type the product name or search manually:
+          </p>
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {unclearItems.map((u) => (
+              <span
+                key={u.id}
+                className="px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-[10.5px] font-mono text-indigo-100"
+              >
+                &quot;{u.rawText}&quot;
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Footer: Subtotal and Confirm Button */}
+      <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-3">
+        <div>
+          <span className="text-[10.5px] text-slate-400">Total Estimated:</span>
+          <div className="text-sm font-extrabold text-white flex items-baseline gap-1">
+            <span className="text-emerald-400">₹{totalSubtotal}</span>
+            <span className="text-[10px] text-slate-400 font-normal">
+              ({matchedItems.length} {matchedItems.length === 1 ? 'item' : 'items'}, {totalPacks} {totalPacks === 1 ? 'pack' : 'packs'})
+            </span>
+          </div>
+        </div>
+
+        {isConfirmed ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span>Added to Cart</span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={isSubmitting || matchedItems.length === 0}
+            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-950/40 transition-all active:scale-95 cursor-pointer"
+          >
+            {isSubmitting ? (
+              <>
+                <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+                <span>Adding to Cart...</span>
+              </>
+            ) : (
+              <>
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>Confirm and Add All to Cart</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   isOpen,
   onClose,
@@ -297,11 +629,49 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setSelectedImageName(file.name);
+      if (!file.type.startsWith('image/')) {
+        setVoiceError('Please select a valid image file (JPG, PNG, WebP).');
+        return;
+      }
+      setSelectedImageName(file.name || 'Photo');
       const reader = new FileReader();
       reader.onload = (uploadEvent) => {
-        const result = uploadEvent.target?.result as string;
-        setSelectedImage(result);
+        const rawResult = uploadEvent.target?.result as string;
+        // Scale down oversized images via canvas to ensure fast network transfer and high vision accuracy
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1600;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+            try {
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                ctx.drawImage(img, 0, 0, width, height);
+                const compressed = canvas.toDataURL(file.type || 'image/jpeg', 0.85);
+                setSelectedImage(compressed);
+                return;
+              }
+            } catch {
+              // fallback to rawResult
+            }
+          }
+          setSelectedImage(rawResult);
+        };
+        img.onerror = () => {
+          setSelectedImage(rawResult);
+        };
+        img.src = rawResult;
       };
       reader.readAsDataURL(file);
     }
@@ -604,6 +974,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         requiresConfirmation: response.requiresConfirmation,
         pendingAction: response.pendingAction,
         cartSummary: response.cartSummary,
+        groceryListReview: response.groceryListReview,
       };
 
       setSessionMessages((prev) => [...prev, assistantMsg]);
@@ -661,7 +1032,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
     }
   };
 
-  // Typed Chat Send Handler
+  // Typed Chat and Image Send Handler
   const handleSendMessage = async (
     textToSend?: string,
     extraPayload?: {
@@ -669,6 +1040,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
       quantity?: number;
       packSize?: string;
       price?: number;
+      image?: string;
     }
   ) => {
     const text = (textToSend || inputText).trim();
@@ -683,36 +1055,11 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
       setIsListening(false);
     }
 
-    // Case 1: Only an image was submitted without text query
-    if (!text && imageToAttach) {
-      const customerMsg: AssistantMessage = {
-        id: `cust-${Date.now()}`,
-        sender: 'customer',
-        text: selectedImageName ? `Photo attached: ${selectedImageName}` : 'Product photo attached',
-        image: imageToAttach,
-        language: selectedLanguage,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-      setSessionMessages((prev) => [...prev, customerMsg]);
-      handleClearImage();
-
-      const assistantMsg: AssistantMessage = {
-        id: `asst-${Date.now()}`,
-        sender: 'assistant',
-        text: 'Image recognition is currently not supported by the backend assistant. Please type or speak your grocery request (e.g. "Add 2 kg tomatoes" or "Find fresh bananas").',
-        language: selectedLanguage,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        quickReplies: ['Show All Products', 'View Cart'],
-      };
-      setSessionMessages((prev) => [...prev, assistantMsg]);
-      return;
-    }
-
-    // Case 2: Text is present (with or without image attached)
+    // Create user message displaying attached photo and any query text
     const customerMsg: AssistantMessage = {
       id: `cust-${Date.now()}`,
       sender: 'customer',
-      text,
+      text: text || (selectedImageName ? `Photo: ${selectedImageName}` : 'Product photo attached'),
       image: imageToAttach || undefined,
       language: selectedLanguage,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -730,10 +1077,28 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         customerToken,
         pendingAction,
         selectedLanguage,
-        extraPayload
+        {
+          ...extraPayload,
+          image: imageToAttach || undefined,
+        }
       );
 
+      // Reset pending action
       setPendingAction(response.requiresConfirmation ? response.pendingAction : null);
+
+      if (!response.success && response.error) {
+        const errorMsg: AssistantMessage = {
+          id: `asst-${Date.now()}`,
+          sender: 'assistant',
+          text: response.message || 'Image analysis could not be completed. Please try again.',
+          spokenMessage: response.spokenMessage || response.message,
+          language: response.language || selectedLanguage,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          quickReplies: response.quickReplies || ['Show All Products', 'View Cart'],
+        };
+        setSessionMessages((prev) => [...prev, errorMsg]);
+        return;
+      }
 
       if (response.cartUpdated && Array.isArray(response.cartItems) && onSyncCartFromBackend) {
         onSyncCartFromBackend(response.cartItems);
@@ -781,6 +1146,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         requiresConfirmation: response.requiresConfirmation,
         pendingAction: response.pendingAction,
         cartSummary: response.cartSummary,
+        groceryListReview: response.groceryListReview,
       };
 
       setSessionMessages((prev) => [...prev, assistantMsg]);
@@ -855,6 +1221,122 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
       packSize,
       price,
     });
+  };
+
+  // Confirm and Add All to Cart from Grocery List Review
+  const handleConfirmGroceryList = async (
+    items: RecognizedGroceryItem[],
+    listId: string
+  ) => {
+    if (isLoading) return;
+    const validItems = items.filter((it) => it.status === 'matched' && it.productId);
+    if (validItems.length === 0) return;
+
+    setIsLoading(true);
+    setVoiceError(null);
+
+    const customerMsg: AssistantMessage = {
+      id: `cust-${Date.now()}`,
+      sender: 'customer',
+      text: `Confirm and Add All to Cart (${validItems.length} ${validItems.length === 1 ? 'item' : 'items'})`,
+      language: selectedLanguage,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setSessionMessages((prev) => [...prev, customerMsg]);
+
+    try {
+      const response = await sendAssistantMessage(
+        `Confirm and Add All to Cart (${validItems.length} items)`,
+        customerToken,
+        {
+          intent: 'CONFIRM_GROCERY_LIST',
+          listId,
+          items: validItems,
+        },
+        selectedLanguage
+      );
+
+      setPendingAction(null);
+
+      // Sync backend cart items if available
+      if (response.cartUpdated && Array.isArray(response.cartItems) && onSyncCartFromBackend) {
+        onSyncCartFromBackend(response.cartItems);
+      }
+
+      // Ensure client cart state is synchronized via onAddToCart
+      for (const it of validItems) {
+        if (it.productId) {
+          const fullProduct: Product = {
+            id: it.productId,
+            title: it.productTitle || it.itemName,
+            price: it.price || 0,
+            unit: it.selectedPackSize || '1 unit',
+            stock: 99,
+            image: it.productImage || '',
+            category: it.category || 'produce',
+            categoryLabel: it.category || 'Grocery',
+            supplier: 'FreshCart Harvest',
+            sku: `SKU-${it.productId}`,
+            badge: '',
+            isOrganic: false,
+            packSizes: it.availablePackSizes,
+          };
+          onAddToCart(fullProduct, it.packsCount || 1, it.selectedPackSize, it.price);
+        }
+      }
+
+      // Mark the review in sessionMessages as confirmed
+      setSessionMessages((prev) =>
+        prev.map((m) => {
+          if (m.groceryListReview && m.groceryListReview.listId === listId) {
+            return {
+              ...m,
+              groceryListReview: {
+                ...m.groceryListReview,
+                confirmed: true,
+              },
+            };
+          }
+          return m;
+        })
+      );
+
+      const assistantMsg: AssistantMessage = {
+        id: `asst-${Date.now()}`,
+        sender: 'assistant',
+        text: response.message || `Successfully added ${validItems.length} items from your grocery list to your cart!`,
+        spokenMessage: response.spokenMessage || response.message,
+        language: response.language || selectedLanguage,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        quickReplies: ['View Cart', 'Show All Products'],
+        cartSummary: response.cartSummary,
+      };
+
+      setSessionMessages((prev) => [...prev, assistantMsg]);
+
+      if ((voiceResponseEnabled || isLiveVoiceMode) && (response.spokenMessage || response.message)) {
+        setSpeakingMessageId(assistantMsg.id);
+        speakAssistantResponse(
+          response.spokenMessage || response.message,
+          response.language || selectedLanguage,
+          () => {
+            setSpeakingMessageId(null);
+          }
+        );
+      }
+    } catch (err: any) {
+      console.error('Failed to confirm grocery list:', err);
+      const errorMsg: AssistantMessage = {
+        id: `asst-${Date.now()}`,
+        sender: 'assistant',
+        text: 'Failed to add items to cart. Please try again.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setSessionMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (!isOpen) return null;
@@ -1141,8 +1623,19 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
                       {/* Message Content */}
                       <div className="whitespace-pre-line break-words">{msg.text}</div>
 
+                      {/* Grocery List Review Card */}
+                      {msg.groceryListReview && (
+                        <div className="mt-3 pt-2.5 border-t border-white/10">
+                          <GroceryListReviewCard
+                            review={msg.groceryListReview}
+                            onConfirmAll={handleConfirmGroceryList}
+                            isSubmitting={isLoading}
+                          />
+                        </div>
+                      )}
+
                       {/* Attached Product Cards */}
-                      {msg.products && msg.products.length > 0 && (
+                      {!msg.groceryListReview && msg.products && msg.products.length > 0 && (
                         <div className="mt-3 pt-2.5 border-t border-white/10">
                           {/* Total Product Count Header */}
                           <div className="flex items-center justify-between text-xs text-slate-300 font-semibold px-1 pb-2">
