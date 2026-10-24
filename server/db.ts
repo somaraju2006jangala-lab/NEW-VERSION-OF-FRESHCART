@@ -2091,22 +2091,12 @@ export async function getCartForCustomerInDb(customerId: string): Promise<any[]>
   const pool = getPool();
 
   try {
-    // 1. Get or create cart
-    const [cartRows] = await pool.query<RowDataPacket[]>(
-      'SELECT id FROM carts WHERE customer_id = ? LIMIT 1',
+    // 1. Get or create cart atomically using LAST_INSERT_ID to avoid race conditions
+    const [insertRes] = await pool.query<ResultSetHeader>(
+      'INSERT INTO carts (customer_id) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',
       [customerId]
     );
-
-    let cartId: number;
-    if (cartRows.length === 0) {
-      const [insertRes] = await pool.query<ResultSetHeader>(
-        'INSERT INTO carts (customer_id) VALUES (?)',
-        [customerId]
-      );
-      cartId = insertRes.insertId;
-    } else {
-      cartId = cartRows[0].id;
-    }
+    const cartId = insertRes.insertId;
 
     // 2. Fetch cart items joined with products
     const [items] = await pool.query<RowDataPacket[]>(
@@ -2171,22 +2161,12 @@ export async function saveCartItemInDb(
   const pool = getPool();
 
   try {
-    // Ensure cart exists
-    const [cartRows] = await pool.query<RowDataPacket[]>(
-      'SELECT id FROM carts WHERE customer_id = ? LIMIT 1',
+    // Ensure cart exists atomically using LAST_INSERT_ID to avoid race conditions
+    const [insertRes] = await pool.query<ResultSetHeader>(
+      'INSERT INTO carts (customer_id) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',
       [customerId]
     );
-
-    let cartId: number;
-    if (cartRows.length === 0) {
-      const [insertRes] = await pool.query<ResultSetHeader>(
-        'INSERT INTO carts (customer_id) VALUES (?)',
-        [customerId]
-      );
-      cartId = insertRes.insertId;
-    } else {
-      cartId = cartRows[0].id;
-    }
+    const cartId = insertRes.insertId;
 
     // If quantity is 0 or less, remove the item
     if (quantity <= 0) {
