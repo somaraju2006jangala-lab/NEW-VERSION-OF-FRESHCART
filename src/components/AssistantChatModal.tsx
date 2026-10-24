@@ -17,9 +17,9 @@ import {
   Tag,
   ArrowRight,
   Globe,
-  Radio,
   Square,
   RotateCcw,
+  Camera,
 } from 'lucide-react';
 import { Product, CartItem } from '../types';
 import {
@@ -282,6 +282,80 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<any>(null);
 
+  // Speech Recognition Dictation State (for Microphone button in bottom bar)
+  const [isListening, setIsListening] = useState(false);
+
+  // Camera & Image Attachment
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCameraClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedImageName(file.name);
+      const reader = new FileReader();
+      reader.onload = (uploadEvent) => {
+        const result = uploadEvent.target?.result as string;
+        setSelectedImage(result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleClearImage = () => {
+    setSelectedImage(null);
+    setSelectedImageName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Toggle Microphone Speech-to-Text Dictation
+  const handleToggleMic = () => {
+    if (isListening) {
+      voiceManagerRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    if (!voiceManagerRef.current?.isSupported) {
+      setVoiceError(
+        'Speech recognition is not supported in this browser. Please use Google Chrome, Microsoft Edge, or Safari.'
+      );
+      return;
+    }
+
+    setVoiceError(null);
+    setIsListening(true);
+
+    voiceManagerRef.current.start(
+      (transcript, isFinal) => {
+        // Display recognized speech in the search input field
+        setInputText(transcript);
+        if (isFinal) {
+          setIsListening(false);
+        }
+      },
+      () => {
+        setIsListening(true);
+        setVoiceError(null);
+      },
+      () => {
+        setIsListening(false);
+      },
+      (errorMsg) => {
+        setIsListening(false);
+        setVoiceError(errorMsg);
+      },
+      false
+    );
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const voiceManagerRef = useRef<VoiceRecognitionManager | null>(null);
   const isLiveVoiceModeRef = useRef(false);
@@ -351,6 +425,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   // Stop Live Voice Mode cleanly
   const handleStopLiveVoice = useCallback(() => {
     setIsLiveVoiceMode(false);
+    setIsListening(false);
     setLiveVoiceState('IDLE');
     setInterimTranscript('');
     voiceManagerRef.current?.stop();
@@ -597,19 +672,55 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
     }
   ) => {
     const text = (textToSend || inputText).trim();
-    if (!text || isLoading) return;
+    const imageToAttach = selectedImage;
 
-    // Append customer message
+    // Prevent empty submissions (must have either text or image)
+    if ((!text && !imageToAttach) || isLoading) return;
+
+    // If microphone is actively listening, stop it
+    if (isListening) {
+      voiceManagerRef.current?.stop();
+      setIsListening(false);
+    }
+
+    // Case 1: Only an image was submitted without text query
+    if (!text && imageToAttach) {
+      const customerMsg: AssistantMessage = {
+        id: `cust-${Date.now()}`,
+        sender: 'customer',
+        text: selectedImageName ? `Photo attached: ${selectedImageName}` : 'Product photo attached',
+        image: imageToAttach,
+        language: selectedLanguage,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setSessionMessages((prev) => [...prev, customerMsg]);
+      handleClearImage();
+
+      const assistantMsg: AssistantMessage = {
+        id: `asst-${Date.now()}`,
+        sender: 'assistant',
+        text: 'Image recognition is currently not supported by the backend assistant. Please type or speak your grocery request (e.g. "Add 2 kg tomatoes" or "Find fresh bananas").',
+        language: selectedLanguage,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        quickReplies: ['Show All Products', 'View Cart'],
+      };
+      setSessionMessages((prev) => [...prev, assistantMsg]);
+      return;
+    }
+
+    // Case 2: Text is present (with or without image attached)
     const customerMsg: AssistantMessage = {
       id: `cust-${Date.now()}`,
       sender: 'customer',
       text,
+      image: imageToAttach || undefined,
       language: selectedLanguage,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
     setSessionMessages((prev) => [...prev, customerMsg]);
     setInputText('');
+    handleClearImage();
     setIsLoading(true);
     setVoiceError(null);
 
@@ -808,22 +919,6 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
 
         {/* Header Controls */}
         <div className="flex items-center gap-1.5 text-slate-300">
-          {/* Live Voice Toggle Pill */}
-          <button
-            type="button"
-            id="ai-assistant-live-voice-toggle"
-            onClick={handleToggleLiveVoiceMode}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              isLiveVoiceMode
-                ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-500/20'
-                : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30'
-            }`}
-            title={isLiveVoiceMode ? 'Stop Live Voice Conversation' : 'Start Google Gemini Live Voice'}
-          >
-            <Radio className={`w-3.5 h-3.5 ${isLiveVoiceMode ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`} />
-            <span className="hidden sm:inline">{isLiveVoiceMode ? 'Stop Live Voice' : 'Live Voice'}</span>
-          </button>
-
           {/* Language Selector */}
           <div className="relative group">
             <button
@@ -1036,6 +1131,13 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
                           : 'bg-[#0f1b2b]/95 text-slate-100 rounded-bl-xs border border-white/10 shadow-emerald-950/30'
                       }`}
                     >
+                      {/* Attached Customer Image */}
+                      {msg.image && (
+                        <div className="mb-2 rounded-xl overflow-hidden max-w-[200px] border border-white/20 bg-black/30">
+                          <img src={msg.image} alt="Attached" className="w-full h-auto object-cover max-h-48" />
+                        </div>
+                      )}
+
                       {/* Message Content */}
                       <div className="whitespace-pre-line break-words">{msg.text}</div>
 
@@ -1246,6 +1348,32 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
             ))}
           </div>
 
+          {/* Selected Image Preview (Above Input Bar) */}
+          {selectedImage && (
+            <div className="px-3 pt-2.5 pb-2 bg-[#08111c] border-t border-white/10 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="relative w-11 h-11 rounded-lg overflow-hidden border border-emerald-500/40 bg-black/40 shrink-0">
+                  <img src={selectedImage} alt="Selected preview" className="w-full h-full object-cover" />
+                </div>
+                <div className="text-xs">
+                  <p className="text-emerald-300 font-medium truncate max-w-[180px] sm:max-w-[260px]">
+                    {selectedImageName || 'Selected image'}
+                  </p>
+                  <p className="text-[10px] text-slate-400">Click camera to replace or submit</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                id="ai-assistant-clear-img-btn"
+                onClick={handleClearImage}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                title="Remove Image"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Chat Input Controls */}
           <form
             onSubmit={(e) => {
@@ -1254,43 +1382,70 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
             }}
             className="p-3 border-t border-white/10 bg-[#08111c] flex items-center gap-2"
           >
-            {/* Microphone Button (Starts/Stops Live Voice or single shot) */}
+            {/* 1. Voice button (Microphone) - Far Left */}
             <button
               type="button"
               id="ai-assistant-mic-btn"
-              onClick={handleToggleLiveVoiceMode}
-              className={`p-2.5 rounded-xl transition-all cursor-pointer relative shrink-0 ${
-                isLiveVoiceMode
+              onClick={handleToggleMic}
+              className={`w-10 h-10 rounded-xl transition-all cursor-pointer relative shrink-0 flex items-center justify-center ${
+                isListening
                   ? 'bg-rose-600 text-white shadow-lg shadow-rose-500/40 ring-2 ring-rose-400'
-                  : 'bg-white/10 hover:bg-emerald-600/30 text-emerald-400 hover:text-emerald-300 border border-white/10'
+                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30'
               }`}
-              title={isLiveVoiceMode ? 'Stop Live Voice Mode' : 'Start Google Gemini Live Voice Conversation'}
+              title={isListening ? 'Stop Voice Input' : 'Start Voice Input'}
             >
-              {isLiveVoiceMode ? (
+              {isListening ? (
                 <MicOff className="w-4 h-4 animate-pulse" />
               ) : (
                 <Mic className="w-4 h-4" />
               )}
             </button>
 
-            {/* Text Input */}
+            {/* 2. Search input - Between microphone and camera */}
             <input
               type="text"
               id="ai-assistant-input"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Ask e.g. 'Add 2 kg tomatoes' or speak with mic..."
+              placeholder="Search products or type e.g. 'Add 2 kg tomatoes'..."
               disabled={isLoading}
-              className="flex-1 px-3.5 py-2.5 bg-white/[0.05] border border-white/15 focus:border-emerald-500/60 rounded-xl text-white placeholder-slate-400 text-[13px] outline-none transition-all"
+              className="flex-1 min-w-0 h-10 px-3.5 bg-white/[0.05] border border-white/15 focus:border-emerald-500/60 rounded-xl text-white placeholder-slate-400 text-[13px] outline-none transition-all"
             />
 
-            {/* Send Button */}
+            {/* Hidden file input for Camera button */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              id="ai-assistant-camera-input"
+              accept="image/*"
+              capture="environment"
+              onChange={handleImageChange}
+              className="hidden"
+            />
+
+            {/* 3. Camera button - Immediately before submit button */}
+            <button
+              type="button"
+              id="ai-assistant-camera-btn"
+              onClick={handleCameraClick}
+              disabled={isLoading}
+              className={`w-10 h-10 rounded-xl transition-all cursor-pointer shrink-0 flex items-center justify-center ${
+                selectedImage
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 border border-emerald-400'
+                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30'
+              }`}
+              title={selectedImage ? 'Replace Image' : 'Capture or Select Image'}
+            >
+              <Camera className="w-4 h-4" />
+            </button>
+
+            {/* 4. Submit button (Send icon) - Far Right */}
             <button
               type="submit"
               id="ai-assistant-send-btn"
-              disabled={isLoading || !inputText.trim()}
-              className="p-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-all shadow-md shadow-emerald-600/30 cursor-pointer shrink-0"
-              title="Send Command"
+              disabled={isLoading || (!inputText.trim() && !selectedImage)}
+              className="w-10 h-10 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-all shadow-md shadow-emerald-600/30 cursor-pointer shrink-0 flex items-center justify-center"
+              title="Submit Request"
             >
               <Send className="w-4 h-4" />
             </button>

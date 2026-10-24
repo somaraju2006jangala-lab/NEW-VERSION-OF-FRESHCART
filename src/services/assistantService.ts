@@ -25,6 +25,7 @@ export interface AssistantMessage {
   id: string;
   sender: 'customer' | 'assistant';
   text: string;
+  image?: string;
   spokenMessage?: string;
   timestamp: string;
   language?: string;
