@@ -1,4 +1,4 @@
-import mysql, { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import mysql, { type Pool, type PoolConnection, type RowDataPacket, type ResultSetHeader } from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';

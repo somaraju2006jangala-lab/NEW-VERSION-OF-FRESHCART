@@ -10,7 +10,7 @@ export interface AssistantProductCard {
   category?: string;
   badge?: string;
   isOrganic?: boolean;
-  packSizes?: { size: string; price: number }[];
+  packSizes?: { size: string; price: number; isAvailable?: boolean; stock?: number }[];
 }
 
 export interface AssistantCouponCard {
@@ -75,7 +75,13 @@ export async function sendAssistantMessage(
   message: string,
   token?: string,
   pendingAction?: any,
-  language: string = 'en-IN'
+  language: string = 'en-IN',
+  extraPayload?: {
+    productId?: string;
+    quantity?: number;
+    packSize?: string;
+    price?: number;
+  }
 ): Promise<AssistantChatResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -93,6 +99,7 @@ export async function sendAssistantMessage(
         message,
         pendingAction,
         language,
+        ...(extraPayload || {}),
       }),
     });
 

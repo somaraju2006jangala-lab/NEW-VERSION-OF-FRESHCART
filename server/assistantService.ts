@@ -128,8 +128,9 @@ Always translate non-English product names to their English catalog names (e.g. 
 
 INTENTS:
 1. ADD_TO_CART: When customer wants to add an item to their cart.
-   e.g. "Add 2 kg tomatoes", "Add 500 grams potatoes", "1 litre cow milk please", "मुझे 2 किलो टमाटर चाहिए", "నాకు 2 కేజీల టమాటాలు కార్ట్‌లో వేయి"
+   e.g. "Add 2 kg tomatoes", "Add 500 grams potatoes", "1 litre cow milk please", "Add two dozen bananas", "मुझे 2 किलो टमाटर चाहिए", "నాకు 2 కేజీల టమాటాలు కార్ట్‌లో వేయి"
    Fields: intent: "ADD_TO_CART", product_name: string (in English), quantity: number (default 1), unit: string (e.g. "kg", "g", "litre", "ml", "dozen", "packet", "piece")
+   Note: If customer specifies a pack size like "two dozen bananas" or "2 kg tomatoes", set unit to the pack size ("2 dozen" or "2 kg") and quantity to 1 (unless customer explicitly specified multiple packs like "3 packs of 2 dozen").
 2. UPDATE_CART_QTY: When customer wants to increase/decrease or change quantity.
    e.g. "Increase tomatoes to 2 kg", "Change milk to 2 litres", "టమాటాలు 3 కేజీలు చేయి"
    Fields: intent: "UPDATE_CART_QTY", product_name: string, quantity: number, unit: string
@@ -227,7 +228,20 @@ No markdown formatting, no code fences, no extra text.
  * Ensures 100% reliability if Gemini is unavailable or rate-limited.
  */
 function parseIntentDeterministically(text: string): AssistantStructuredAction {
-  const t = cleanStr(text);
+  // Normalize spoken numbers and phrases: "two dozen" -> "2 dozen", "half dozen" -> "1/2 dozen", "a dozen" -> "1 dozen"
+  const normalizedText = text
+    .replace(/\b(?:two)\b|(?:दो|రెండు)/gi, '2')
+    .replace(/\b(?:one)\b|(?:एक|ఒకటి|ఒక)/gi, '1')
+    .replace(/\b(?:three)\b|(?:तीन|మూడు)/gi, '3')
+    .replace(/\b(?:four)\b|(?:चार|నాలుగు)/gi, '4')
+    .replace(/\b(?:five)\b|(?:पाँच|पांच|ఐదు)/gi, '5')
+    .replace(/\b(?:half)\b|(?:आधा|సగం)/gi, '1/2')
+    .replace(/\b(?:a\s+dozen)\b/gi, '1 dozen')
+    .replace(/(?:दर्जन|డజన్|డజన్లు)/gi, 'dozen')
+    .replace(/(?:किलो|केजी|కేజీ|కేజీలు)/gi, 'kg')
+    .replace(/(?:लीटर|లీటర్|లీటర్లు)/gi, 'litre')
+    .replace(/(?:ग्राम|గ్రామ్|గ్రాములు)/gi, 'g');
+  const t = cleanStr(normalizedText);
 
   // Clear cart (English, Hindi, Telugu)
   if (
@@ -420,16 +434,32 @@ function parseIntentDeterministically(text: string): AssistantStructuredAction {
     t.includes('జోడించు') ||
     t.includes('కావాలి')
   ) {
-    const match = t.match(/(\d+(?:\.\d+)?)\s*(kg|kilo|grams|g|litre|litres|l|ml|dozen|doz|packet|packets|pack|packs|piece|pieces|box|boxes|किलो|ग्राम|लीटर|కేజీ|లీటర్)?\s*(?:of\s*)?([a-z0-9\s\u0900-\u097F\u0C00-\u0C7F-]+?)(?:\s+to\s+my\s+cart|\s+to\s+cart|\s+जोड़ें|\s+डालो|\s+వేయి|\s+చేర్చు|$)/i);
+    const match = t.match(/(\d+(?:\/\d+)?(?:\.\d+)?)\s*(kg|kilo|grams|g|litre|litres|l|ml|dozen|doz|packet|packets|pack|packs|piece|pieces|box|boxes|किलो|ग्राम|लीटर|కేజీ|లీటర్|दर्जन|డజన్|డజన్లు)?\s*(?:of\s*)?([a-z0-9\s\u0900-\u097F\u0C00-\u0C7F-]+?)(?:\s+to\s+my\s+cart|\s+to\s+cart|\s+जोड़ें|\s+डालो|\s+వేయి|\s+చేర్చు|$)/i);
     if (match) {
-      const qty = Number(match[1]) || 1;
+      const qtyStr = match[1];
       const rawUnit = match[2] || '';
       const prodName = match[3]?.replace(/add|to my cart|to cart|put in|please|जोड़ें|डालो|వేయి|చేర్చు/gi, '').trim();
+
+      let parsedQty = 1;
+      let parsedUnit = normalizeUnitString(rawUnit);
+      if (rawUnit.includes('dozen') || rawUnit.includes('दर्जन') || rawUnit.includes('డజన్')) {
+        parsedUnit = `${qtyStr} dozen`;
+        parsedQty = 1;
+      } else if (qtyStr === '1/2') {
+        parsedUnit = `1/2 ${rawUnit}`.trim();
+        parsedQty = 1;
+      } else {
+        parsedQty = Number(qtyStr) || 1;
+        if (rawUnit) {
+          parsedUnit = normalizeUnitString(rawUnit);
+        }
+      }
+
       return {
         intent: 'ADD_TO_CART',
         product_name: prodName,
-        quantity: qty,
-        unit: normalizeUnitString(rawUnit),
+        quantity: parsedQty,
+        unit: parsedUnit,
       };
     }
     const simple = t.replace(/add|to my cart|to cart|put in|please|जोड़ें|डालो|चाहिए|వేయి|చేర్చు|కావాలి/gi, '').trim();
@@ -459,7 +489,7 @@ function normalizeUnitString(u?: string): string {
   if (clean === 'g' || clean === 'gm' || clean === 'gms' || clean === 'gram' || clean === 'grams' || clean === 'ग्राम') return 'g';
   if (clean === 'litre' || clean === 'litres' || clean === 'liter' || clean === 'l' || clean === 'लीटर' || clean === 'లీటర్') return '1 litre';
   if (clean === 'ml' || clean === 'millilitre') return 'ml';
-  if (clean === 'dozen' || clean === 'doz' || clean === 'दर्जन') return '1 dozen';
+  if (clean === 'dozen' || clean === 'doz' || clean === 'दर्जन' || clean === 'డజన్' || clean === 'డజన్లు') return '1 dozen';
   if (clean === 'packet' || clean === 'packets' || clean === 'pack' || clean === 'packs' || clean === 'पैकेट') return '1 packet';
   if (clean === 'piece' || clean === 'pieces' || clean === 'pc' || clean === 'pcs') return '1 piece';
   return clean;
@@ -821,6 +851,124 @@ function getLocalizedText(
 }
 
 /**
+ * Resolves pack size, unit price, and quantity for a product from user request
+ */
+function resolvePackSizeAndQuantity(
+  product: any,
+  userText: string,
+  parsedAction: { quantity?: number; unit?: string },
+  bodyPackSize?: string,
+  bodyPrice?: number,
+  bodyQty?: number
+): { packSize: string; price: number; quantity: number; resolved: boolean } {
+  // 1. Explicit pack size and price passed directly (e.g. from UI selector card)
+  if (bodyPackSize && bodyPrice !== undefined) {
+    return {
+      packSize: bodyPackSize,
+      price: Number(bodyPrice),
+      quantity: Math.max(1, Number(bodyQty) || 1),
+      resolved: true,
+    };
+  }
+
+  const rawPackSizes: Array<{ size: string; price: number }> =
+    Array.isArray(product.packSizes) && product.packSizes.length > 0
+      ? product.packSizes
+      : [{ size: product.unit, price: Number(product.price) }];
+
+  // If only one pack size exists, it is automatically resolved
+  if (rawPackSizes.length === 1) {
+    return {
+      packSize: rawPackSizes[0].size,
+      price: Number(rawPackSizes[0].price),
+      quantity: Math.max(1, Number(bodyQty ?? parsedAction.quantity) || 1),
+      resolved: true,
+    };
+  }
+
+  // 2. Multilingual normalized text
+  const normText = (userText + ' ' + (parsedAction.unit || ''))
+    .toLowerCase()
+    .replace(/\b(?:two)\b|(?:दो|రెండు)/gi, '2')
+    .replace(/\b(?:one)\b|(?:एक|ఒకటి|ఒక)/gi, '1')
+    .replace(/\b(?:three)\b|(?:तीन|మూడు)/gi, '3')
+    .replace(/\b(?:four)\b|(?:चार|నాలుగు)/gi, '4')
+    .replace(/\b(?:five)\b|(?:पाँच|पांच|ఐదు)/gi, '5')
+    .replace(/\b(?:half)\b|(?:आधा|సగం)/gi, '1/2')
+    .replace(/\b(?:a\s+dozen)\b/gi, '1 dozen')
+    .replace(/(?:दर्जन|డజన్|డజన్లు)/gi, 'dozen')
+    .replace(/(?:किलो|केजी|కేజీ|కేజీలు)/gi, 'kg')
+    .replace(/(?:लीटर|లీటర్|లీటర్లు)/gi, 'litre')
+    .replace(/(?:ग्राम|గ్రామ్|గ్రాములు)/gi, 'g');
+
+  // Sort candidate pack sizes by length descending to match longest/most specific first (e.g. "1/2 dozen" before "1 dozen", "15kg" before "1 kg")
+  const sortedPacks = [...rawPackSizes].sort((a, b) => b.size.length - a.size.length);
+
+  for (const ps of sortedPacks) {
+    const rawSize = ps.size.toLowerCase(); // e.g. "2 dozen", "1/2 dozen", "1 dozen", "2 kg"
+    const escapedSize = rawSize.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*');
+
+    // Case A: User explicitly specified count of packs (e.g. "3 packs of 2 dozen" or "2 of 1 kg" or "2 1 dozen")
+    const multiplierRegex = new RegExp(`(\\d+)\\s*(?:packs?|packets?|boxes?|units?|of|x|×)?\\s*(?:of\\s*)?${escapedSize}`, 'i');
+    const multiplierMatch = normText.match(multiplierRegex);
+    if (multiplierMatch) {
+      const multQty = Number(multiplierMatch[1]);
+      return {
+        packSize: ps.size,
+        price: Number(ps.price),
+        quantity: multQty > 0 ? multQty : 1,
+        resolved: true,
+      };
+    }
+
+    // Case B: Simple occurrence of this pack size in normalized text
+    // E.g. "Add two dozen bananas" -> normText has "2 dozen" -> matches ps.size "2 dozen" with quantity 1
+    const sizeRegex = new RegExp(`(?:^|[^0-9a-zA-Z])${escapedSize}(?:$|[^0-9a-zA-Z])`, 'i');
+    if (sizeRegex.test(normText) || normText.includes(rawSize)) {
+      return {
+        packSize: ps.size,
+        price: Number(ps.price),
+        quantity: 1,
+        resolved: true,
+      };
+    }
+  }
+
+  // Case C: User specified quantity + base unit (e.g. "5000 kg", "10 kg", "500 g", "3 litres")
+  // Check if a 1-unit pack size exists (e.g. "1 kg", "1 litre", "1 dozen", "1 piece")
+  const qtyUnitMatch = normText.match(/(\d+(?:\.\d+)?)\s*(kg|kilo|grams?|g|litres?|l|ml|dozen|pieces?|packets?)/i);
+  if (qtyUnitMatch) {
+    const rawQty = Number(qtyUnitMatch[1]);
+    const requestedUnit = qtyUnitMatch[2].toLowerCase();
+    const matchingOnePack = sortedPacks.find((ps) => {
+      const psLower = ps.size.toLowerCase();
+      if ((requestedUnit === 'kg' || requestedUnit === 'kilo') && psLower === '1 kg') return true;
+      if ((requestedUnit === 'l' || requestedUnit.startsWith('litre')) && psLower === '1 litre') return true;
+      if (requestedUnit.startsWith('dozen') && psLower === '1 dozen') return true;
+      if (requestedUnit.startsWith('piece') && psLower === '1 piece') return true;
+      return false;
+    });
+
+    if (matchingOnePack && rawQty > 0) {
+      return {
+        packSize: matchingOnePack.size,
+        price: Number(matchingOnePack.price),
+        quantity: Math.round(rawQty),
+        resolved: true,
+      };
+    }
+  }
+
+  // Not resolved (user did not specify pack size)
+  return {
+    packSize: product.unit,
+    price: Number(product.price),
+    quantity: 1,
+    resolved: false,
+  };
+}
+
+/**
  * Handles the main /api/assistant/chat endpoint
  */
 export async function handleAssistantChat(
@@ -840,10 +988,18 @@ export async function handleAssistantChat(
     return;
   }
 
-  const { message, pendingAction, language } = req.body || {};
+  const {
+    message,
+    pendingAction,
+    language,
+    productId,
+    quantity: bodyQty,
+    packSize: bodyPackSize,
+    price: bodyPrice,
+  } = req.body || {};
   const userText = (message || '').trim();
 
-  if (!userText && !pendingAction) {
+  if (!userText && !pendingAction && !productId) {
     res.status(400).json({
       success: false,
       message: 'Please provide a message or shopping command.',
@@ -907,7 +1063,13 @@ export async function handleAssistantChat(
     'MOST_EXPENSIVE_ITEM',
   ]);
 
-  if (deterministicAction && FAST_PATH_INTENTS.has(deterministicAction.intent)) {
+  if (productId) {
+    // Explicit product card action from UI
+    action = {
+      intent: 'ADD_TO_CART',
+      quantity: bodyQty ? Number(bodyQty) : 1,
+    };
+  } else if (deterministicAction && FAST_PATH_INTENTS.has(deterministicAction.intent)) {
     action = deterministicAction;
   } else {
     try {
@@ -927,10 +1089,17 @@ export async function handleAssistantChat(
     // ADD TO CART
     // -------------------------------------------------------------------------
     case 'ADD_TO_CART': {
-      const prodName = action.product_name || userText;
-      const matched = matchProductInCatalog(prodName, allProducts);
+      let matched: any[] = [];
+      if (productId) {
+        matched = allProducts.filter((p) => p.id === productId);
+      }
+      if (matched.length === 0) {
+        const prodName = action.product_name || userText;
+        matched = matchProductInCatalog(prodName, allProducts);
+      }
 
       if (matched.length === 0) {
+        const prodName = action.product_name || userText;
         const txt = getLocalizedText(userLang, 'PRODUCT_NOT_FOUND', { prodName });
         res.json({
           success: true,
@@ -946,13 +1115,13 @@ export async function handleAssistantChat(
       }
 
       // If multiple ambiguous matches, ask user to choose
-      if (matched.length > 1 && !action.product_name?.toLowerCase().includes('tomato')) {
+      if (matched.length > 1 && !action.product_name?.toLowerCase().includes('tomato') && !action.product_name?.toLowerCase().includes('banana')) {
         const promptMsg =
           userLang === 'hi-IN'
-            ? `मुझे "${prodName}" के लिए ${matched.length} वस्तुएं मिलीं। आप किसे जोड़ना चाहते हैं?`
+            ? `मुझे "${action.product_name || userText}" के लिए ${matched.length} वस्तुएं मिलीं। आप किसे जोड़ना चाहते हैं?`
             : userLang === 'te-IN'
-            ? `నాకు "${prodName}" కోసం ${matched.length} వస్తువులు దొరికాయి. మీరు దేనిని జోడించాలనుకుంటున్నారు?`
-            : `I found ${matched.length} items matching "${prodName}". Which one would you like to add?`;
+            ? `నాకు "${action.product_name || userText}" కోసం ${matched.length} వస్తువులు దొరికాయి. మీరు దేనిని జోడించాలనుకుంటున్నారు?`
+            : `I found ${matched.length} items matching "${action.product_name || userText}". Which one would you like to add?`;
 
         res.json({
           success: true,
@@ -969,7 +1138,55 @@ export async function handleAssistantChat(
       }
 
       const product = matched[0];
-      const requestedQty = Math.max(1, Number(action.quantity) || 1);
+      const hasMultiplePackSizes = Array.isArray(product.packSizes) && product.packSizes.length > 1;
+
+      // Pack Size & Quantity Resolution
+      const resolvedPack = resolvePackSizeAndQuantity(
+        product,
+        userText,
+        action,
+        bodyPackSize,
+        bodyPrice,
+        bodyQty
+      );
+
+      // If the pack size is unclear, ask customer to select one before adding
+      if (!resolvedPack.resolved && hasMultiplePackSizes) {
+        const packOptionsStr = product.packSizes
+          .map((ps: any) => `${ps.size} (₹${ps.price})`)
+          .join(', ');
+
+        const clarifyMsg =
+          userLang === 'hi-IN'
+            ? `कृपया "${product.title}" के लिए एक पैक साइज़ चुनें। उपलब्ध विकल्प: ${packOptionsStr}।`
+            : userLang === 'te-IN'
+            ? `దయచేసి "${product.title}" కోసం ప్యాక్ సైజును ఎంచుకోండి. అందుబాటులో ఉన్న ఎంపికలు: ${packOptionsStr}.`
+            : `Please select a pack size for "${product.title}". Available options: ${packOptionsStr}.`;
+
+        const clarifySpoken =
+          userLang === 'hi-IN'
+            ? `कृपया "${product.title}" के लिए एक पैक साइज़ चुनें।`
+            : userLang === 'te-IN'
+            ? `దయచేసి "${product.title}" కోసం ఒక ప్యాక్ సైజును ఎంచుకోండి.`
+            : `Please select a pack size for "${product.title}".`;
+
+        res.json({
+          success: true,
+          intent: 'SELECT_PACK_SIZE',
+          actionExecuted: false,
+          cartUpdated: false,
+          language: userLang,
+          products: [product],
+          message: clarifyMsg,
+          spokenMessage: clarifySpoken,
+          quickReplies: product.packSizes.map((ps: any) => `Add ${ps.size} ${product.title}`),
+        });
+        return;
+      }
+
+      const chosenPackSize = resolvedPack.packSize;
+      const chosenPrice = resolvedPack.price;
+      const requestedQty = resolvedPack.quantity;
 
       // Check current available stock in database
       const liveProduct = await findProductInDb(product.id);
@@ -994,8 +1211,9 @@ export async function handleAssistantChat(
       // Fetch existing cart to check cumulative quantity
       const existingCart = await getCartForCustomerInDb(customerId);
       const existingItem = existingCart.find((it) => it.product.id === product.id);
-      const currentCartQty = existingItem ? Number(existingItem.quantity) : 0;
-      const targetQty = currentCartQty + requestedQty;
+      const samePack = existingItem && (!chosenPackSize || existingItem.selectedPackSize === chosenPackSize);
+      const currentCartQty = samePack ? Number(existingItem.quantity) : 0;
+      const targetQty = bodyQty !== undefined ? requestedQty : currentCartQty + requestedQty;
 
       if (targetQty > availableStock) {
         const canAdd = Math.max(0, availableStock - currentCartQty);
@@ -1018,20 +1236,6 @@ export async function handleAssistantChat(
           quickReplies: canAdd > 0 ? [`Add ${canAdd} ${product.unit} ${product.title}`, 'View Cart'] : ['View Cart', 'Show All Products'],
         });
         return;
-      }
-
-      let chosenPackSize = product.unit;
-      let chosenPrice = Number(product.price);
-
-      if (action.unit && Array.isArray(product.packSizes) && product.packSizes.length > 0) {
-        const normUnit = cleanStr(action.unit);
-        const matchingPack = product.packSizes.find((ps: any) =>
-          cleanStr(ps.size).includes(normUnit) || normUnit.includes(cleanStr(ps.size))
-        );
-        if (matchingPack) {
-          chosenPackSize = matchingPack.size;
-          chosenPrice = Number(matchingPack.price);
-        }
       }
 
       // Execute Cart Update in MySQL
@@ -1203,15 +1407,17 @@ export async function handleAssistantChat(
       let subtotal = 0;
       let itemCount = 0;
       let mostExpensive: any = null;
+      let maxItemPrice = 0;
 
       for (const item of cartItems) {
         const qty = Number(item.quantity);
-        const price = Number(item.product.price);
-        subtotal += price * qty;
+        const itemPrice = Number(item.selectedPrice !== undefined && item.selectedPrice !== null ? item.selectedPrice : item.product.price);
+        subtotal += itemPrice * qty;
         itemCount += qty;
 
-        if (!mostExpensive || price > Number(mostExpensive.product.price)) {
+        if (!mostExpensive || itemPrice > maxItemPrice) {
           mostExpensive = item;
+          maxItemPrice = itemPrice;
         }
       }
 
@@ -1219,7 +1425,11 @@ export async function handleAssistantChat(
       const total = subtotal + deliveryFee;
 
       const summaryText = cartItems
-        .map((it) => `• ${it.product.title}: ${it.quantity} × ₹${it.product.price} = ₹${it.quantity * it.product.price}`)
+        .map((it) => {
+          const itPrice = Number(it.selectedPrice !== undefined && it.selectedPrice !== null ? it.selectedPrice : it.product.price);
+          const itPack = it.selectedPackSize ? ` (${it.selectedPackSize})` : '';
+          return `• ${it.product.title}${itPack}: ${it.quantity} × ₹${itPrice} = ₹${it.quantity * itPrice}`;
+        })
         .join('\n');
 
       const txt = getLocalizedText(userLang, 'VIEW_CART_SUMMARY', {
@@ -1294,17 +1504,21 @@ export async function handleAssistantChat(
       const cartItems = await getCartForCustomerInDb(customerId);
       if (cartItems.length > 0) {
         let maxItem = cartItems[0];
+        let maxPrice = Number(maxItem.selectedPrice !== undefined && maxItem.selectedPrice !== null ? maxItem.selectedPrice : maxItem.product.price);
         for (const item of cartItems) {
-          if (Number(item.product.price) > Number(maxItem.product.price)) {
+          const itemPrice = Number(item.selectedPrice !== undefined && item.selectedPrice !== null ? item.selectedPrice : item.product.price);
+          if (itemPrice > maxPrice) {
             maxItem = item;
+            maxPrice = itemPrice;
           }
         }
+        const maxUnit = maxItem.selectedPackSize || maxItem.product.unit;
         const expMsg =
           userLang === 'hi-IN'
-            ? `आपके कार्ट में सबसे महंगा सामान "${maxItem.product.title}" है (₹${maxItem.product.price}/${maxItem.product.unit})।`
+            ? `आपके कार्ट में सबसे महंगा सामान "${maxItem.product.title}" है (₹${maxPrice}/${maxUnit})।`
             : userLang === 'te-IN'
-            ? `మీ కార్ట్‌లో అత్యంత ఖరీదైన వస్తువు "${maxItem.product.title}" (₹${maxItem.product.price}/${maxItem.product.unit}).`
-            : `The most expensive item in your cart is "${maxItem.product.title}" at ₹${maxItem.product.price} per ${maxItem.product.unit}.`;
+            ? `మీ కార్ట్‌లో అత్యంత ఖరీదైన వస్తువు "${maxItem.product.title}" (₹${maxPrice}/${maxUnit}).`
+            : `The most expensive item in your cart is "${maxItem.product.title}" at ₹${maxPrice} per ${maxUnit}.`;
         res.json({
           success: true,
           intent: 'MOST_EXPENSIVE_ITEM',
@@ -1659,7 +1873,7 @@ export async function handleAssistantChat(
 
       const cartItems = await getCartForCustomerInDb(customerId);
       const subtotal = cartItems.reduce(
-        (sum, it) => sum + Number(it.product.price) * Number(it.quantity),
+        (sum, it) => sum + Number(it.selectedPrice !== undefined && it.selectedPrice !== null ? it.selectedPrice : it.product.price) * Number(it.quantity),
         0
       );
 

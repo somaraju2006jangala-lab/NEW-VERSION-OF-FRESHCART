@@ -11,6 +11,7 @@ import {
   Sparkles,
   ShoppingCart,
   Plus,
+  Minus,
   Check,
   AlertCircle,
   Tag,
@@ -59,6 +60,198 @@ const LANGUAGE_OPTIONS = [
   { code: 'hi-IN', label: 'हिन्दी', short: 'HI' },
   { code: 'te-IN', label: 'తెలుగు', short: 'TE' },
 ];
+
+interface AssistantProductCardItemProps {
+  product: AssistantProductCard;
+  onConfirmAdd: (product: AssistantProductCard, quantity: number, packSize: string, price: number) => void;
+  initiallySelecting?: boolean;
+}
+
+const AssistantProductCardItem: React.FC<AssistantProductCardItemProps> = ({
+  product,
+  onConfirmAdd,
+  initiallySelecting = false,
+}) => {
+  const rawPacks =
+    Array.isArray(product.packSizes) && product.packSizes.length > 0
+      ? product.packSizes
+      : [{ size: product.unit || '1 unit', price: product.price }];
+
+  const availablePacks = rawPacks.filter((ps) => ps.isAvailable !== false && ps.stock !== 0);
+  const packsToDisplay = availablePacks.length > 0 ? availablePacks : rawPacks;
+
+  const [isSelecting, setIsSelecting] = useState<boolean>(Boolean(initiallySelecting));
+  const [selectedPackSize, setSelectedPackSize] = useState<string>(packsToDisplay[0]?.size || product.unit || '1 unit');
+  const [selectedPrice, setSelectedPrice] = useState<number>(packsToDisplay[0]?.price ?? product.price);
+  const [quantity, setQuantity] = useState<number>(1);
+
+  if (!isSelecting) {
+    return (
+      <div className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 transition-colors gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {product.image ? (
+            <img
+              src={product.image}
+              alt={product.title}
+              className="w-11 h-11 rounded-lg object-cover bg-white/5 shrink-0"
+            />
+          ) : (
+            <div className="w-11 h-11 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
+              <ShoppingCart className="w-5 h-5 text-emerald-400" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h4 className="text-xs font-semibold text-white truncate">
+                {product.title}
+              </h4>
+              {product.badge && (
+                <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-medium border border-emerald-500/30">
+                  {product.badge}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-emerald-300 font-bold mt-0.5">
+              ₹{selectedPrice}{' '}
+              <span className="text-[10px] text-slate-400 font-normal">
+                / {selectedPackSize}
+              </span>
+              {packsToDisplay.length > 1 && (
+                <span className="ml-1.5 text-[9.5px] font-normal px-1 py-0.2 rounded bg-white/10 text-slate-300">
+                  {packsToDisplay.length} sizes
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsSelecting(true)}
+          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-transform active:scale-95 cursor-pointer shrink-0"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>Add</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 rounded-xl bg-gradient-to-b from-[#112233] to-[#0c1926] border border-emerald-500/40 shadow-lg shadow-emerald-950/30 space-y-2.5 transition-all">
+      {/* Header Row: Thumbnail, Title, Price, Cancel button */}
+      <div className="flex items-start justify-between gap-2 pb-2 border-b border-white/10">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {product.image ? (
+            <img
+              src={product.image}
+              alt={product.title}
+              className="w-10 h-10 rounded-lg object-cover bg-white/5 shrink-0"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
+              <ShoppingCart className="w-4 h-4 text-emerald-400" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <h4 className="text-xs font-bold text-white truncate">
+              {product.title}
+            </h4>
+            <p className="text-xs font-bold text-emerald-400 mt-0.5">
+              ₹{selectedPrice}{' '}
+              <span className="text-[10px] text-slate-400 font-normal">
+                / {selectedPackSize}
+              </span>
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsSelecting(false)}
+          className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+          title="Cancel"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Pack Size Selector */}
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+          <span>Available Pack Sizes:</span>
+          {packsToDisplay.length > 1 && (
+            <span className="text-[10px] text-emerald-300 font-normal">Tap to choose</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {packsToDisplay.map((ps) => {
+            const isChosen = selectedPackSize.toLowerCase() === ps.size.toLowerCase();
+            return (
+              <button
+                type="button"
+                key={ps.size}
+                onClick={() => {
+                  setSelectedPackSize(ps.size);
+                  setSelectedPrice(Number(ps.price));
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  isChosen
+                    ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-400'
+                    : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                }`}
+              >
+                <span>{ps.size}</span>
+                <span className="text-[11px] font-normal opacity-90">₹{ps.price}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Quantity Selector */}
+      <div className="flex items-center justify-between pt-1">
+        <span className="text-[11px] font-semibold text-slate-300">Quantity:</span>
+        <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-2 py-1">
+          <button
+            type="button"
+            onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+            disabled={quantity <= 1}
+            className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
+            title="Decrease quantity"
+          >
+            <Minus className="w-3 h-3" />
+          </button>
+          <span className="w-8 text-center text-xs font-bold text-white select-none">
+            {quantity}
+          </span>
+          <button
+            type="button"
+            onClick={() => setQuantity((q) => q + 1)}
+            className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+            title="Increase quantity"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      {/* Add to Cart Submit Button */}
+      <button
+        type="button"
+        onClick={() => {
+          onConfirmAdd(product, quantity, selectedPackSize, selectedPrice);
+          setIsSelecting(false);
+          setQuantity(1);
+        }}
+        className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/40 transition-transform active:scale-98 cursor-pointer mt-1"
+      >
+        <ShoppingCart className="w-3.5 h-3.5" />
+        <span>Add {quantity} to Cart • ₹{selectedPrice * quantity}</span>
+      </button>
+    </div>
+  );
+};
 
 export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   isOpen,
@@ -394,7 +587,15 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   };
 
   // Typed Chat Send Handler
-  const handleSendMessage = async (textToSend?: string) => {
+  const handleSendMessage = async (
+    textToSend?: string,
+    extraPayload?: {
+      productId?: string;
+      quantity?: number;
+      packSize?: string;
+      price?: number;
+    }
+  ) => {
     const text = (textToSend || inputText).trim();
     if (!text || isLoading) return;
 
@@ -417,7 +618,8 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         text,
         customerToken,
         pendingAction,
-        selectedLanguage
+        selectedLanguage,
+        extraPayload
       );
 
       setPendingAction(response.requiresConfirmation ? response.pendingAction : null);
@@ -512,13 +714,18 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
     });
   };
 
-  // Add Product to Cart from Chat Product Card
-  const handleCardAddToCart = (p: AssistantProductCard) => {
+  // Add Product to Cart with explicit quantity, pack size, and price from selector
+  const handleProductCardConfirmAdd = (
+    p: AssistantProductCard,
+    quantity: number,
+    packSize: string,
+    price: number
+  ) => {
     const fullProduct: Product = {
       id: p.id,
       title: p.title,
-      price: p.price,
-      unit: p.unit,
+      price: price,
+      unit: packSize,
       stock: p.stock,
       image: p.image || '',
       category: p.category || 'produce',
@@ -530,8 +737,13 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
       packSizes: p.packSizes,
     };
 
-    onAddToCart(fullProduct, 1, p.unit, p.price);
-    handleSendMessage(`Add 1 ${p.unit} ${p.title} to my cart`);
+    onAddToCart(fullProduct, quantity, packSize, price);
+    handleSendMessage(`Add ${quantity} ${packSize} ${p.title} to my cart`, {
+      productId: p.id,
+      quantity,
+      packSize,
+      price,
+    });
   };
 
   if (!isOpen) return null;
@@ -829,47 +1041,33 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
 
                       {/* Attached Product Cards */}
                       {msg.products && msg.products.length > 0 && (
-                        <div className="mt-3 space-y-2 pt-2 border-t border-white/10">
-                          {msg.products.slice(0, 4).map((p) => (
-                            <div
-                              key={p.id}
-                              className="flex items-center justify-between p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 transition-colors gap-2"
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                {p.image ? (
-                                  <img
-                                    src={p.image}
-                                    alt={p.title}
-                                    className="w-10 h-10 rounded-lg object-cover bg-white/5 shrink-0"
-                                  />
-                                ) : (
-                                  <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
-                                    <ShoppingCart className="w-5 h-5 text-emerald-400" />
-                                  </div>
-                                )}
-                                <div className="min-w-0">
-                                  <h4 className="text-xs font-semibold text-white truncate">
-                                    {p.title}
-                                  </h4>
-                                  <p className="text-[11px] text-emerald-300 font-bold">
-                                    ₹{p.price}{' '}
-                                    <span className="text-[10px] text-slate-400 font-normal">
-                                      / {p.unit}
-                                    </span>
-                                  </p>
-                                </div>
-                              </div>
+                        <div className="mt-3 pt-2.5 border-t border-white/10">
+                          {/* Total Product Count Header */}
+                          <div className="flex items-center justify-between text-xs text-slate-300 font-semibold px-1 pb-2">
+                            <span className="flex items-center gap-1.5 text-emerald-400">
+                              <ShoppingCart className="w-3.5 h-3.5" />
+                              <span>
+                                {msg.products.length} {msg.products.length === 1 ? 'Product Available' : 'Products in Catalogue'}
+                              </span>
+                            </span>
+                            {msg.products.length > 3 && (
+                              <span className="text-[10.5px] text-slate-400 font-normal">
+                                Scroll down to browse all
+                              </span>
+                            )}
+                          </div>
 
-                              <button
-                                type="button"
-                                onClick={() => handleCardAddToCart(p)}
-                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-transform active:scale-95 cursor-pointer shrink-0"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Add</span>
-                              </button>
-                            </div>
-                          ))}
+                          {/* Vertically scrollable catalogue list displaying all products */}
+                          <div className="max-h-[380px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                            {msg.products.map((p) => (
+                              <AssistantProductCardItem
+                                key={p.id}
+                                product={p}
+                                onConfirmAdd={handleProductCardConfirmAdd}
+                                initiallySelecting={msg.products?.length === 1 && msg.requiresConfirmation !== true}
+                              />
+                            ))}
+                          </div>
                         </div>
                       )}
 
