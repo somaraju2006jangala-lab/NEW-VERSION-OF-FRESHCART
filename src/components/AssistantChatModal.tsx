@@ -30,6 +30,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { Product, CartItem } from '../types';
+import { INITIAL_PRODUCTS } from '../data/products';
 import {
   AssistantMessage,
   AssistantProductCard,
@@ -58,13 +59,194 @@ interface AssistantChatModalProps {
   setSessionMessages: React.Dispatch<React.SetStateAction<AssistantMessage[]>>;
 }
 
-const QUICK_ACTIONS = [
+export const CONSISTENT_QUICK_ACTIONS = [
   'Show All Products',
-  'View Vegetables',
-  'View Fruits',
-  'View Deals',
+  'Produce & Fruit',
+  'Dairy & Eggs',
+  'Bakery',
+  'Beverages',
+  'Snacks',
+  'Rice & Grains',
+  'Pantry',
   'View Cart',
-];
+] as const;
+
+export const CATEGORY_ACTION_MAP: Record<string, { category: string; label: string }> = {
+  'Produce & Fruit': { category: 'produce', label: 'Produce & Fruit' },
+  'Dairy & Eggs': { category: 'dairy', label: 'Dairy & Eggs' },
+  'Bakery': { category: 'bakery', label: 'Bakery' },
+  'Beverages': { category: 'beverages', label: 'Beverages' },
+  'Snacks': { category: 'snacks', label: 'Snacks' },
+  'Rice & Grains': { category: 'grains', label: 'Rice & Grains' },
+  'Pantry': { category: 'pantry', label: 'Pantry' },
+};
+
+export interface DynamicCategoryItem {
+  id: string;
+  label: string;
+  count: number;
+}
+
+export function formatCategoryTitle(cat?: string): string {
+  if (!cat) return 'Category';
+  return cat
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+export function getCanonicalCategoryInfo(product: Product): { id: string; label: string } {
+  const rawCat = (product.category || '').trim();
+  const lowerCat = rawCat.toLowerCase();
+  const rawLabel = (product.categoryLabel || '').trim();
+  const lowerLabel = rawLabel.toLowerCase();
+
+  // 1. Standard category: Produce & Fruit
+  if (
+    lowerCat === 'produce' ||
+    lowerCat === 'fruits' ||
+    lowerCat === 'fruit' ||
+    lowerCat === 'vegetables' ||
+    lowerCat === 'vegetable' ||
+    lowerCat === 'veggies' ||
+    lowerCat.includes('produce') ||
+    lowerLabel.includes('produce') ||
+    lowerLabel.includes('fruits & veg') ||
+    lowerLabel.includes('fruits & veggies') ||
+    lowerLabel.includes('produce & fruit')
+  ) {
+    return { id: 'produce', label: 'Produce & Fruit' };
+  }
+
+  // 2. Standard category: Dairy & Eggs
+  if (
+    lowerCat === 'dairy' ||
+    lowerCat === 'eggs' ||
+    lowerCat === 'egg' ||
+    lowerCat.includes('dairy') ||
+    lowerLabel.includes('dairy') ||
+    lowerLabel.includes('dairy & eggs')
+  ) {
+    return { id: 'dairy', label: 'Dairy & Eggs' };
+  }
+
+  // 3. Standard category: Bakery
+  if (
+    lowerCat === 'bakery' ||
+    lowerCat === 'bread' ||
+    lowerCat.includes('bakery') ||
+    lowerLabel.includes('bakery')
+  ) {
+    return { id: 'bakery', label: 'Bakery' };
+  }
+
+  // 4. Standard category: Beverages
+  if (
+    lowerCat === 'beverages' ||
+    lowerCat === 'beverage' ||
+    lowerCat === 'drinks' ||
+    lowerCat.includes('beverage') ||
+    lowerLabel.includes('beverage')
+  ) {
+    return { id: 'beverages', label: 'Beverages' };
+  }
+
+  // 5. Standard category: Snacks
+  if (
+    lowerCat === 'snacks' ||
+    lowerCat === 'snack' ||
+    lowerCat.includes('snack') ||
+    lowerLabel.includes('snack')
+  ) {
+    return { id: 'snacks', label: 'Snacks' };
+  }
+
+  // 6. Standard category: Rice & Grains
+  if (
+    lowerCat === 'grains' ||
+    lowerCat === 'grain' ||
+    lowerCat === 'rice' ||
+    lowerCat.includes('grain') ||
+    lowerLabel.includes('grains') ||
+    lowerLabel.includes('rice & grains')
+  ) {
+    return { id: 'grains', label: 'Rice & Grains' };
+  }
+
+  // 7. Standard category: Pantry
+  if (
+    lowerCat === 'pantry' ||
+    lowerCat.includes('pantry') ||
+    lowerLabel.includes('pantry') ||
+    lowerCat === 'oil' ||
+    lowerCat.includes('oil')
+  ) {
+    return { id: 'pantry', label: 'Pantry' };
+  }
+
+  // 8. Dynamic / Custom Category (e.g. 'Personal Care', 'Household', etc.)
+  const slugId = lowerCat.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'custom';
+  let displayLabel = rawLabel;
+  if (!displayLabel || displayLabel.toLowerCase() === slugId) {
+    displayLabel = formatCategoryTitle(rawCat);
+  }
+
+  return { id: slugId, label: displayLabel };
+}
+
+export function deriveAvailableCategories(products?: Product[]): DynamicCategoryItem[] {
+  const safeProducts = Array.isArray(products) && products.length > 0 ? products : INITIAL_PRODUCTS;
+  const categoryMap = new Map<string, { label: string; count: number }>();
+
+  // Canonical presentation order for standard categories
+  const standardOrder = ['produce', 'dairy', 'bakery', 'beverages', 'snacks', 'grains', 'pantry'];
+
+  for (const p of safeProducts) {
+    if (!p) continue;
+    const { id, label } = getCanonicalCategoryInfo(p);
+    const existing = categoryMap.get(id);
+    if (existing) {
+      existing.count += 1;
+      if (p.categoryLabel && existing.label.toLowerCase() === id) {
+        existing.label = p.categoryLabel;
+      }
+    } else {
+      categoryMap.set(id, { label, count: 1 });
+    }
+  }
+
+  const result: DynamicCategoryItem[] = [];
+
+  // 1. Add standard categories that currently have products in catalogue
+  for (const stdId of standardOrder) {
+    const item = categoryMap.get(stdId);
+    if (item && item.count > 0) {
+      result.push({
+        id: stdId,
+        label: item.label,
+        count: item.count,
+      });
+      categoryMap.delete(stdId);
+    }
+  }
+
+  // 2. Add custom categories that currently have products in catalogue (sorted alphabetically)
+  const customItems: DynamicCategoryItem[] = [];
+  for (const [id, item] of categoryMap.entries()) {
+    if (item.count > 0) {
+      customItems.push({
+        id,
+        label: item.label,
+        count: item.count,
+      });
+    }
+  }
+  customItems.sort((a, b) => a.label.localeCompare(b.label));
+  result.push(...customItems);
+
+  return result;
+}
 
 const LANGUAGE_OPTIONS = [
   { code: 'en-IN', label: 'English', short: 'EN' },
@@ -602,7 +784,8 @@ const AssistantProductCatalogSection: React.FC<AssistantProductCatalogSectionPro
   onConfirmAdd,
   initiallySelecting = false,
 }) => {
-  const BATCH_SIZE = 15;
+  // Ensure all category matching products display directly (up to 50); smooth batching for larger collections
+  const BATCH_SIZE = 50;
 
   // Deduplicate products by stable product ID
   const uniqueProducts = React.useMemo(() => {
@@ -903,6 +1086,27 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
     voiceManagerRef.current?.setLanguage(selectedLanguage);
   }, [selectedLanguage]);
 
+  // Dynamically derive catalogue categories from the single source of truth (Customer Portal catalogue)
+  const availableCategories = React.useMemo(() => {
+    return deriveAvailableCategories(
+      catalogProducts && catalogProducts.length > 0 ? catalogProducts : INITIAL_PRODUCTS
+    );
+  }, [catalogProducts]);
+
+  // Dynamic quick actions: Show All Products, followed by every dynamic category button, ending with View Cart
+  const dynamicQuickActions = React.useMemo(() => {
+    return [
+      { id: '__all__', label: 'Show All Products', type: 'all' as const },
+      ...availableCategories.map((cat) => ({
+        id: cat.id,
+        label: cat.label,
+        type: 'category' as const,
+        count: cat.count,
+      })),
+      { id: '__cart__', label: 'View Cart', type: 'cart' as const },
+    ];
+  }, [availableCategories]);
+
   // Initial welcome message for current session if empty
   useEffect(() => {
     if (sessionMessages.length === 0) {
@@ -918,11 +1122,29 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
 • "Show my cart and calculate total"
 • "Apply coupon SAVE10"`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          quickReplies: QUICK_ACTIONS,
+          quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         },
       ]);
     }
   }, [customerName, sessionMessages.length, setSessionMessages]);
+
+  // Synchronize consistent quick replies on the welcome message
+  useEffect(() => {
+    setSessionMessages((prev) => {
+      const welcomeIndex = prev.findIndex((m) => m.id === 'welcome-msg');
+      if (welcomeIndex === -1) return prev;
+      const currentReplies = prev[welcomeIndex].quickReplies;
+      const newReplies = [...CONSISTENT_QUICK_ACTIONS];
+      if (
+        currentReplies &&
+        currentReplies.length === newReplies.length &&
+        currentReplies.every((r, idx) => r === newReplies[idx])
+      ) {
+        return prev;
+      }
+      return prev.map((m, idx) => (idx === welcomeIndex ? { ...m, quickReplies: newReplies } : m));
+    });
+  }, [setSessionMessages]);
 
   // Auto-scroll chat area
   useEffect(() => {
@@ -1121,9 +1343,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         totalProductsCount: response.totalProducts ?? (products ? products.length : undefined),
         hasMoreProducts: response.hasMore,
         nextOffset: response.offset,
-        quickReplies:
-          response.quickReplies ||
-          (products && products.length > 0 ? ['View Cart', 'Show Vegetables'] : undefined),
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         requiresConfirmation: response.requiresConfirmation,
         pendingAction: response.pendingAction,
         cartSummary: response.cartSummary,
@@ -1194,6 +1414,10 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
       packSize?: string;
       price?: number;
       image?: string;
+      intent?: string;
+      category?: string;
+      categoryLabel?: string;
+      [key: string]: any;
     }
   ) => {
     const text = (textToSend || inputText).trim();
@@ -1248,7 +1472,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
           spokenMessage: response.spokenMessage || response.message,
           language: response.language || selectedLanguage,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          quickReplies: response.quickReplies || ['Show All Products', 'View Cart'],
+          quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         };
         setSessionMessages((prev) => [...prev, errorMsg]);
         return;
@@ -1297,9 +1521,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         totalProductsCount: response.totalProducts ?? (products ? products.length : undefined),
         hasMoreProducts: response.hasMore,
         nextOffset: response.offset,
-        quickReplies:
-          response.quickReplies ||
-          (products && products.length > 0 ? ['View Cart', 'Show Vegetables'] : undefined),
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         requiresConfirmation: response.requiresConfirmation,
         pendingAction: response.pendingAction,
         cartSummary: response.cartSummary,
@@ -1328,10 +1550,40 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         sender: 'assistant',
         text: 'Sorry, I encountered an issue processing your request. Please try again.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       };
       setSessionMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Universal quick action click handler for consistent 9 buttons & dynamic categories
+  const handleActionClick = (actionLabel: string) => {
+    if (actionLabel === 'View Cart') {
+      onNavigateToCart();
+    } else if (actionLabel === 'Show All Products') {
+      handleSendMessage('Show All Products', { intent: 'SHOW_ALL_PRODUCTS' });
+    } else if (CATEGORY_ACTION_MAP[actionLabel]) {
+      const cat = CATEGORY_ACTION_MAP[actionLabel];
+      handleSendMessage(cat.label, {
+        intent: 'SHOW_CATEGORY',
+        category: cat.category,
+        categoryLabel: cat.label,
+      });
+    } else {
+      const matchingCat = availableCategories.find(
+        (c) => c.label.toLowerCase() === actionLabel.toLowerCase()
+      );
+      if (matchingCat) {
+        handleSendMessage(matchingCat.label, {
+          intent: 'SHOW_CATEGORY',
+          category: matchingCat.id,
+          categoryLabel: matchingCat.label,
+        });
+      } else {
+        handleSendMessage(actionLabel);
+      }
     }
   };
 
@@ -1469,7 +1721,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         spokenMessage: response.spokenMessage || response.message,
         language: response.language || selectedLanguage,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        quickReplies: ['View Cart', 'Show All Products'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         cartSummary: response.cartSummary,
       };
 
@@ -1886,20 +2138,14 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Quick Action Chips attached to message */}
-                  {msg.quickReplies && msg.quickReplies.length > 0 && (
+                  {/* Quick Action Chips attached to message - show after every assistant response */}
+                  {msg.sender === 'assistant' && (
                     <div className="flex flex-wrap gap-1.5 mt-2 ml-9">
-                      {msg.quickReplies.map((qr, idx) => (
+                      {CONSISTENT_QUICK_ACTIONS.map((qr, idx) => (
                         <button
                           key={idx}
                           type="button"
-                          onClick={() => {
-                            if (qr === 'View Cart') {
-                              onNavigateToCart();
-                            } else {
-                              handleSendMessage(qr);
-                            }
-                          }}
+                          onClick={() => handleActionClick(qr)}
                           className="px-3 py-1 rounded-full text-[11px] font-medium bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/60 transition-all cursor-pointer hover:-translate-y-0.5 active:translate-y-0"
                         >
                           {qr}
@@ -1959,22 +2205,17 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
             </div>
           )}
 
-          {/* Quick Action Chips Bar */}
+          {/* Quick Action Chips Bar: Always display consistent quick actions in exact order */}
           <div className="px-3 py-2 border-t border-white/10 bg-white/[0.02] flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-            {QUICK_ACTIONS.map((action, idx) => (
+            {CONSISTENT_QUICK_ACTIONS.map((actionLabel) => (
               <button
-                key={idx}
+                key={actionLabel}
                 type="button"
-                onClick={() => {
-                  if (action === 'View Cart') {
-                    onNavigateToCart();
-                  } else {
-                    handleSendMessage(action);
-                  }
-                }}
+                id={`ai-assistant-quick-${actionLabel.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
+                onClick={() => handleActionClick(actionLabel)}
                 className="px-2.5 py-1 rounded-xl text-[11px] font-medium text-slate-300 bg-white/5 hover:bg-emerald-500/20 hover:text-emerald-300 border border-white/10 hover:border-emerald-500/40 whitespace-nowrap transition-all cursor-pointer"
               >
-                {action}
+                {actionLabel}
               </button>
             ))}
           </div>

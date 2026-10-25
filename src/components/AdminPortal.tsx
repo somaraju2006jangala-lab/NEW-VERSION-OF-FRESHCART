@@ -4956,6 +4956,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       <AddProductModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        allCategories={allCatalogCategories}
         onAddProduct={(newProd) => {
           onAddProduct(newProd);
           setPulseToast(`Added "${newProd.title}" (₹${newProd.price} / ${newProd.unit}) to store`);

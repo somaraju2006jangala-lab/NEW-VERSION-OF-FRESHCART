@@ -65,6 +65,7 @@ export interface AssistantStructuredAction {
   unit?: string;
   pack_size?: string;
   category?: string;
+  categoryLabel?: string;
   price_limit?: number;
   budget_limit?: number;
   coupon_code?: string;
@@ -100,6 +101,18 @@ export interface AssistantApiResponse {
   suggestedAction?: 'ADD_TO_CART' | 'VIEW_CART' | 'APPLY_COUPON' | 'NONE';
   error?: string;
 }
+
+export const CONSISTENT_QUICK_ACTIONS = [
+  'Show All Products',
+  'Produce & Fruit',
+  'Dairy & Eggs',
+  'Bakery',
+  'Beverages',
+  'Snacks',
+  'Rice & Grains',
+  'Pantry',
+  'View Cart',
+] as const;
 
 // In-memory set to prevent duplicate additions caused by repeated clicks or request retries
 const confirmedGroceryLists = new Set<string>();
@@ -173,9 +186,9 @@ INTENTS:
 8. SHOW_ALL_PRODUCTS: When customer asks to browse everything.
    e.g. "Show all products", "View catalogue", "सभी उत्पाद दिखाओ", "అన్ని ఉత్పత్తులు చూపించు"
    Fields: intent: "SHOW_ALL_PRODUCTS"
-9. SHOW_CATEGORY: When customer wants to see a category.
-   e.g. "Show vegetables", "Show fruits", "Show dairy products", "सब्जियां", "కూరగాయలు"
-   Fields: intent: "SHOW_CATEGORY", category: string ("vegetables" | "fruits" | "dairy" | "bakery" | "beverages" | "grains" | "snacks" | "pantry")
+9. SHOW_CATEGORY: When customer wants to see products in a category.
+   e.g. "Show vegetables", "Show fruits", "Show dairy products", "Show personal care", "सब्जियां", "కూరగాయలు"
+   Fields: intent: "SHOW_CATEGORY", category: string (the category name or slug)
 10. FILTER_PRICE: When customer wants products below a price limit.
     e.g. "Show products under ₹100", "100 रुपये से कम", "100 రూపాయల లోపు"
     Fields: intent: "FILTER_PRICE", price_limit: number
@@ -694,7 +707,7 @@ No markdown formatting, no code fences, no extra text.
  * Intelligent deterministic NLP parser fallback.
  * Ensures 100% reliability if Gemini is unavailable or rate-limited.
  */
-function parseIntentDeterministically(text: string): AssistantStructuredAction {
+function parseIntentDeterministically(text: string, allProducts?: any[]): AssistantStructuredAction {
   // Normalize spoken numbers and phrases: "two dozen" -> "2 dozen", "half dozen" -> "1/2 dozen", "a dozen" -> "1 dozen"
   const normalizedText = text
     .replace(/\b(?:two)\b|(?:दो|రెండు)/gi, '2')
@@ -847,30 +860,52 @@ function parseIntentDeterministically(text: string): AssistantStructuredAction {
     return { intent: 'SHOW_LESS' };
   }
 
+  // Dynamic categories detection from catalogue products (including custom & admin-added categories e.g. 'Personal Care', 'Household')
+  const normUserText = t.replace(/[-_&/\s]+/g, '');
+  if (allProducts && allProducts.length > 0) {
+    for (const p of allProducts) {
+      const pCat = String(p.category || '').trim();
+      const pLabel = String(p.categoryLabel || '').trim();
+      const normCat = pCat.toLowerCase().replace(/[-_&/\s]+/g, '');
+      const normLabel = pLabel.toLowerCase().replace(/[-_&/\s]+/g, '');
+
+      // Check if user query matches the custom/catalogue category
+      if (normCat && normCat.length >= 3 && (normUserText.includes(normCat) || (normCat.length > 5 && normCat.includes(normUserText)))) {
+        return { intent: 'SHOW_CATEGORY', category: pCat, categoryLabel: pLabel || pCat };
+      }
+      if (normLabel && normLabel.length >= 3 && (normUserText.includes(normLabel) || (normLabel.length > 5 && normLabel.includes(normUserText)))) {
+        return { intent: 'SHOW_CATEGORY', category: pCat || pLabel, categoryLabel: pLabel || pCat };
+      }
+    }
+  }
+
   // Categories (English, Hindi, Telugu)
   if (t.includes('vegetable') || t.includes('veggie') || t.includes('सब्जी') || t.includes('सब्जियां') || t.includes('కూరగాయలు') || t.includes('కూరగాయ')) {
-    return { intent: 'SHOW_CATEGORY', category: 'vegetables' };
+    return { intent: 'SHOW_CATEGORY', category: 'vegetables', categoryLabel: 'Vegetables' };
   }
   if (t.includes('fruit') || t.includes('फल') || t.includes('పండ్లు') || t.includes('పండు')) {
-    return { intent: 'SHOW_CATEGORY', category: 'fruits' };
+    return { intent: 'SHOW_CATEGORY', category: 'fruits', categoryLabel: 'Fruits' };
   }
-  if ((t.includes('dairy') || t.includes('milk') || t.includes('दूध') || t.includes('పాలు')) && !t.includes('add') && !t.includes('remove') && !t.includes('जोड़') && !t.includes('వేయి')) {
-    return { intent: 'SHOW_CATEGORY', category: 'dairy' };
+  if (t.includes('produce') || normUserText.includes('producefruit') || t.includes('ताज़ा') || t.includes('తాజా')) {
+    return { intent: 'SHOW_CATEGORY', category: 'produce', categoryLabel: 'Produce & Fruit' };
+  }
+  if ((t.includes('dairy') || t.includes('milk') || t.includes('egg') || normUserText.includes('dairyeggs') || t.includes('दूध') || t.includes('పాలు')) && !t.includes('add') && !t.includes('remove') && !t.includes('जोड़') && !t.includes('వేయి')) {
+    return { intent: 'SHOW_CATEGORY', category: 'dairy', categoryLabel: 'Dairy & Eggs' };
   }
   if ((t.includes('bakery') || t.includes('bread') || t.includes('ब्रेड') || t.includes('రొట్టె')) && !t.includes('add')) {
-    return { intent: 'SHOW_CATEGORY', category: 'bakery' };
+    return { intent: 'SHOW_CATEGORY', category: 'bakery', categoryLabel: 'Bakery' };
   }
-  if ((t.includes('beverage') || t.includes('juice') || t.includes('जूस') || t.includes('రసం')) && !t.includes('add')) {
-    return { intent: 'SHOW_CATEGORY', category: 'beverages' };
+  if ((t.includes('beverage') || t.includes('juice') || t.includes('drink') || t.includes('जूस') || t.includes('రసం')) && !t.includes('add')) {
+    return { intent: 'SHOW_CATEGORY', category: 'beverages', categoryLabel: 'Beverages' };
   }
   if (t.includes('snack') || t.includes('नाश्ता') || t.includes('స్నాక్స్')) {
-    return { intent: 'SHOW_CATEGORY', category: 'snacks' };
+    return { intent: 'SHOW_CATEGORY', category: 'snacks', categoryLabel: 'Snacks' };
   }
-  if (t.includes('grain') || t.includes('rice') || t.includes('अनाज') || t.includes('चावल') || t.includes('బియ్యం') || t.includes('ధాన్యాలు')) {
-    return { intent: 'SHOW_CATEGORY', category: 'grains' };
+  if (t.includes('grain') || t.includes('rice') || normUserText.includes('ricegrains') || t.includes('अनाज') || t.includes('चावल') || t.includes('బియ్యం') || t.includes('ధాన్యాలు')) {
+    return { intent: 'SHOW_CATEGORY', category: 'grains', categoryLabel: 'Rice & Grains' };
   }
-  if (t.includes('produce') || t.includes('ताज़ा') || t.includes('తాజా')) {
-    return { intent: 'SHOW_CATEGORY', category: 'produce' };
+  if (t.includes('pantry') || normUserText.includes('pantry') || t.includes('oil') || t.includes('तेल') || t.includes('నూనె') || t.includes('पैंट्री') || t.includes('ప్యాంట్రీ')) {
+    return { intent: 'SHOW_CATEGORY', category: 'pantry', categoryLabel: 'Pantry' };
   }
 
   // Show all products
@@ -1477,6 +1512,15 @@ export async function handleAssistantChat(
   res: Response,
   authCustomer: { authenticated: boolean; customerId: string; name?: string }
 ): Promise<void> {
+  // Guarantee that every assistant response always carries the exact 9 consistent quick actions
+  const originalJson = res.json.bind(res);
+  res.json = (body: any) => {
+    if (body && typeof body === 'object' && body.intent !== 'AUTH_REQUIRED') {
+      body.quickReplies = [...CONSISTENT_QUICK_ACTIONS];
+    }
+    return originalJson(body);
+  };
+
   const startTime = Date.now();
   const customerId = authCustomer.customerId;
 
@@ -1498,6 +1542,9 @@ export async function handleAssistantChat(
     quantity: bodyQty,
     packSize: bodyPackSize,
     price: bodyPrice,
+    intent: bodyIntent,
+    category: bodyCategory,
+    categoryLabel: bodyCategoryLabel,
   } = req.body || {};
   const userText = (message || '').trim();
 
@@ -1608,22 +1655,7 @@ export async function handleAssistantChat(
       return;
     }
 
-    let quickReplies = visionResult.suggestedReplies;
-    if (!quickReplies || quickReplies.length === 0) {
-      if (visionResult.matchedProducts.length > 0) {
-        quickReplies = userLang === 'hi-IN'
-          ? ['कार्ट देखें', 'सभी उत्पाद', 'सब्जियां']
-          : userLang === 'te-IN'
-          ? ['కార్ట్ చూడండి', 'అన్ని ఉత్పత్తులు', 'కూరగాయలు']
-          : ['View Cart', 'Show All Products', 'View Deals'];
-      } else {
-        quickReplies = userLang === 'hi-IN'
-          ? ['सभी उत्पाद', 'सब्जियां', 'फल']
-          : userLang === 'te-IN'
-          ? ['అన్ని ఉత్పత్తులు', 'కూరగాయలు', 'పండ్లు']
-          : ['Show All Products', 'View Vegetables', 'View Fruits'];
-      }
-    }
+    const quickReplies = [...CONSISTENT_QUICK_ACTIONS];
 
     // If image was a recognized grocery shopping list, return review structure without adding to cart
     if (visionResult.isGroceryList && visionResult.groceryListReview) {
@@ -1814,7 +1846,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: txt.display,
         spokenMessage: txt.spoken,
-        quickReplies: userLang === 'hi-IN' ? ['सभी उत्पाद', 'सब्जियां', 'फल'] : userLang === 'te-IN' ? ['అన్ని ఉత్పత్తులు', 'కూరగాయలు', 'పండ్లు'] : ['Show All Products', 'View Vegetables', 'View Fruits', 'View Deals'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     } else {
@@ -1832,7 +1864,7 @@ export async function handleAssistantChat(
   }
 
   // 2. Identify Structured Action: Fast-path for quick action commands, Gemini AI for conversational queries
-  const deterministicAction = parseIntentDeterministically(userText);
+  const deterministicAction = parseIntentDeterministically(userText, allProducts);
   let action: AssistantStructuredAction | null = null;
 
   const FAST_PATH_INTENTS = new Set([
@@ -1853,6 +1885,16 @@ export async function handleAssistantChat(
     action = {
       intent: 'ADD_TO_CART',
       quantity: bodyQty ? Number(bodyQty) : 1,
+    };
+  } else if (bodyIntent === 'SHOW_CATEGORY' && (bodyCategory || userText)) {
+    action = {
+      intent: 'SHOW_CATEGORY',
+      category: bodyCategory || userText,
+      categoryLabel: bodyCategoryLabel,
+    };
+  } else if (bodyIntent === 'SHOW_ALL_PRODUCTS') {
+    action = {
+      intent: 'SHOW_ALL_PRODUCTS',
     };
   } else if (deterministicAction && FAST_PATH_INTENTS.has(deterministicAction.intent)) {
     action = deterministicAction;
@@ -1899,7 +1941,7 @@ export async function handleAssistantChat(
           language: userLang,
           message: txt.display,
           spokenMessage: txt.spoken,
-          quickReplies: userLang === 'hi-IN' ? ['सभी उत्पाद', 'सब्जियां', 'फल'] : userLang === 'te-IN' ? ['అన్ని ఉత్పత్తులు', 'కూరగాయలు', 'పండ్లు'] : ['Show All Products', 'View Vegetables', 'View Fruits'],
+          quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         });
         return;
       }
@@ -2051,7 +2093,7 @@ export async function handleAssistantChat(
         products: [product],
         message: txt.display,
         spokenMessage: txt.spoken,
-        quickReplies: userLang === 'hi-IN' ? ['कार्ट देखें', 'सब्जियां', 'फल', 'कार्ट टोटल'] : userLang === 'te-IN' ? ['కార్ట్ చూపించు', 'కూరగాయలు', 'పండ్లు', 'మొత్తం'] : ['View Cart', 'Show Vegetables', 'Show Fruits', 'Calculate cart total'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }
@@ -2189,7 +2231,7 @@ export async function handleAssistantChat(
           language: userLang,
           message: txt.display,
           spokenMessage: txt.spoken,
-          quickReplies: userLang === 'hi-IN' ? ['सभी उत्पाद', 'सब्जियां', 'फल'] : userLang === 'te-IN' ? ['అన్ని ఉత్పత్తులు', 'కూరగాయలు', 'పండ్లు'] : ['Show All Products', 'View Vegetables', 'View Fruits', 'View Deals'],
+          quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         });
         return;
       }
@@ -2266,7 +2308,7 @@ export async function handleAssistantChat(
           cartItems: updatedCart,
           message: txt.display,
           spokenMessage: txt.spoken,
-          quickReplies: ['Show All Products', 'View Vegetables', 'View Fruits'],
+          quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         });
         return;
       }
@@ -2364,7 +2406,7 @@ export async function handleAssistantChat(
           language: userLang,
           message: notFoundSearch,
           spokenMessage: notFoundSearch,
-          quickReplies: ['Show All Products', 'View Vegetables', 'View Fruits'],
+          quickReplies: [...CONSISTENT_QUICK_ACTIONS],
         });
         return;
       }
@@ -2409,7 +2451,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: allMsg,
         spokenMessage: allMsg,
-        quickReplies: ['View Vegetables', 'View Fruits', 'View Deals', 'View Cart'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }
@@ -2440,7 +2482,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: moreMsg,
         spokenMessage: moreMsg,
-        quickReplies: offset + nextBatch.length < total ? ['Show more', 'View Cart'] : ['View Cart', 'Show Vegetables'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }
@@ -2463,7 +2505,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: lessMsg,
         spokenMessage: lessMsg,
-        quickReplies: ['Show more', 'View Cart'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }
@@ -2472,11 +2514,12 @@ export async function handleAssistantChat(
     // SHOW CATEGORY (Vegetables, Fruits, Dairy, Bakery, Beverages, Snacks, Grains, etc.)
     // -------------------------------------------------------------------------
     case 'SHOW_CATEGORY': {
-      const cat = cleanStr(action.category);
+      const rawCat = String(action.category || '').trim();
+      const normCat = rawCat.toLowerCase().replace(/[-_&/\s]+/g, '');
       let filtered: any[] = [];
-      let catLabel = 'Produce';
+      let catLabel = action.categoryLabel || rawCat || 'Category';
 
-      if (cat === 'vegetables' || cat === 'vegetable' || cat === 'veggies') {
+      if (normCat === 'vegetables' || normCat === 'vegetable' || normCat === 'veggies') {
         catLabel = userLang === 'hi-IN' ? 'सब्जियां' : userLang === 'te-IN' ? 'కూరగాయలు' : 'Vegetables';
         filtered = allProducts.filter((p) => {
           const pCat = cleanStr(p.category);
@@ -2488,7 +2531,7 @@ export async function handleAssistantChat(
           }
           return false;
         });
-      } else if (cat === 'fruits' || cat === 'fruit') {
+      } else if (normCat === 'fruits' || normCat === 'fruit') {
         catLabel = userLang === 'hi-IN' ? 'फल' : userLang === 'te-IN' ? 'పండ్లు' : 'Fruits';
         filtered = allProducts.filter((p) => {
           const pCat = cleanStr(p.category);
@@ -2500,28 +2543,99 @@ export async function handleAssistantChat(
           }
           return false;
         });
-      } else if (cat === 'dairy') {
-        catLabel = userLang === 'hi-IN' ? 'डेयरी उत्पाद' : userLang === 'te-IN' ? 'పాల ఉత్పత్తులు' : 'Dairy & Eggs';
-        filtered = allProducts.filter((p) => cleanStr(p.category) === 'dairy' || cleanStr(p.categoryLabel).includes('dairy') || cleanStr(p.categoryLabel).includes('egg'));
-      } else if (cat === 'bakery') {
-        catLabel = userLang === 'hi-IN' ? 'बेकरी' : userLang === 'te-IN' ? 'బేకరీ' : 'Bakery';
-        filtered = allProducts.filter((p) => cleanStr(p.category) === 'bakery' || cleanStr(p.categoryLabel).includes('bakery') || cleanStr(p.categoryLabel).includes('bread'));
-      } else if (cat === 'beverages' || cat === 'beverage' || cat === 'drinks') {
-        catLabel = userLang === 'hi-IN' ? 'पेय पदार्थ' : userLang === 'te-IN' ? 'పానీయాలు' : 'Beverages';
-        filtered = allProducts.filter((p) => cleanStr(p.category) === 'beverages' || cleanStr(p.category) === 'beverage' || cleanStr(p.categoryLabel).includes('beverage') || cleanStr(p.categoryLabel).includes('drink'));
-      } else if (cat === 'snacks' || cat === 'snack') {
-        catLabel = userLang === 'hi-IN' ? 'स्नैक्स' : userLang === 'te-IN' ? 'స్నాక్స్' : 'Snacks';
-        filtered = allProducts.filter((p) => cleanStr(p.category) === 'snacks' || cleanStr(p.category) === 'snack' || cleanStr(p.categoryLabel).includes('snack'));
-      } else if (cat === 'grains' || cat === 'grain' || cat === 'rice') {
-        catLabel = userLang === 'hi-IN' ? 'अनाज व चावल' : userLang === 'te-IN' ? 'ధాన్యాలు & బియ్యం' : 'Rice & Grains';
-        filtered = allProducts.filter((p) => cleanStr(p.category) === 'grains' || cleanStr(p.category) === 'grain' || cleanStr(p.categoryLabel).includes('grain') || cleanStr(p.categoryLabel).includes('rice'));
-      } else {
-        catLabel = cat.charAt(0).toUpperCase() + cat.slice(1);
+      } else if (normCat === 'produce' || normCat === 'producefruit' || normCat === 'fruitsveg' || normCat === 'fruitsveggies') {
+        catLabel = userLang === 'hi-IN' ? 'फल व सब्जियां' : userLang === 'te-IN' ? 'తాజా ఉత్పత్తులు' : 'Produce & Fruit';
         filtered = allProducts.filter((p) => {
-          const pCat = cleanStr(p.category);
-          const pLabel = cleanStr(p.categoryLabel);
-          return pCat === cat || pLabel === cat || pCat.includes(cat) || pLabel.includes(cat);
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return (
+            pNormCat === 'produce' ||
+            pNormCat === 'fruits' ||
+            pNormCat === 'vegetables' ||
+            pNormLabel.includes('produce') ||
+            pNormLabel.includes('fruit') ||
+            pNormLabel.includes('veg')
+          );
         });
+      } else if (normCat === 'dairy' || normCat === 'dairyeggs' || normCat === 'eggs' || normCat === 'egg') {
+        catLabel = userLang === 'hi-IN' ? 'डेयरी व अंडे' : userLang === 'te-IN' ? 'పాల ఉత్పత్తులు & గుడ్లు' : 'Dairy & Eggs';
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return (
+            pNormCat === 'dairy' ||
+            pNormCat === 'eggs' ||
+            pNormCat === 'egg' ||
+            pNormLabel.includes('dairy') ||
+            pNormLabel.includes('egg')
+          );
+        });
+      } else if (normCat === 'bakery' || normCat === 'bread') {
+        catLabel = userLang === 'hi-IN' ? 'बेकरी' : userLang === 'te-IN' ? 'బేకరీ' : 'Bakery';
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return pNormCat === 'bakery' || pNormCat === 'bread' || pNormLabel.includes('bakery') || pNormLabel.includes('bread');
+        });
+      } else if (normCat === 'beverages' || normCat === 'beverage' || normCat === 'drinks' || normCat === 'drink') {
+        catLabel = userLang === 'hi-IN' ? 'पेय पदार्थ' : userLang === 'te-IN' ? 'పానీయాలు' : 'Beverages';
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return pNormCat === 'beverages' || pNormCat === 'beverage' || pNormCat === 'drink' || pNormLabel.includes('beverage') || pNormLabel.includes('drink');
+        });
+      } else if (normCat === 'snacks' || normCat === 'snack') {
+        catLabel = userLang === 'hi-IN' ? 'स्नैक्स' : userLang === 'te-IN' ? 'స్నాక్స్' : 'Snacks';
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return pNormCat === 'snacks' || pNormCat === 'snack' || pNormLabel.includes('snack');
+        });
+      } else if (normCat === 'grains' || normCat === 'grain' || normCat === 'rice' || normCat === 'ricegrains') {
+        catLabel = userLang === 'hi-IN' ? 'अनाज व चावल' : userLang === 'te-IN' ? 'ధాన్యాలు & బియ్యం' : 'Rice & Grains';
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return pNormCat === 'grains' || pNormCat === 'grain' || pNormCat === 'rice' || pNormLabel.includes('grain') || pNormLabel.includes('rice');
+        });
+      } else if (normCat === 'pantry' || normCat.includes('pantry') || normCat.includes('oil')) {
+        catLabel = userLang === 'hi-IN' ? 'पैंट्री' : userLang === 'te-IN' ? 'ప్యాంట్రీ' : 'Pantry';
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return (
+            pNormCat === 'pantry' ||
+            pNormCat.includes('pantry') ||
+            pNormLabel.includes('pantry') ||
+            pNormCat.includes('oil') ||
+            pNormLabel.includes('oil')
+          );
+        });
+      } else {
+        // Dynamic / Custom Category matching (e.g. personal-care, Personal Care, Household, etc.)
+        filtered = allProducts.filter((p) => {
+          const pNormCat = String(p.category || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          const pNormLabel = String(p.categoryLabel || '').toLowerCase().replace(/[-_&/\s]+/g, '');
+          return (
+            pNormCat === normCat ||
+            pNormLabel === normCat ||
+            (normCat.length >= 3 && (pNormCat.includes(normCat) || normCat.includes(pNormCat))) ||
+            (normCat.length >= 3 && (pNormLabel.includes(normCat) || normCat.includes(pNormLabel)))
+          );
+        });
+
+        if (!catLabel || catLabel.toLowerCase().replace(/[-_&/\s]+/g, '') === normCat) {
+          const matchedWithLabel = filtered.find((p) => p.categoryLabel);
+          if (matchedWithLabel && matchedWithLabel.categoryLabel) {
+            catLabel = matchedWithLabel.categoryLabel;
+          } else {
+            catLabel = rawCat
+              .split(/[-_\s]+/)
+              .filter(Boolean)
+              .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+              .join(' ');
+          }
+        }
       }
 
       const catMsg =
@@ -2536,12 +2650,12 @@ export async function handleAssistantChat(
         intent: 'SHOW_CATEGORY',
         products: filtered,
         totalProducts: filtered.length,
-        batchSize: 15,
-        hasMore: filtered.length > 15,
+        batchSize: filtered.length,
+        hasMore: false,
         language: userLang,
         message: catMsg,
         spokenMessage: catMsg,
-        quickReplies: filtered.slice(0, 3).map((p) => `Add ${p.title}`),
+        quickReplies: ['Show All Products', 'View Cart'],
       });
       return;
     }
@@ -2658,7 +2772,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: budgetMsg,
         spokenMessage: spokenBudget,
-        quickReplies: ['Add all to cart', 'View Vegetables', 'View Cart'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }
@@ -2799,7 +2913,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: action.message || defaultGeneral,
         spokenMessage: action.message || defaultGeneral,
-        quickReplies: ['Show All Products', 'View Vegetables', 'View Fruits', 'View Cart', "Show today's deals"],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }

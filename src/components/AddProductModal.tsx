@@ -15,6 +15,7 @@ interface AddProductModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAddProduct: (product: Product) => void;
+  allCategories?: string[];
 }
 
 const CATEGORY_OPTIONS: { id: Product['category']; label: string; aisle: string }[] = [
@@ -84,13 +85,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   isOpen,
   onClose,
   onAddProduct,
+  allCategories = [],
 }) => {
   const { t } = useLanguage();
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState<string>('99');
   const [quantity, setQuantity] = useState<string>('25');
   const [unit, setUnit] = useState<string>('1 kg');
-  const [category, setCategory] = useState<Product['category']>('produce');
+  const [category, setCategory] = useState<string>('produce');
+  const [isNewCategory, setIsNewCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
   const [image, setImage] = useState(PRESET_IMAGES[0].url);
   const [description, setDescription] = useState('');
   const [customUnit, setCustomUnit] = useState('');
@@ -200,7 +204,21 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       return;
     }
 
-    const categoryObj = CATEGORY_OPTIONS.find((c) => c.id === category);
+    let finalCategory = category;
+    let finalCategoryLabel = '';
+
+    if (isNewCategory) {
+      const trimmedNewCat = newCategoryName.trim();
+      if (!trimmedNewCat) {
+        setError('Please enter a new category name.');
+        return;
+      }
+      finalCategory = trimmedNewCat.toLowerCase().replace(/\s+/g, '-');
+      finalCategoryLabel = trimmedNewCat;
+    } else {
+      const categoryObj = CATEGORY_OPTIONS.find((c) => c.id === category);
+      finalCategoryLabel = categoryObj?.aisle || categoryObj?.label || category;
+    }
 
     const validPackSizes = packSizes
       .filter((ps) => ps.size && ps.size.trim() && !isNaN(Number(ps.price)) && Number(ps.price) > 0)
@@ -236,8 +254,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       stock: Math.max(0, numericQty),
       badge: 'Fresh Harvest',
       image: image.trim() || DEFAULT_FALLBACK_IMAGE,
-      category,
-      categoryLabel: categoryObj?.aisle || 'Fresh Produce',
+      category: finalCategory,
+      categoryLabel: finalCategoryLabel,
       description: description.trim(),
       isOrganic: true,
       isQuickPrep: true,
@@ -259,6 +277,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setUnit('1 kg');
     setDescription('');
     setIsCustomUnit(false);
+    setIsNewCategory(false);
+    setNewCategoryName('');
     setPackSizes(getSuggestedPackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce' }));
   };
 
@@ -328,30 +348,65 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 {t('categoryLabel')}
               </label>
               <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as Product['category'])}
+                value={isNewCategory ? '__new__' : category}
+                onChange={(e) => {
+                  if (e.target.value === '__new__') {
+                    setIsNewCategory(true);
+                  } else {
+                    setIsNewCategory(false);
+                    setCategory(e.target.value);
+                  }
+                }}
                 className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
               >
-                {CATEGORY_OPTIONS.map((c) => {
-                  const catLabel =
-                    c.id === 'produce'
-                      ? t('catProduce')
-                      : c.id === 'dairy'
-                      ? t('catDairy')
-                      : c.id === 'bakery'
-                      ? t('catBakery')
-                      : c.id === 'beverages'
-                      ? t('catBeverages')
-                      : c.id === 'snacks'
-                      ? t('catSnacks')
-                      : t('catGrains');
-                  return (
-                    <option key={c.id} value={c.id} className="bg-[#0b121e] text-white">
-                      {catLabel}
-                    </option>
-                  );
-                })}
+                <optgroup label="Standard Categories" className="bg-[#0b121e] text-white">
+                  {CATEGORY_OPTIONS.map((c) => {
+                    const catLabel =
+                      c.id === 'produce'
+                        ? t('catProduce')
+                        : c.id === 'dairy'
+                        ? t('catDairy')
+                        : c.id === 'bakery'
+                        ? t('catBakery')
+                        : c.id === 'beverages'
+                        ? t('catBeverages')
+                        : c.id === 'snacks'
+                        ? t('catSnacks')
+                        : t('catGrains');
+                    return (
+                      <option key={c.id} value={c.id} className="bg-[#0b121e] text-white">
+                        {catLabel}
+                      </option>
+                    );
+                  })}
+                </optgroup>
+                {allCategories.filter((c) => !CATEGORY_OPTIONS.some((co) => co.id === c)).length > 0 && (
+                  <optgroup label="Custom Categories" className="bg-[#0b121e] text-white">
+                    {allCategories
+                      .filter((c) => !CATEGORY_OPTIONS.some((co) => co.id === c))
+                      .map((c) => (
+                        <option key={c} value={c} className="bg-[#0b121e] text-white">
+                          {c}
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
+                <option value="__new__" className="bg-[#0b121e] text-emerald-400 font-semibold">
+                  + Add New Category...
+                </option>
               </select>
+              {isNewCategory && (
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    required
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    placeholder="e.g. Personal Care, Household, Organic Spices"
+                    className="w-full px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="space-y-1">
