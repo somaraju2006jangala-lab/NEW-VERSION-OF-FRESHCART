@@ -563,7 +563,7 @@ export async function initializeDatabase(): Promise<void> {
       price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
       quantity INT NOT NULL DEFAULT 0,
       unit VARCHAR(50) NOT NULL,
-      image TEXT NULL,
+      image MEDIUMTEXT NULL,
       description TEXT NULL,
       sku VARCHAR(100) NULL,
       badge VARCHAR(100) NULL,
@@ -947,6 +947,9 @@ export async function initializeDatabase(): Promise<void> {
   } catch {}
   try {
     await currentPool.query('ALTER TABLE products ADD COLUMN pack_sizes TEXT NULL AFTER badge');
+  } catch {}
+  try {
+    await currentPool.query('ALTER TABLE products MODIFY COLUMN image MEDIUMTEXT NULL');
   } catch {}
   try {
     await currentPool.query(`

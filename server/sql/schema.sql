@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS products (
   price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   quantity INT NOT NULL DEFAULT 0,
   unit VARCHAR(50) NOT NULL,
-  image TEXT NULL,
+  image MEDIUMTEXT NULL,
   description TEXT NULL,
   sku VARCHAR(100) NULL,
   badge VARCHAR(100) NULL,

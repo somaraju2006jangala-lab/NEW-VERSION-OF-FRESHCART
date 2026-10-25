@@ -1,15 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Product, PackSizeOption } from '../types';
 import { useLanguage } from '../context/LanguageContext';
 import {
   STANDARD_UNITS,
-  getSuggestedPackSizesForUnit,
   getQuickAddPresetsForUnit,
   isSamePackSize,
   getPackSizeConversionFactor,
 } from '../utils/packSize';
 export { STANDARD_UNITS };
-import { X, Plus, Image as ImageIcon, Sparkles, Check } from 'lucide-react';
+import { X, Plus, Image as ImageIcon, Check, Upload, Trash2 } from 'lucide-react';
 
 interface AddProductModalProps {
   isOpen: boolean;
@@ -27,57 +26,6 @@ const CATEGORY_OPTIONS: { id: Product['category']; label: string; aisle: string 
   { id: 'grains', label: 'Rice & Grains', aisle: 'Rice & Grains' },
 ];
 
-const PRESET_IMAGES = [
-  {
-    name: 'Rice / Grains',
-    url: 'https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=600&q=80',
-    category: 'grains' as const,
-    unit: '1 kg',
-  },
-  {
-    name: 'Milk / Dairy',
-    url: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=600&q=80',
-    category: 'dairy' as const,
-    unit: '500 ml',
-  },
-  {
-    name: 'Eggs',
-    url: 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?auto=format&fit=crop&w=600&q=80',
-    category: 'dairy' as const,
-    unit: '1 dozen',
-  },
-  {
-    name: 'Bread',
-    url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=600&q=80',
-    category: 'bakery' as const,
-    unit: '1 packet',
-  },
-  {
-    name: 'Apples / Fruits',
-    url: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?auto=format&fit=crop&w=600&q=80',
-    category: 'produce' as const,
-    unit: '1 kg',
-  },
-  {
-    name: 'Vegetables',
-    url: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80',
-    category: 'produce' as const,
-    unit: '500 g',
-  },
-  {
-    name: 'Beverage / Juice',
-    url: 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=600&q=80',
-    category: 'beverages' as const,
-    unit: '1 litre',
-  },
-  {
-    name: 'Snacks / Box',
-    url: 'https://images.unsplash.com/photo-1599599810769-bcde5a160d32?auto=format&fit=crop&w=600&q=80',
-    category: 'snacks' as const,
-    unit: '1 box',
-  },
-];
-
 const DEFAULT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80';
 
@@ -88,90 +36,333 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   allCategories = [],
 }) => {
   const { t } = useLanguage();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [title, setTitle] = useState('');
-  const [price, setPrice] = useState<string>('99');
-  const [quantity, setQuantity] = useState<string>('25');
+  const [price, setPrice] = useState<string>('');
+  const [quantity, setQuantity] = useState<string>('');
   const [unit, setUnit] = useState<string>('1 kg');
   const [category, setCategory] = useState<string>('produce');
   const [isNewCategory, setIsNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [image, setImage] = useState(PRESET_IMAGES[0].url);
+  const [image, setImage] = useState('');
+  const [imagePreview, setImagePreview] = useState('');
+  const [imageFileName, setImageFileName] = useState('');
+  const [imageFileSize, setImageFileSize] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [description, setDescription] = useState('');
   const [customUnit, setCustomUnit] = useState('');
   const [isCustomUnit, setIsCustomUnit] = useState(false);
-  const [packSizes, setPackSizes] = useState<PackSizeOption[]>(() =>
-    getSuggestedPackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce', title: '' })
-  );
+  const [packSizes, setPackSizes] = useState<PackSizeOption[]>([
+    { size: '1 kg', price: 0, stock: 0, isAvailable: true },
+  ]);
   const [error, setError] = useState('');
+
+  // Reset form to a completely clean, fresh state
+  const resetForm = () => {
+    setTitle('');
+    setPrice('');
+    setQuantity('');
+    setUnit('1 kg');
+    setIsCustomUnit(false);
+    setCustomUnit('');
+    setCategory('produce');
+    setIsNewCategory(false);
+    setNewCategoryName('');
+    setImage('');
+    setImagePreview('');
+    setImageFileName('');
+    setImageFileSize('');
+    setIsUploadingImage(false);
+    setDescription('');
+    setError('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    setPackSizes([
+      {
+        size: '1 kg',
+        price: 0,
+        stock: 0,
+        isAvailable: true,
+      },
+    ]);
+  };
+
+  // Reset form whenever the modal is opened
+  useEffect(() => {
+    if (isOpen) {
+      resetForm();
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleApplyPreset = (preset: typeof PRESET_IMAGES[0]) => {
-    setImage(preset.url);
-    setCategory(preset.category);
-    setUnit(preset.unit);
-    setIsCustomUnit(false);
-    const numericPrice = parseFloat(price) || 99;
-    const derived = getSuggestedPackSizesForUnit({
-      unit: preset.unit,
-      price: numericPrice,
-      category: preset.category,
-      title: preset.name,
-    });
-    setPackSizes(derived);
-    if (!description) {
-      setDescription(`Farm fresh ${preset.name.toLowerCase()} sourced daily from local organic producers.`);
-    }
-  };
+  const activeUnit = isCustomUnit ? customUnit.trim() : unit;
+  const quickAddPresets = getQuickAddPresetsForUnit(activeUnit || '1 kg');
 
+  // Handle top-level Unit change (keeps packSizes[0] automatically synchronized)
   const handleUnitChange = (newUnit: string) => {
     setUnit(newUnit);
     setIsCustomUnit(false);
+    setPackSizes((prev) => {
+      const next = [...prev];
+      const numericPrice = parseFloat(price) || 0;
+      const numericQty = quantity !== '' ? parseInt(quantity, 10) || 0 : 0;
+      if (next.length > 0) {
+        next[0] = { ...next[0], size: newUnit, price: numericPrice, stock: numericQty };
+      } else {
+        next.push({ size: newUnit, price: numericPrice, stock: numericQty, isAvailable: true });
+      }
+      // Deduplicate: remove any additional pack sizes that match the new unit
+      return next.filter((ps, idx) => idx === 0 || !isSamePackSize(ps.size, newUnit));
+    });
   };
 
-  const handleCustomUnitApply = () => {
-    // Preserves existing pack sizes; quick add options dynamically update based on customUnit
+  // Handle custom unit changes
+  const handleCustomUnitChange = (newCustomUnit: string) => {
+    setCustomUnit(newCustomUnit);
+    const trimmed = newCustomUnit.trim();
+    if (trimmed) {
+      setPackSizes((prev) => {
+        const next = [...prev];
+        if (next.length > 0) {
+          next[0] = { ...next[0], size: trimmed };
+        }
+        return next.filter((ps, idx) => idx === 0 || !isSamePackSize(ps.size, trimmed));
+      });
+    }
   };
 
+  // Handle top-level Price change (maps to packSizes[0].price)
+  const handlePriceChange = (newPrice: string) => {
+    setPrice(newPrice);
+    const num = parseFloat(newPrice) || 0;
+    setPackSizes((prev) => {
+      if (prev.length === 0) return prev;
+      const next = [...prev];
+      next[0] = { ...next[0], price: num };
+      return next;
+    });
+  };
+
+  // Handle top-level Stock Quantity change (maps to packSizes[0].stock)
+  const handleQuantityChange = (newQty: string) => {
+    setQuantity(newQty);
+    const num = newQty !== '' ? Math.max(0, parseInt(newQty, 10) || 0) : 0;
+    setPackSizes((prev) => {
+      if (prev.length === 0) return prev;
+      const next = [...prev];
+      next[0] = { ...next[0], stock: num };
+      return next;
+    });
+  };
+
+  // Handle editing pack-size price in the pack sizes section
+  const handlePackSizePriceChange = (idx: number, newPriceVal: number) => {
+    setPackSizes((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], price: newPriceVal };
+      return next;
+    });
+    // If editing the first pack size, sync with top-level price
+    if (idx === 0) {
+      setPrice(newPriceVal > 0 ? String(newPriceVal) : '');
+    }
+  };
+
+  // Handle editing pack-size stock in the pack sizes section
+  const handlePackSizeStockChange = (idx: number, newStockVal: number | undefined) => {
+    setPackSizes((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], stock: newStockVal };
+      return next;
+    });
+    // If editing the first pack size, sync with top-level stock
+    if (idx === 0) {
+      setQuantity(newStockVal !== undefined ? String(newStockVal) : '');
+    }
+  };
+
+  // Handle editing pack size name
+  const handlePackSizeNameChange = (idx: number, newName: string) => {
+    setPackSizes((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], size: newName };
+      return next;
+    });
+    if (idx === 0) {
+      if (isCustomUnit) {
+        setCustomUnit(newName);
+      } else {
+        setUnit(newName);
+      }
+    }
+  };
+
+  // Add an additional pack size row (independent price & stock, no duplicates)
+  const handleAddPackSizeRow = () => {
+    const existingSizes = packSizes.map((ps) => ps.size.trim().toLowerCase());
+    const availablePreset = quickAddPresets.find((p) => !existingSizes.includes(p.toLowerCase()));
+
+    const newSize = availablePreset || '';
+    const numericPrice = parseFloat(price) || 0;
+    let initialPrice = numericPrice;
+    if (newSize) {
+      const factor = getPackSizeConversionFactor(newSize, activeUnit);
+      if (factor && factor > 0 && numericPrice > 0) {
+        initialPrice = Math.max(1, Math.round(numericPrice * factor));
+      }
+    }
+
+    setPackSizes((prev) => [
+      ...prev,
+      {
+        size: newSize,
+        price: initialPrice,
+        stock: quantity !== '' ? Math.max(0, parseInt(quantity, 10) || 0) : undefined,
+        isAvailable: true,
+      },
+    ]);
+  };
+
+  // Add a specific preset pack size via quick-add (independent price & stock, prevents duplicates)
   const handleAddPresetPackSize = (preset: string) => {
     const alreadyAdded = packSizes.some((ps) => isSamePackSize(ps.size, preset));
     if (alreadyAdded) return;
 
-    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
-    const numericPrice = parseFloat(price) || 99;
+    const numericPrice = parseFloat(price) || 0;
     let newPrice = numericPrice;
-    const factor = getPackSizeConversionFactor(preset, selectedUnit);
-    if (factor && factor > 0) {
+    const factor = getPackSizeConversionFactor(preset, activeUnit);
+    if (factor && factor > 0 && numericPrice > 0) {
       newPrice = Math.max(1, Math.round(numericPrice * factor));
     }
 
     setPackSizes((prev) => [
       ...prev,
-      { size: preset, price: newPrice, isAvailable: true },
+      {
+        size: preset,
+        price: newPrice,
+        stock: quantity !== '' ? Math.max(0, parseInt(quantity, 10) || 0) : undefined,
+        isAvailable: true,
+      },
     ]);
   };
 
-  const handleRegeneratePackSizes = () => {
-    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
-    const numericPrice = parseFloat(price) || 99;
-    const derived = getSuggestedPackSizesForUnit({
-      unit: selectedUnit || '1 kg',
-      price: numericPrice,
-      category,
-      title,
-    });
-    setPackSizes(derived);
+  // Remove an additional pack size row (default pack size at index 0 cannot be removed)
+  const handleRemovePackSizeRow = (idx: number) => {
+    if (idx === 0) return;
+    setPackSizes((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleAddPackSizeRow = () => {
-    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
-    const numericPrice = parseFloat(price) || 99;
-    setPackSizes([
-      ...packSizes,
-      { size: selectedUnit || '1 unit', price: numericPrice, isAvailable: true },
-    ]);
+  // Image Upload handler (supports JPG, JPEG, PNG, WebP)
+  const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError('');
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+    const lowerName = file.name.toLowerCase();
+    const hasValidExt = validExtensions.some((ext) => lowerName.endsWith(ext));
+    const hasValidMime = validMimes.includes(file.type.toLowerCase());
+
+    if (!hasValidMime && !hasValidExt) {
+      setError('Please select a valid image file (JPG, JPEG, PNG, or WebP).');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image file must be under 5MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setIsUploadingImage(true);
+    const sizeInKb = Math.round(file.size / 1024);
+    const formattedSize = sizeInKb > 1024 ? `${(sizeInKb / 1024).toFixed(1)} MB` : `${sizeInKb} KB`;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (!dataUrl) {
+        setError('Failed to read image file.');
+        setIsUploadingImage(false);
+        return;
+      }
+
+      // Optimize image size using an off-screen canvas if image exceeds 1200px
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1200;
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              const outputMime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+              const optimized = canvas.toDataURL(outputMime, 0.88);
+              setImage(optimized);
+              setImagePreview(optimized);
+              setImageFileName(file.name);
+              setImageFileSize(formattedSize);
+              setIsUploadingImage(false);
+              return;
+            }
+          }
+          setImage(dataUrl);
+          setImagePreview(dataUrl);
+          setImageFileName(file.name);
+          setImageFileSize(formattedSize);
+        } catch {
+          setImage(dataUrl);
+          setImagePreview(dataUrl);
+          setImageFileName(file.name);
+          setImageFileSize(formattedSize);
+        } finally {
+          setIsUploadingImage(false);
+        }
+      };
+      img.onerror = () => {
+        setImage(dataUrl);
+        setImagePreview(dataUrl);
+        setImageFileName(file.name);
+        setImageFileSize(formattedSize);
+        setIsUploadingImage(false);
+      };
+      img.src = dataUrl;
+    };
+    reader.onerror = () => {
+      setError('Error reading file from device.');
+      setIsUploadingImage(false);
+    };
+    reader.readAsDataURL(file);
   };
 
+  // Remove the selected image
+  const handleRemoveImage = () => {
+    setImage('');
+    setImagePreview('');
+    setImageFileName('');
+    setImageFileSize('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Submit product creation
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -204,6 +395,28 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       return;
     }
 
+    // Validate all pack sizes
+    for (let i = 0; i < packSizes.length; i++) {
+      const ps = packSizes[i];
+      if (!ps.size || !ps.size.trim()) {
+        setError(`Please enter a pack size name for pack size #${i + 1}.`);
+        return;
+      }
+      const pNum = Number(ps.price);
+      if (isNaN(pNum) || pNum <= 0) {
+        setError(`Pack size "${ps.size}" must have a valid price greater than ₹0.`);
+        return;
+      }
+    }
+
+    // Check for duplicate pack sizes
+    const sizeNames = packSizes.map((ps) => ps.size.trim().toLowerCase());
+    const duplicate = sizeNames.find((name, idx) => sizeNames.indexOf(name) !== idx);
+    if (duplicate) {
+      setError(`Duplicate pack size "${duplicate}" found. Each pack size must be unique.`);
+      return;
+    }
+
     let finalCategory = category;
     let finalCategoryLabel = '';
 
@@ -220,29 +433,19 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       finalCategoryLabel = categoryObj?.aisle || categoryObj?.label || category;
     }
 
-    const validPackSizes = packSizes
-      .filter((ps) => ps.size && ps.size.trim() && !isNaN(Number(ps.price)) && Number(ps.price) > 0)
-      .map((ps) => ({
-        size: ps.size.trim(),
-        price: Math.max(1, Math.round(Number(ps.price) || 0)),
-        isAvailable: ps.isAvailable !== false && (ps as any).available !== false,
-        stock:
-          ps.stock !== undefined && ps.stock !== null && String(ps.stock).trim() !== '' && !isNaN(Number(ps.stock))
-            ? Math.max(0, Math.floor(Number(ps.stock)))
-            : undefined,
-      }));
+    const finalPackSizes = packSizes.map((ps, idx) => ({
+      size: ps.size.trim(),
+      price: Math.max(1, Math.round(Number(ps.price) || numericPrice)),
+      isAvailable: ps.isAvailable !== false,
+      stock:
+        idx === 0
+          ? numericQty
+          : ps.stock !== undefined && String(ps.stock).trim() !== '' && !isNaN(Number(ps.stock))
+          ? Math.max(0, Math.floor(Number(ps.stock)))
+          : undefined,
+    }));
 
-    const finalPackSizes =
-      validPackSizes.length > 0
-        ? validPackSizes
-        : [
-            {
-              size: selectedUnit,
-              price: numericPrice,
-              isAvailable: true,
-              stock: Math.max(0, numericQty),
-            },
-          ];
+    const finalImage = (image || imagePreview || DEFAULT_FALLBACK_IMAGE).trim();
 
     const newProduct: Product = {
       id: `prod-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -253,7 +456,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       unit: selectedUnit,
       stock: Math.max(0, numericQty),
       badge: 'Fresh Harvest',
-      image: image.trim() || DEFAULT_FALLBACK_IMAGE,
+      image: finalImage,
       category: finalCategory,
       categoryLabel: finalCategoryLabel,
       description: description.trim(),
@@ -269,21 +472,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
     onAddProduct(newProduct);
     onClose();
-
-    // Reset form
-    setTitle('');
-    setPrice('99');
-    setQuantity('25');
-    setUnit('1 kg');
-    setDescription('');
-    setIsCustomUnit(false);
-    setIsNewCategory(false);
-    setNewCategoryName('');
-    setPackSizes(getSuggestedPackSizesForUnit({ unit: '1 kg', price: 99, category: 'produce' }));
+    resetForm();
   };
-
-  const activeUnit = isCustomUnit ? customUnit : unit;
-  const quickAddPresets = getQuickAddPresetsForUnit(activeUnit);
 
   return (
     <div
@@ -463,8 +653,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   <input
                     type="text"
                     value={customUnit}
-                    onChange={(e) => setCustomUnit(e.target.value)}
-                    onBlur={handleCustomUnitApply}
+                    onChange={(e) => handleCustomUnitChange(e.target.value)}
                     placeholder="e.g. 500 g, 1 kg, 1 L, 1 dozen"
                     className="flex-1 px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                   />
@@ -499,7 +688,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   step="1"
                   required
                   value={price}
-                  onChange={(e) => setPrice(e.target.value)}
+                  onChange={(e) => handlePriceChange(e.target.value)}
                   placeholder="e.g. 80"
                   className="w-full pl-7 pr-3 py-2 text-[13px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
                 />
@@ -516,7 +705,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 step="1"
                 required
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                onChange={(e) => handleQuantityChange(e.target.value)}
                 placeholder="e.g. 50"
                 className="w-full px-3 py-2 text-[13px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
               />
@@ -582,24 +771,33 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
               {packSizes.map((ps, idx) => {
                 const isAvail = ps.isAvailable !== false && (ps as any).available !== false;
+                const isDefaultPackSize = idx === 0;
+
                 return (
                   <div
                     key={idx}
-                    className="p-2.5 rounded-xl border border-white/10 bg-black/60 flex flex-col sm:flex-row sm:items-center gap-2 shadow-xs"
+                    className={`p-2.5 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-2 shadow-xs transition-colors ${
+                      isDefaultPackSize
+                        ? 'border-emerald-500/40 bg-emerald-950/15'
+                        : 'border-white/10 bg-black/60'
+                    }`}
                   >
                     {/* Size Input */}
                     <div className="flex-1 min-w-[110px]">
-                      <label className="text-[10px] font-semibold text-slate-400 block mb-0.5">
-                        Pack Size
-                      </label>
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <label className="text-[10px] font-semibold text-slate-400 block">
+                          Pack Size
+                        </label>
+                        {isDefaultPackSize && (
+                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-1 py-0.2 rounded">
+                            Default
+                          </span>
+                        )}
+                      </div>
                       <input
                         type="text"
                         value={ps.size}
-                        onChange={(e) => {
-                          const next = [...packSizes];
-                          next[idx] = { ...next[idx], size: e.target.value };
-                          setPackSizes(next);
-                        }}
+                        onChange={(e) => handlePackSizeNameChange(idx, e.target.value)}
                         placeholder="e.g. 500 g, 1 litre"
                         className="w-full px-2.5 py-1 text-[12px] font-semibold border border-white/15 rounded-lg bg-black/70 text-white focus:ring-1 focus:ring-emerald-500"
                       />
@@ -617,11 +815,11 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                         <input
                           type="number"
                           min="1"
-                          value={ps.price}
+                          value={ps.price || ''}
+                          placeholder={isDefaultPackSize && price ? price : '0'}
                           onChange={(e) => {
-                            const next = [...packSizes];
-                            next[idx] = { ...next[idx], price: Number(e.target.value) || 0 };
-                            setPackSizes(next);
+                            const val = Number(e.target.value) || 0;
+                            handlePackSizePriceChange(idx, val);
                           }}
                           className="w-full pl-5 pr-2 py-1 text-[12px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/70 text-white focus:ring-1 focus:ring-emerald-500"
                         />
@@ -636,17 +834,29 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                       <input
                         type="number"
                         min="0"
-                        value={ps.stock !== undefined ? ps.stock : ''}
-                        placeholder="Mapped"
-                        title="Pack-size specific stock (or leave blank for mapped product inventory)"
+                        value={
+                          isDefaultPackSize
+                            ? quantity !== ''
+                              ? quantity
+                              : ps.stock !== undefined
+                              ? ps.stock
+                              : ''
+                            : ps.stock !== undefined
+                            ? ps.stock
+                            : ''
+                        }
+                        placeholder={isDefaultPackSize && quantity ? quantity : 'Mapped'}
+                        title={
+                          isDefaultPackSize
+                            ? 'Mapped to top-level Stock Quantity'
+                            : 'Pack-size specific stock (or leave blank for mapped product inventory)'
+                        }
                         onChange={(e) => {
-                          const next = [...packSizes];
                           const val =
                             e.target.value.trim() === ''
                               ? undefined
                               : Math.max(0, parseInt(e.target.value, 10) || 0);
-                          next[idx] = { ...next[idx], stock: val };
-                          setPackSizes(next);
+                          handlePackSizeStockChange(idx, val);
                         }}
                         className="w-full px-2 py-1 text-[12px] font-bold tabular-nums border border-white/15 rounded-lg bg-black/70 text-white placeholder-slate-500 focus:ring-1 focus:ring-emerald-500"
                       />
@@ -684,14 +894,16 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
                       <button
                         type="button"
-                        disabled={packSizes.length <= 1}
-                        onClick={() => {
-                          setPackSizes(packSizes.filter((_, i) => i !== idx));
-                        }}
-                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/10 disabled:opacity-30 cursor-pointer transition-colors"
-                        title="Remove this pack size"
+                        disabled={isDefaultPackSize || packSizes.length <= 1}
+                        onClick={() => handleRemovePackSizeRow(idx)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                        title={
+                          isDefaultPackSize
+                            ? 'Default pack size cannot be removed'
+                            : 'Remove this pack size'
+                        }
                       >
-                        <X className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -700,51 +912,95 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             </div>
           </div>
 
-          {/* Image & Quick Presets */}
+          {/* Product Image Upload Field */}
           <div className="space-y-2 border border-white/10 rounded-xl p-3.5 bg-black/50 backdrop-blur-xs">
             <div className="flex items-center justify-between">
               <label className="text-[12px] font-semibold text-slate-200 flex items-center gap-1.5">
                 <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
-                {t('presetImageLabel')}
+                <span>Product Image</span>
               </label>
+              <span className="text-[11px] text-slate-400">
+                JPG, JPEG, PNG, WebP (Max 5MB)
+              </span>
             </div>
 
-            <div className="flex gap-2 items-center">
-              <input
-                type="url"
-                required
-                value={image}
-                onChange={(e) => setImage(e.target.value)}
-                placeholder="https://images.unsplash.com/..."
-                className="flex-1 px-3 py-2 text-[12px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
-              />
-              <img
-                src={image || DEFAULT_FALLBACK_IMAGE}
-                alt="Preview"
-                className="w-10 h-10 rounded-lg object-cover border border-white/15 bg-black/70 shrink-0"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = DEFAULT_FALLBACK_IMAGE;
-                }}
-              />
-            </div>
+            <input
+              ref={fileInputRef}
+              id="add-product-file-upload"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+              onChange={handleImageFileSelect}
+              className="hidden"
+            />
 
-            {/* Quick 1-Click Preset Images */}
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {PRESET_IMAGES.map((preset) => (
+            {imagePreview ? (
+              /* Selected Image Preview with Change & Remove options */
+              <div className="flex items-center gap-3 p-3 rounded-xl border border-emerald-500/30 bg-emerald-950/20">
+                <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-white/20 bg-black/70 shrink-0 flex items-center justify-center shadow-inner">
+                  <img
+                    id="add-product-image-preview"
+                    src={imagePreview}
+                    alt="Product preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-bold text-white truncate">
+                    {imageFileName || 'Uploaded product image'}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    {imageFileSize ? `${imageFileSize} • ` : ''}Ready to save
+                  </p>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <button
+                      type="button"
+                      id="change-product-image-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-2.5 py-1 rounded-md bg-white/10 hover:bg-white/20 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Upload className="w-3 h-3 text-emerald-400" />
+                      <span>Change Image</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="remove-product-image-btn"
+                      onClick={handleRemoveImage}
+                      className="px-2.5 py-1 rounded-md bg-red-950/40 hover:bg-red-900/50 text-red-300 text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer border border-red-500/30"
+                    >
+                      <X className="w-3 h-3" />
+                      <span>Remove</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Empty upload area with Upload Product Image button */
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 rounded-xl border border-dashed border-white/20 bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 shrink-0">
+                    <ImageIcon className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-slate-200">
+                      No image selected
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Upload a JPG, JPEG, PNG, or WebP photo of your product
+                    </p>
+                  </div>
+                </div>
                 <button
-                  key={preset.name}
                   type="button"
-                  onClick={() => handleApplyPreset(preset)}
-                  className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
-                    image === preset.url
-                      ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-300 font-semibold'
-                      : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20 hover:text-white'
-                  }`}
+                  id="upload-product-image-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploadingImage}
+                  className="w-full sm:w-auto px-4 py-2 rounded-lg bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-300 border border-emerald-500/40 text-[12px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                 >
-                  {preset.name}
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>{isUploadingImage ? 'Reading...' : 'Upload Product Image'}</span>
                 </button>
-              ))}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Description */}
@@ -773,7 +1029,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-lg bg-[#006b2c] hover:bg-[#00873a] text-white text-[13px] font-semibold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+              className="px-5 py-2 rounded-lg bg-[#006b2c] hover:bg-[#00873a] text-white text-[13px] font-semibold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
             >
               <Plus className="w-4 h-4" />
               <span>{t('addProductSubmitBtn')}</span>
