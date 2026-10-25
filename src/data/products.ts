@@ -1,4 +1,4 @@
-import { Product, AisleCategory, InventoryLog } from '../types';
+import { Product, AisleCategory, InventoryLog } from '../types.ts';
 
 export const BRAND_LOGO_URL =
   'https://lh3.googleusercontent.com/aida/AEtjO1XWFjhwVkrqsNNnsbRTMlCzyq4xDD-h9Ok0eQxj-IwtFrXyFXNWx-jClqwJQ8vTYJ7dKP5QCdCgImgQIT_tQwoZpq_TwYD8qUdYFUKGcPIDdtR8Z2bUqmXn0XWfKjE4gBExTDU3sqpl-ui8h59Y7Dp56Wow_PzpI1_0r8zsUtyKTNNzl2E-TAMSXS_bP58X8E_ceP4m1yruX9vcTjRn4brSknIGPHRFbDVsLBcGHVssSRYesZYHqtG0BA';

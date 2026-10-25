@@ -26,6 +26,7 @@ import {
   updateCustomerProfileInDb,
   addCustomerAddressInDb,
   getProductsFromDb,
+  getProductsCountFromDb,
   findProductInDb,
   createProductInDb,
   updateProductInDb,
@@ -932,9 +933,21 @@ apiRouter.get(['/api/products', '/products'], async (req: Request, res: Response
   try {
     const category = (req.query.category as string) || '';
     const search = (req.query.search as string) || (req.query.q as string) || '';
+    const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
 
-    const products = await getProductsFromDb({ category, search });
-    sendJson(res, 200, { success: true, products });
+    const [products, total] = await Promise.all([
+      getProductsFromDb({ category, search, limit, offset }),
+      getProductsCountFromDb({ category, search }),
+    ]);
+    console.log('[Diagnostic Stage 3: /api/products] Returned products count:', products.length, 'total:', total, 'IDs:', products.map((p) => p.id));
+    sendJson(res, 200, {
+      success: true,
+      products,
+      count: products.length,
+      total,
+      hasMore: limit !== undefined ? (Number(offset || 0) + products.length < total) : false,
+    });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve products.' });
   }

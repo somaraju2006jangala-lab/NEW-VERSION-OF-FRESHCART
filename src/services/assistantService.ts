@@ -74,6 +74,10 @@ export interface AssistantMessage {
     total: number;
     mostExpensiveItem?: any;
   };
+  totalProductsCount?: number;
+  hasMoreProducts?: boolean;
+  nextOffset?: number;
+  categoryFilter?: string;
 }
 
 export interface AssistantChatResponse {
@@ -100,6 +104,10 @@ export interface AssistantChatResponse {
   pendingAction?: any;
   quickReplies?: string[];
   error?: string;
+  totalProducts?: number;
+  hasMore?: boolean;
+  offset?: number;
+  batchSize?: number;
 }
 
 /**

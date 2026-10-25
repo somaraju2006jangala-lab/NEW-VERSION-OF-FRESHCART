@@ -11,6 +11,7 @@ import {
   findCouponByCodeInDb,
   getSettingsFromDb,
 } from './db.ts';
+import { INITIAL_PRODUCTS } from '../src/data/products.ts';
 
 // Verified Gemini Live API models for real-time voice streaming
 export const GEMINI_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
@@ -49,6 +50,8 @@ export interface AssistantStructuredAction {
     | 'CLEAR_CART'
     | 'SEARCH_PRODUCTS'
     | 'SHOW_ALL_PRODUCTS'
+    | 'SHOW_MORE'
+    | 'SHOW_LESS'
     | 'SHOW_CATEGORY'
     | 'FILTER_PRICE'
     | 'SHOW_DEALS'
@@ -826,6 +829,24 @@ function parseIntentDeterministically(text: string): AssistantStructuredAction {
     }
   }
 
+  // Show more / next products batch
+  if (
+    t.includes('show more') ||
+    t.includes('load more') ||
+    t.includes('more product') ||
+    t.includes('next batch') ||
+    t.includes('next product') ||
+    t.includes('और दिखाओ') ||
+    t.includes('ఇంకా చూపించు')
+  ) {
+    return { intent: 'SHOW_MORE' };
+  }
+
+  // Show less
+  if (t.includes('show less') || t.includes('कम दिखाओ') || t.includes('తక్కువ చూపించు')) {
+    return { intent: 'SHOW_LESS' };
+  }
+
   // Categories (English, Hindi, Telugu)
   if (t.includes('vegetable') || t.includes('veggie') || t.includes('सब्जी') || t.includes('सब्जियां') || t.includes('కూరగాయలు') || t.includes('కూరగాయ')) {
     return { intent: 'SHOW_CATEGORY', category: 'vegetables' };
@@ -833,7 +854,7 @@ function parseIntentDeterministically(text: string): AssistantStructuredAction {
   if (t.includes('fruit') || t.includes('फल') || t.includes('పండ్లు') || t.includes('పండు')) {
     return { intent: 'SHOW_CATEGORY', category: 'fruits' };
   }
-  if ((t.includes('dairy') || t.includes('milk') || t.includes('दूध') || t.includes('पాలు')) && !t.includes('add') && !t.includes('remove') && !t.includes('जोड़') && !t.includes('వేయి')) {
+  if ((t.includes('dairy') || t.includes('milk') || t.includes('दूध') || t.includes('పాలు')) && !t.includes('add') && !t.includes('remove') && !t.includes('जोड़') && !t.includes('వేయి')) {
     return { intent: 'SHOW_CATEGORY', category: 'dairy' };
   }
   if ((t.includes('bakery') || t.includes('bread') || t.includes('ब्रेड') || t.includes('రొట్టె')) && !t.includes('add')) {
@@ -841,6 +862,15 @@ function parseIntentDeterministically(text: string): AssistantStructuredAction {
   }
   if ((t.includes('beverage') || t.includes('juice') || t.includes('जूस') || t.includes('రసం')) && !t.includes('add')) {
     return { intent: 'SHOW_CATEGORY', category: 'beverages' };
+  }
+  if (t.includes('snack') || t.includes('नाश्ता') || t.includes('స్నాక్స్')) {
+    return { intent: 'SHOW_CATEGORY', category: 'snacks' };
+  }
+  if (t.includes('grain') || t.includes('rice') || t.includes('अनाज') || t.includes('चावल') || t.includes('బియ్యం') || t.includes('ధాన్యాలు')) {
+    return { intent: 'SHOW_CATEGORY', category: 'grains' };
+  }
+  if (t.includes('produce') || t.includes('ताज़ा') || t.includes('తాజా')) {
+    return { intent: 'SHOW_CATEGORY', category: 'produce' };
   }
 
   // Show all products
@@ -982,9 +1012,13 @@ function matchProductInCatalog(searchName: string, allProducts: any[]): any[] {
   const term = cleanStr(searchName);
   if (!term) return [];
 
-  // 1. Exact match on title or id
+  // 1. Exact match on title, name, id, or sku
   const exact = allProducts.filter(
-    (p) => cleanStr(p.title) === term || cleanStr(p.name) === term || cleanStr(p.id) === term
+    (p) =>
+      cleanStr(p.title) === term ||
+      cleanStr(p.name) === term ||
+      cleanStr(p.id) === term ||
+      cleanStr(p.sku) === term
   );
   if (exact.length > 0) return exact;
 
@@ -994,7 +1028,10 @@ function matchProductInCatalog(searchName: string, allProducts: any[]): any[] {
       cleanStr(p.title).includes(term) ||
       cleanStr(p.name).includes(term) ||
       cleanStr(p.description).includes(term) ||
-      cleanStr(p.sku).includes(term)
+      cleanStr(p.sku).includes(term) ||
+      cleanStr(p.supplier).includes(term) ||
+      cleanStr(p.category).includes(term) ||
+      cleanStr(p.categoryLabel).includes(term)
   );
   if (contains.length > 0) return contains;
 
@@ -1002,7 +1039,7 @@ function matchProductInCatalog(searchName: string, allProducts: any[]): any[] {
   const words = term.split(/\s+/).filter((w) => w.length > 2);
   if (words.length > 0) {
     const wordMatches = allProducts.filter((p) => {
-      const full = `${cleanStr(p.title)} ${cleanStr(p.description)} ${cleanStr(p.category)}`;
+      const full = `${cleanStr(p.title)} ${cleanStr(p.name)} ${cleanStr(p.description)} ${cleanStr(p.category)} ${cleanStr(p.categoryLabel)} ${cleanStr(p.supplier)} ${cleanStr(p.sku)}`;
       return words.some((w) => full.includes(w));
     });
     if (wordMatches.length > 0) return wordMatches;
@@ -1477,7 +1514,73 @@ export async function handleAssistantChat(
   const userLang = detectLanguage(userText, language);
 
   // Load live catalog and store settings from MySQL
-  const allProducts = await getProductsFromDb();
+  const dbProducts = await getProductsFromDb();
+  console.log('[Diagnostic Stage 5: Assistant Backend MySQL Query] Products count:', dbProducts.length, 'IDs:', dbProducts.map((p) => p.id));
+
+  // Build complete unified catalogue matching the Customer Portal:
+  // 1. MySQL database products
+  // 2. Client catalog products passed from Customer Portal frontend state (req.body.catalogProducts)
+  // 3. INITIAL_PRODUCTS (ensuring complete catalogue accessibility even if DB has only a subset)
+  const allProducts: any[] = [...dbProducts];
+  const seenIds = new Set<string>(dbProducts.map((p) => String(p.id || p.product_id)));
+
+  const clientProducts = Array.isArray(req.body?.catalogProducts) ? req.body.catalogProducts : [];
+  for (const cp of clientProducts) {
+    const cId = String(cp.id || cp.product_id);
+    if (cId && !seenIds.has(cId)) {
+      seenIds.add(cId);
+      allProducts.push({
+        id: cId,
+        product_id: cId,
+        title: cp.title || cp.name,
+        name: cp.title || cp.name,
+        price: Number(cp.price),
+        unit: cp.unit || '1 unit',
+        stock: Number(cp.stock ?? cp.quantity ?? 0),
+        quantity: Number(cp.stock ?? cp.quantity ?? 0),
+        category: cp.category || 'produce',
+        categoryLabel: cp.categoryLabel || cp.category || 'Produce',
+        supplier: cp.supplier || 'FreshCart Local Farm',
+        badge: cp.badge || '',
+        image: cp.image || '',
+        description: cp.description || '',
+        sku: cp.sku || '',
+        packSizes: cp.packSizes,
+        isOrganic: Boolean(cp.isOrganic),
+        isQuickPrep: Boolean(cp.isQuickPrep),
+      });
+    }
+  }
+
+  for (const ip of INITIAL_PRODUCTS) {
+    const ipId = String(ip.id);
+    if (!seenIds.has(ipId)) {
+      seenIds.add(ipId);
+      allProducts.push({
+        id: ip.id,
+        product_id: ip.id,
+        title: ip.title,
+        name: ip.title,
+        price: Number(ip.price),
+        unit: ip.unit,
+        stock: Number(ip.stock),
+        quantity: Number(ip.stock),
+        category: ip.category,
+        categoryLabel: ip.categoryLabel,
+        supplier: ip.supplier,
+        badge: ip.badge,
+        image: ip.image,
+        description: ip.description,
+        sku: ip.sku,
+        packSizes: ip.packSizes,
+        isOrganic: Boolean(ip.isOrganic),
+        isQuickPrep: Boolean(ip.isQuickPrep),
+      });
+    }
+  }
+
+  console.log('[Diagnostic Stage 5: Assistant Backend Unified Catalogue] Total products count:', allProducts.length, 'IDs:', allProducts.map((p) => p.id));
+
   const storeSettings = await getSettingsFromDb();
   const deliveryRules = storeSettings?.deliveryChargeRules || [{ minOrderAmount: 500, deliveryCharge: 0 }];
 
@@ -1734,7 +1837,10 @@ export async function handleAssistantChat(
 
   const FAST_PATH_INTENTS = new Set([
     'SHOW_ALL_PRODUCTS',
+    'SHOW_MORE',
+    'SHOW_LESS',
     'SHOW_CATEGORY',
+    'SEARCH_PRODUCTS',
     'VIEW_CART',
     'CLEAR_CART',
     'SHOW_COUPONS',
@@ -1757,8 +1863,13 @@ export async function handleAssistantChat(
       action = null;
     }
 
-    if (!action || !action.intent) {
-      action = deterministicAction;
+    if (!action || !action.intent || action.intent === 'GENERAL_QUERY') {
+      const directMatches = matchProductInCatalog(userText, allProducts);
+      if (directMatches.length > 0) {
+        action = { intent: 'SEARCH_PRODUCTS', product_name: userText };
+      } else {
+        action = deterministicAction || { intent: 'GENERAL_QUERY', message: userText };
+      }
     }
   }
 
@@ -2237,6 +2348,7 @@ export async function handleAssistantChat(
     case 'SEARCH_PRODUCTS': {
       const term = action.product_name || userText;
       const matched = matchProductInCatalog(term, allProducts);
+      console.log(`[Diagnostic Stage 7: Assistant Response - SEARCH_PRODUCTS] Searched term: "${term}", Matched count: ${matched.length}, IDs:`, matched.map((p) => p.id));
 
       if (matched.length === 0) {
         const notFoundSearch =
@@ -2279,16 +2391,21 @@ export async function handleAssistantChat(
     // SHOW ALL PRODUCTS
     // -------------------------------------------------------------------------
     case 'SHOW_ALL_PRODUCTS': {
+      const total = allProducts.length;
+      console.log(`[Diagnostic Stage 7: Assistant Response - SHOW_ALL_PRODUCTS] Returning full catalogue count: ${total}, IDs:`, allProducts.map((p) => p.id));
       const allMsg =
         userLang === 'hi-IN'
-          ? `यहाँ हमारे ${allProducts.length} ताज़ा उत्पादों की पूरी सूची है:`
+          ? `यहाँ हमारे ${total} ताज़ा उत्पादों की पूरी सूची है:`
           : userLang === 'te-IN'
-          ? `ఇక్కడ మా ${allProducts.length} తాజా ఉత్పత్తుల పూర్తి కేటలాగ్ ఉంది:`
-          : `Here is our complete catalogue of ${allProducts.length} farm-fresh products:`;
+          ? `ఇక్కడ మా ${total} తాజా ఉత్పత్తుల పూర్తి కేటలాగ్ ఉంది:`
+          : `Here is our complete catalogue of ${total} farm-fresh products:`;
       res.json({
         success: true,
         intent: 'SHOW_ALL_PRODUCTS',
         products: allProducts,
+        totalProducts: total,
+        batchSize: 15,
+        hasMore: total > 15,
         language: userLang,
         message: allMsg,
         spokenMessage: allMsg,
@@ -2298,7 +2415,61 @@ export async function handleAssistantChat(
     }
 
     // -------------------------------------------------------------------------
-    // SHOW CATEGORY (Vegetables, Fruits, Dairy, Bakery, Beverages, etc.)
+    // SHOW MORE (Next Batch of Products)
+    // -------------------------------------------------------------------------
+    case 'SHOW_MORE': {
+      const offset = Number(req.body?.offset || 0);
+      const batchSize = Number(req.body?.batchSize || req.body?.limit || 15);
+      const total = allProducts.length;
+      const nextBatch = allProducts.slice(offset, offset + batchSize);
+      const moreMsg =
+        userLang === 'hi-IN'
+          ? `यहाँ अगले उत्पाद हैं (${Math.min(offset + nextBatch.length, total)} / ${total}):`
+          : userLang === 'te-IN'
+          ? `ఇక్కడ తదుపరి ఉత్పత్తులు ఉన్నాయి (${Math.min(offset + nextBatch.length, total)} / ${total}):`
+          : `Showing next batch of products (${Math.min(offset + nextBatch.length, total)} of ${total} in catalogue):`;
+
+      res.json({
+        success: true,
+        intent: 'SHOW_MORE',
+        products: allProducts,
+        batchProducts: nextBatch,
+        totalProducts: total,
+        offset: offset + nextBatch.length,
+        hasMore: offset + nextBatch.length < total,
+        language: userLang,
+        message: moreMsg,
+        spokenMessage: moreMsg,
+        quickReplies: offset + nextBatch.length < total ? ['Show more', 'View Cart'] : ['View Cart', 'Show Vegetables'],
+      });
+      return;
+    }
+
+    // -------------------------------------------------------------------------
+    // SHOW LESS (Collapse Products View)
+    // -------------------------------------------------------------------------
+    case 'SHOW_LESS': {
+      const lessMsg =
+        userLang === 'hi-IN'
+          ? `उत्पाद सूची को संक्षिप्त कर दिया गया है।`
+          : userLang === 'te-IN'
+          ? `ఉత్పత్తుల జాబితా తగ్గించబడింది.`
+          : `Collapsed product catalogue view.`;
+      res.json({
+        success: true,
+        intent: 'SHOW_LESS',
+        products: allProducts.slice(0, 15),
+        totalProducts: allProducts.length,
+        language: userLang,
+        message: lessMsg,
+        spokenMessage: lessMsg,
+        quickReplies: ['Show more', 'View Cart'],
+      });
+      return;
+    }
+
+    // -------------------------------------------------------------------------
+    // SHOW CATEGORY (Vegetables, Fruits, Dairy, Bakery, Beverages, Snacks, Grains, etc.)
     // -------------------------------------------------------------------------
     case 'SHOW_CATEGORY': {
       const cat = cleanStr(action.category);
@@ -2308,38 +2479,49 @@ export async function handleAssistantChat(
       if (cat === 'vegetables' || cat === 'vegetable' || cat === 'veggies') {
         catLabel = userLang === 'hi-IN' ? 'सब्जियां' : userLang === 'te-IN' ? 'కూరగాయలు' : 'Vegetables';
         filtered = allProducts.filter((p) => {
+          const pCat = cleanStr(p.category);
+          const pLabel = cleanStr(p.categoryLabel);
           const name = cleanStr(p.title);
-          return (
-            p.category === 'produce' &&
-            !name.includes('banana') &&
-            !name.includes('apple') &&
-            !name.includes('orange') &&
-            !name.includes('avocado')
-          );
+          if (pCat === 'vegetables' || pCat === 'vegetable' || pLabel.includes('veg')) return true;
+          if (pCat === 'produce') {
+            return !name.includes('banana') && !name.includes('apple') && !name.includes('orange') && !name.includes('avocado') && !name.includes('mango') && !name.includes('berry');
+          }
+          return false;
         });
       } else if (cat === 'fruits' || cat === 'fruit') {
         catLabel = userLang === 'hi-IN' ? 'फल' : userLang === 'te-IN' ? 'పండ్లు' : 'Fruits';
         filtered = allProducts.filter((p) => {
+          const pCat = cleanStr(p.category);
+          const pLabel = cleanStr(p.categoryLabel);
           const name = cleanStr(p.title);
-          return (
-            name.includes('banana') ||
-            name.includes('apple') ||
-            name.includes('orange') ||
-            name.includes('avocado') ||
-            name.includes('berry')
-          );
+          if (pCat === 'fruits' || pCat === 'fruit' || pLabel.includes('fruit')) return true;
+          if (pCat === 'produce') {
+            return name.includes('banana') || name.includes('apple') || name.includes('orange') || name.includes('avocado') || name.includes('berry') || name.includes('mango') || name.includes('grape') || name.includes('melon') || name.includes('lemon') || name.includes('citrus');
+          }
+          return false;
         });
       } else if (cat === 'dairy') {
         catLabel = userLang === 'hi-IN' ? 'डेयरी उत्पाद' : userLang === 'te-IN' ? 'పాల ఉత్పత్తులు' : 'Dairy & Eggs';
-        filtered = allProducts.filter((p) => p.category === 'dairy');
+        filtered = allProducts.filter((p) => cleanStr(p.category) === 'dairy' || cleanStr(p.categoryLabel).includes('dairy') || cleanStr(p.categoryLabel).includes('egg'));
       } else if (cat === 'bakery') {
         catLabel = userLang === 'hi-IN' ? 'बेकरी' : userLang === 'te-IN' ? 'బేకరీ' : 'Bakery';
-        filtered = allProducts.filter((p) => p.category === 'bakery');
-      } else if (cat === 'beverages') {
+        filtered = allProducts.filter((p) => cleanStr(p.category) === 'bakery' || cleanStr(p.categoryLabel).includes('bakery') || cleanStr(p.categoryLabel).includes('bread'));
+      } else if (cat === 'beverages' || cat === 'beverage' || cat === 'drinks') {
         catLabel = userLang === 'hi-IN' ? 'पेय पदार्थ' : userLang === 'te-IN' ? 'పానీయాలు' : 'Beverages';
-        filtered = allProducts.filter((p) => p.category === 'beverages');
+        filtered = allProducts.filter((p) => cleanStr(p.category) === 'beverages' || cleanStr(p.category) === 'beverage' || cleanStr(p.categoryLabel).includes('beverage') || cleanStr(p.categoryLabel).includes('drink'));
+      } else if (cat === 'snacks' || cat === 'snack') {
+        catLabel = userLang === 'hi-IN' ? 'स्नैक्स' : userLang === 'te-IN' ? 'స్నాక్స్' : 'Snacks';
+        filtered = allProducts.filter((p) => cleanStr(p.category) === 'snacks' || cleanStr(p.category) === 'snack' || cleanStr(p.categoryLabel).includes('snack'));
+      } else if (cat === 'grains' || cat === 'grain' || cat === 'rice') {
+        catLabel = userLang === 'hi-IN' ? 'अनाज व चावल' : userLang === 'te-IN' ? 'ధాన్యాలు & బియ్యం' : 'Rice & Grains';
+        filtered = allProducts.filter((p) => cleanStr(p.category) === 'grains' || cleanStr(p.category) === 'grain' || cleanStr(p.categoryLabel).includes('grain') || cleanStr(p.categoryLabel).includes('rice'));
       } else {
-        filtered = allProducts.filter((p) => p.category === cat);
+        catLabel = cat.charAt(0).toUpperCase() + cat.slice(1);
+        filtered = allProducts.filter((p) => {
+          const pCat = cleanStr(p.category);
+          const pLabel = cleanStr(p.categoryLabel);
+          return pCat === cat || pLabel === cat || pCat.includes(cat) || pLabel.includes(cat);
+        });
       }
 
       const catMsg =
@@ -2353,6 +2535,9 @@ export async function handleAssistantChat(
         success: true,
         intent: 'SHOW_CATEGORY',
         products: filtered,
+        totalProducts: filtered.length,
+        batchSize: 15,
+        hasMore: filtered.length > 15,
         language: userLang,
         message: catMsg,
         spokenMessage: catMsg,

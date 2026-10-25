@@ -7,6 +7,7 @@ import { getCustomerOrders, updateOrderStatus, deleteCustomerOrder } from './ser
 import { getProductPackSizes, getAvailablePackSizes, getPackStock, getPackSizeConversionFactor } from './utils/packSize';
 import {
   fetchProductsFromBackend,
+  fetchAllProductsFromBackend,
   saveProductToBackend,
   deleteProductFromBackend,
 } from './services/productService';
@@ -130,9 +131,11 @@ function FreshCartStore() {
     localStorage.setItem(STORAGE_PRODUCTS_KEY, JSON.stringify(products));
   }, [products]);
 
-  // Synchronize products from MySQL database on initial mount
+  // Synchronize complete product catalogue dynamically from MySQL database on initial mount
   useEffect(() => {
-    fetchProductsFromBackend().then((backendProducts) => {
+    console.log('[Diagnostic Stage 1: Customer Portal] Initial local product count:', products.length, 'IDs:', products.map((p) => p.id));
+    fetchAllProductsFromBackend().then((backendProducts) => {
+      console.log('[Diagnostic Stage 2: Customer Portal Service] Fetched from backend count:', backendProducts?.length, 'IDs:', backendProducts?.map((p) => p.id));
       if (Array.isArray(backendProducts) && backendProducts.length > 0) {
         setProducts((prev) => {
           const merged = [...backendProducts];
@@ -141,10 +144,13 @@ function FreshCartStore() {
               merged.push(localP);
             }
           });
+          console.log('[Diagnostic Stage 1: Customer Portal] Merged complete product count:', merged.length, 'IDs:', merged.map((p) => p.id));
           return merged;
         });
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      console.warn('[Diagnostic Stage 2: Customer Portal Service] Error syncing backend products:', err);
+    });
   }, []);
 
   // Default to login when unauthenticated; storefront when authenticated
@@ -1481,6 +1487,7 @@ function FreshCartStore() {
               onClose={() => setIsAssistantOpen(false)}
               customerToken={currentUser.token}
               customerName={currentUser.name}
+              catalogProducts={products}
               onAddToCart={handleAddToCart}
               onUpdateCartQty={handleUpdateCartQty}
               onRemoveCartItem={handleRemoveCartItem}

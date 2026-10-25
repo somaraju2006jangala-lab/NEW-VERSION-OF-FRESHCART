@@ -1802,9 +1802,9 @@ export async function addCustomerAddressInDb(
 // -----------------------------------------------------------------------------
 
 /**
- * Retrieves products from MySQL with optional search / category filter.
+ * Retrieves products from MySQL with optional search / category filter, and optional pagination.
  */
-export async function getProductsFromDb(filters?: { category?: string; search?: string }): Promise<any[]> {
+export async function getProductsFromDb(filters?: { category?: string; search?: string; limit?: number; offset?: number }): Promise<any[]> {
   const pool = getPool();
   try {
     let sql = `
@@ -1830,8 +1830,17 @@ export async function getProductsFromDb(filters?: { category?: string; search?: 
 
     sql += ' ORDER BY id ASC';
 
+    if (filters?.limit !== undefined && Number(filters.limit) > 0) {
+      sql += ' LIMIT ?';
+      params.push(Number(filters.limit));
+      if (filters?.offset !== undefined && Number(filters.offset) >= 0) {
+        sql += ' OFFSET ?';
+        params.push(Number(filters.offset));
+      }
+    }
+
     const [rows] = await pool.query<RowDataPacket[]>(sql, params);
-    return rows.map((r) => {
+    const mapped = rows.map((r) => {
       let packSizes: any[] | undefined = undefined;
       if (r.packSizesJson) {
         try {
@@ -1848,9 +1857,36 @@ export async function getProductsFromDb(filters?: { category?: string; search?: 
         categoryLabel: r.category === 'produce' ? 'Fruits & Veggies' : r.category,
       };
     });
+    console.log('[Diagnostic Stage 4: MySQL Query via getProductsFromDb] Rows returned:', mapped.length, 'IDs:', mapped.map((r: any) => r.id));
+    return mapped;
   } catch (err: any) {
     console.warn('[MySQL] Error querying products:', err?.message);
     return [];
+  }
+}
+
+/**
+ * Counts total products in MySQL matching optional filters.
+ */
+export async function getProductsCountFromDb(filters?: { category?: string; search?: string }): Promise<number> {
+  const pool = getPool();
+  try {
+    let sql = 'SELECT COUNT(*) as total FROM products WHERE 1=1';
+    const params: any[] = [];
+    if (filters?.category && filters.category !== 'all') {
+      sql += ' AND category = ?';
+      params.push(filters.category);
+    }
+    if (filters?.search && filters.search.trim()) {
+      sql += ' AND (name LIKE ? OR description LIKE ? OR supplier LIKE ?)';
+      const term = `%${filters.search.trim()}%`;
+      params.push(term, term, term);
+    }
+    const [rows] = await pool.query<RowDataPacket[]>(sql, params);
+    return Number(rows[0]?.total || 0);
+  } catch (err: any) {
+    console.warn('[MySQL] Error counting products:', err?.message);
+    return 0;
   }
 }
 

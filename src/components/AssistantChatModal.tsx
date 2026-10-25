@@ -25,6 +25,9 @@ import {
   CheckCircle2,
   HelpCircle,
   Edit3,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
 } from 'lucide-react';
 import { Product, CartItem } from '../types';
 import {
@@ -44,6 +47,7 @@ interface AssistantChatModalProps {
   onClose: () => void;
   customerToken?: string;
   customerName?: string;
+  catalogProducts?: Product[];
   onAddToCart: (product: Product, quantity: number, packSize?: string, packPrice?: number) => void;
   onUpdateCartQty: (productId: string, delta: number, packSize?: string) => void;
   onRemoveCartItem: (productId: string, packSize?: string) => void;
@@ -585,11 +589,154 @@ const GroceryListReviewCard: React.FC<GroceryListReviewCardProps> = ({
   );
 };
 
+interface AssistantProductCatalogSectionProps {
+  products: AssistantProductCard[];
+  totalProductsCount?: number;
+  onConfirmAdd: (product: AssistantProductCard, quantity: number, packSize: string, price: number) => void;
+  initiallySelecting?: boolean;
+}
+
+const AssistantProductCatalogSection: React.FC<AssistantProductCatalogSectionProps> = ({
+  products,
+  totalProductsCount,
+  onConfirmAdd,
+  initiallySelecting = false,
+}) => {
+  const BATCH_SIZE = 15;
+
+  // Deduplicate products by stable product ID
+  const uniqueProducts = React.useMemo(() => {
+    const map = new Map<string, AssistantProductCard>();
+    for (const p of products) {
+      if (p && p.id && !map.has(p.id)) {
+        map.set(p.id, p);
+      }
+    }
+    return Array.from(map.values());
+  }, [products]);
+
+  const totalCount = Math.max(totalProductsCount || 0, uniqueProducts.length);
+  const [visibleCount, setVisibleCount] = useState<number>(() => Math.min(BATCH_SIZE, uniqueProducts.length));
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Synchronize visible count if uniqueProducts grows
+  useEffect(() => {
+    const initialVisible = Math.min(Math.max(BATCH_SIZE, 0), uniqueProducts.length);
+    setVisibleCount(initialVisible);
+    console.log('[Diagnostic Stage 8: Assistant Product Rendering] Total catalogue products received:', uniqueProducts.length, 'Visible batch count:', initialVisible, 'IDs:', uniqueProducts.map((p) => p.id));
+  }, [uniqueProducts.length]);
+
+  const hasMore = visibleCount < uniqueProducts.length;
+
+  const handleShowMore = () => {
+    setIsLoadingMore(true);
+    setLoadError(null);
+    setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + BATCH_SIZE, uniqueProducts.length));
+      setIsLoadingMore(false);
+    }, 250);
+  };
+
+  const handleShowLess = () => {
+    setVisibleCount(Math.min(BATCH_SIZE, uniqueProducts.length));
+  };
+
+  const displayedProducts = uniqueProducts.slice(0, visibleCount);
+
+  return (
+    <div className="mt-3 pt-2.5 border-t border-white/10">
+      {/* Total Product Count Header */}
+      <div className="flex items-center justify-between text-xs text-slate-300 font-semibold px-1 pb-2">
+        <span className="flex items-center gap-1.5 text-emerald-400">
+          <ShoppingCart className="w-3.5 h-3.5" />
+          <span>
+            {totalCount === 1
+              ? '1 Product Available'
+              : `Showing ${Math.min(visibleCount, totalCount)} of ${totalCount} Products in Catalogue`}
+          </span>
+        </span>
+        {totalCount > BATCH_SIZE && (
+          <span className="text-[10.5px] text-slate-400 font-normal">
+            {visibleCount >= totalCount ? 'All products loaded' : 'Batch view'}
+          </span>
+        )}
+      </div>
+
+      {/* Vertically scrollable catalogue list displaying the current batch of products */}
+      <div className="max-h-[380px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+        {displayedProducts.map((p) => (
+          <AssistantProductCardItem
+            key={p.id}
+            product={p}
+            onConfirmAdd={onConfirmAdd}
+            initiallySelecting={initiallySelecting && displayedProducts.length === 1}
+          />
+        ))}
+
+        {/* Loading Indicator for additional batches */}
+        {isLoadingMore && (
+          <div className="flex items-center justify-center gap-2 py-3 px-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-300 text-xs font-medium animate-pulse">
+            <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+            <span>Loading more products from FreshCart catalogue...</span>
+          </div>
+        )}
+
+        {/* Error Retry State */}
+        {loadError && !isLoadingMore && (
+          <div className="flex items-center justify-between p-2.5 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300 text-xs">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{loadError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleShowMore}
+              className="px-2.5 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-400/30 rounded-lg text-[11px] font-semibold cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Pagination / Batch Controls: Show More & Show Less */}
+      {(hasMore || visibleCount > BATCH_SIZE) && !isLoadingMore && (
+        <div className="flex items-center gap-2 pt-2.5">
+          {hasMore && (
+            <button
+              type="button"
+              id="assistant-show-more-btn"
+              onClick={handleShowMore}
+              className="flex-1 py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 active:scale-[0.99] border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+            >
+              <ChevronDown className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Show More ({Math.min(BATCH_SIZE, totalCount - visibleCount)} more)</span>
+            </button>
+          )}
+          {visibleCount > BATCH_SIZE && (
+            <button
+              type="button"
+              id="assistant-show-less-btn"
+              onClick={handleShowLess}
+              className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 active:scale-[0.99] border border-white/10 text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+              <span>Show Less</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
   isOpen,
   onClose,
   customerToken,
   customerName,
+  catalogProducts,
   onAddToCart,
   onUpdateCartQty,
   onRemoveCartItem,
@@ -919,7 +1066,10 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         transcript,
         customerToken,
         pendingAction,
-        selectedLanguage
+        selectedLanguage,
+        {
+          catalogProducts: catalogProducts && catalogProducts.length > 0 ? catalogProducts : undefined,
+        }
       );
 
       // Reset pending action
@@ -968,6 +1118,9 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         products,
         coupons,
+        totalProductsCount: response.totalProducts ?? (products ? products.length : undefined),
+        hasMoreProducts: response.hasMore,
+        nextOffset: response.offset,
         quickReplies:
           response.quickReplies ||
           (products && products.length > 0 ? ['View Cart', 'Show Vegetables'] : undefined),
@@ -1079,6 +1232,7 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         selectedLanguage,
         {
           ...extraPayload,
+          catalogProducts: catalogProducts && catalogProducts.length > 0 ? catalogProducts : undefined,
           image: imageToAttach || undefined,
         }
       );
@@ -1140,6 +1294,9 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         products,
         coupons,
+        totalProductsCount: response.totalProducts ?? (products ? products.length : undefined),
+        hasMoreProducts: response.hasMore,
+        nextOffset: response.offset,
         quickReplies:
           response.quickReplies ||
           (products && products.length > 0 ? ['View Cart', 'Show Vegetables'] : undefined),
@@ -1254,7 +1411,10 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
           listId,
           items: validItems,
         },
-        selectedLanguage
+        selectedLanguage,
+        {
+          catalogProducts: catalogProducts && catalogProducts.length > 0 ? catalogProducts : undefined,
+        }
       );
 
       setPendingAction(null);
@@ -1634,36 +1794,14 @@ export const AssistantChatModal: React.FC<AssistantChatModalProps> = ({
                         </div>
                       )}
 
-                      {/* Attached Product Cards */}
+                      {/* Attached Product Cards with Manageable Batching and Show More */}
                       {!msg.groceryListReview && msg.products && msg.products.length > 0 && (
-                        <div className="mt-3 pt-2.5 border-t border-white/10">
-                          {/* Total Product Count Header */}
-                          <div className="flex items-center justify-between text-xs text-slate-300 font-semibold px-1 pb-2">
-                            <span className="flex items-center gap-1.5 text-emerald-400">
-                              <ShoppingCart className="w-3.5 h-3.5" />
-                              <span>
-                                {msg.products.length} {msg.products.length === 1 ? 'Product Available' : 'Products in Catalogue'}
-                              </span>
-                            </span>
-                            {msg.products.length > 3 && (
-                              <span className="text-[10.5px] text-slate-400 font-normal">
-                                Scroll down to browse all
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Vertically scrollable catalogue list displaying all products */}
-                          <div className="max-h-[380px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                            {msg.products.map((p) => (
-                              <AssistantProductCardItem
-                                key={p.id}
-                                product={p}
-                                onConfirmAdd={handleProductCardConfirmAdd}
-                                initiallySelecting={msg.products?.length === 1 && msg.requiresConfirmation !== true}
-                              />
-                            ))}
-                          </div>
-                        </div>
+                        <AssistantProductCatalogSection
+                          products={msg.products}
+                          totalProductsCount={msg.totalProductsCount}
+                          onConfirmAdd={handleProductCardConfirmAdd}
+                          initiallySelecting={msg.products?.length === 1 && msg.requiresConfirmation !== true}
+                        />
                       )}
 
                       {/* Attached Coupon Cards */}
