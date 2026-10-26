@@ -22,7 +22,6 @@ import {
   ChevronDown,
   Banknote,
   RotateCcw,
-  Truck,
 } from 'lucide-react';
 import {
   generateOrderOtp,
@@ -1193,23 +1192,6 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
                         >
                           <Banknote className="w-3.5 h-3.5 text-[#10b981]" />
                           <span>{isConfirmingCash[order.id] ? 'Saving...' : 'Confirm Cash Collection'}</span>
-                        </button>
-                    )}
-
-                    {/* Delivery Confirmation: Visible for authorized employee or admin on COD orders awaiting delivery */}
-                    {(userRole === 'admin' || userRole === 'employee') &&
-                      isCod &&
-                      order.status !== 'Delivered' && (
-                        <button
-                          type="button"
-                          id={`confirm-delivery-btn-${cleanOrderId}`}
-                          onClick={() => handleDeliverCodOrder(order)}
-                          disabled={isDeliveringOrder[order.id]}
-                          title={`Confirm delivery for Order ${displayOrderId}`}
-                          className="px-2.5 py-1 text-[11px] font-bold text-sky-300 hover:text-white bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs backdrop-blur-xs disabled:opacity-50"
-                        >
-                          <Truck className="w-3.5 h-3.5 text-[#38bdf8]" />
-                          <span>{isDeliveringOrder[order.id] ? 'Delivering...' : 'Confirm Delivery'}</span>
                         </button>
                     )}
 
