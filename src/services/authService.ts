@@ -129,70 +129,10 @@ const INITIAL_DEMO_ORDERS: CustomerOrder[] = [
     paymentMethod: 'Cash on Delivery',
     paymentStatus: 'PENDING',
   },
-  {
-    id: '#FC-94821',
-    customerId: 'cust-demo-1',
-    customerName: 'Alex Morgan',
-    customerEmail: DEMO_CUSTOMER_EMAIL,
-    customerPhone: '(555) 234-1234',
-    deliveryAddress: '742 Evergreen Terrace, Apt 4B, Springfield, OR 97477',
-    deliveryTimeSlot: '24-30 Minutes (Direct Express Pod)',
-    estimatedDeliveryTime: 'Arriving in ~18 minutes',
-    items: [
-      { product: INITIAL_PRODUCTS[0], quantity: 2 }, // Bananas (2 * 69 = 138)
-      { product: INITIAL_PRODUCTS[1], quantity: 1 }, // Whole Milk (1 * 79 = 79)
-    ],
-    subtotal: 217,
-    discount: 0,
-    total: 217,
-    status: 'Picking',
-    createdAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-    paymentMethod: '⚡ Express Pay',
-  },
-  {
-    id: 'FC-88120',
-    customerId: 'cust-demo-1',
-    customerName: 'Alex Morgan',
-    customerEmail: DEMO_CUSTOMER_EMAIL,
-    deliveryAddress: '742 Evergreen Terrace, Apt 4B, Springfield, OR 97477',
-    deliveryTimeSlot: 'Yesterday, 05:45 PM',
-    estimatedDeliveryTime: 'Delivered',
-    items: [
-      { product: INITIAL_PRODUCTS[2], quantity: 3 }, // Honeycrisp Apples (3 * 199 = 597)
-      { product: INITIAL_PRODUCTS[3], quantity: 1 }, // Sourdough (1 * 149 = 149)
-      { product: INITIAL_PRODUCTS[4], quantity: 2 }, // Cold Brew Coffee (2 * 299 = 598)
-    ],
-    subtotal: 1344,
-    discount: 403,
-    total: 941,
-    couponCode: 'FRESH30',
-    status: 'Delivered',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 26).toISOString(),
-    paymentMethod: 'Credit Card (ending 4242)',
-  },
-  {
-    id: 'FC-75402',
-    customerId: 'cust-demo-1',
-    customerName: 'Alex Morgan',
-    customerEmail: DEMO_CUSTOMER_EMAIL,
-    deliveryAddress: '100 Innovation Way, Suite 300, Springfield, OR 97477',
-    deliveryTimeSlot: '3 days ago',
-    estimatedDeliveryTime: 'Delivered',
-    items: [
-      { product: INITIAL_PRODUCTS[5], quantity: 4 }, // Avocados (4 * 349 = 1396)
-      { product: INITIAL_PRODUCTS[6], quantity: 2 }, // Greek Yogurt (2 * 189 = 378)
-    ],
-    subtotal: 1774,
-    discount: 0,
-    total: 1774,
-    status: 'Delivered',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString(),
-    paymentMethod: '⚡ Express Pay',
-  },
 ];
 
 /**
- * Initializes localStorage with pre-seeded demo user and orders if not yet present.
+ * Initializes localStorage with seed users and orders if not yet present.
  */
 export async function initializeAuthStore(): Promise<void> {
   try {
@@ -200,39 +140,6 @@ export async function initializeAuthStore(): Promise<void> {
     if (!existing) {
       const demoSalt = 'freshcart_salt_demo_9921';
       const demoHash = await hashPassword(DEMO_CUSTOMER_PASSWORD, demoSalt);
-
-      const demoCustomer: Customer = {
-        id: 'cust-demo-1',
-        name: 'Alex Morgan',
-        email: DEMO_CUSTOMER_EMAIL,
-        phone: '(555) 234-5678',
-        address: '742 Evergreen Terrace, Apt 4B, Springfield, OR 97477',
-        passwordSalt: demoSalt,
-        passwordHash: demoHash,
-        createdAt: '2025-01-15T09:00:00.000Z',
-        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
-        loyaltyTier: 'Fresh Gold Member (5% Cashback)',
-        savedAddresses: [
-          {
-            id: 'addr-1',
-            label: 'Home (Default)',
-            street: '742 Evergreen Terrace, Apt 4B',
-            city: 'Springfield',
-            state: 'OR',
-            zip: '97477',
-            isDefault: true,
-          },
-          {
-            id: 'addr-2',
-            label: 'Office / Tech Hub',
-            street: '100 Innovation Way, Suite 300',
-            city: 'Springfield',
-            state: 'OR',
-            zip: '97477',
-            isDefault: false,
-          },
-        ],
-      };
 
       const rahulCustomer: Customer = {
         id: 'rahul123',
@@ -282,7 +189,7 @@ export async function initializeAuthStore(): Promise<void> {
         ],
       };
 
-      localStorage.setItem(STORAGE_CUSTOMERS_KEY, JSON.stringify([demoCustomer, rahulCustomer, priyaCustomer]));
+      localStorage.setItem(STORAGE_CUSTOMERS_KEY, JSON.stringify([rahulCustomer, priyaCustomer]));
     } else {
       try {
         const parsedCust: Customer[] = JSON.parse(existing);
@@ -349,10 +256,23 @@ export async function initializeAuthStore(): Promise<void> {
           });
         }
 
-        localStorage.setItem(STORAGE_CUSTOMERS_KEY, JSON.stringify(parsedCust));
+        // Filter out any demo-only customer
+        const cleanCust = parsedCust.filter((c) => c.id !== 'cust-demo-1' && c.email !== DEMO_CUSTOMER_EMAIL);
+        localStorage.setItem(STORAGE_CUSTOMERS_KEY, JSON.stringify(cleanCust));
       } catch {
         // Ignore
       }
+    }
+
+    // Clean up any stale demo customer session
+    const currentRaw = localStorage.getItem(STORAGE_CURRENT_USER_KEY);
+    if (currentRaw) {
+      try {
+        const cur = JSON.parse(currentRaw);
+        if (cur && (cur.id === 'cust-demo-1' || cur.email === DEMO_CUSTOMER_EMAIL)) {
+          localStorage.removeItem(STORAGE_CURRENT_USER_KEY);
+        }
+      } catch {}
     }
 
     const existingOrders = localStorage.getItem(STORAGE_CUSTOMER_ORDERS_KEY);
@@ -367,7 +287,9 @@ export async function initializeAuthStore(): Promise<void> {
         if (!parsed.some((o) => o.id === '#FC-1006' || o.id === 'FC-1006')) {
           parsed.splice(1, 0, INITIAL_DEMO_ORDERS[1]);
         }
-        parsed.forEach((o) => {
+        // Filter out any demo customer orders
+        const cleanOrders = parsed.filter((o) => o.customerId !== 'cust-demo-1' && o.customerEmail !== DEMO_CUSTOMER_EMAIL);
+        cleanOrders.forEach((o) => {
           if (o.id === '#FC-1005' || o.id === 'FC-1005') {
             o.customerId = 'rahul123';
             o.customerName = 'Rahul';
@@ -393,7 +315,7 @@ export async function initializeAuthStore(): Promise<void> {
             o.customerPhone = '+91 9123456789';
           }
         });
-        localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(parsed));
+        localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(cleanOrders));
       } catch {
         localStorage.setItem(STORAGE_CUSTOMER_ORDERS_KEY, JSON.stringify(INITIAL_DEMO_ORDERS));
       }
@@ -784,6 +706,10 @@ export function getCurrentCustomer(): Customer | null {
     const raw = localStorage.getItem(STORAGE_CURRENT_USER_KEY);
     if (!raw) return null;
     const user: Customer = JSON.parse(raw);
+    if (user && (user.id === 'cust-demo-1' || user.email === DEMO_CUSTOMER_EMAIL)) {
+      localStorage.removeItem(STORAGE_CURRENT_USER_KEY);
+      return null;
+    }
     if (user && !user.token) {
       user.token = generateClientAuthToken(user);
       localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(user));
@@ -893,6 +819,9 @@ export function getCustomerOrders(customerId?: string): CustomerOrder[] {
     const raw = localStorage.getItem(STORAGE_CUSTOMER_ORDERS_KEY);
     let orders: CustomerOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
 
+    // Filter out any demo-only customer orders
+    orders = orders.filter((o) => o.customerId !== 'cust-demo-1' && o.customerEmail !== DEMO_CUSTOMER_EMAIL);
+
     // Ensure test orders #FC-1005 (Rahul) and #FC-1006 (Priya) are always present
     if (!orders.some((o) => o.id === '#FC-1005' || o.id === 'FC-1005')) {
       orders.unshift(INITIAL_DEMO_ORDERS[0]);
@@ -911,7 +840,7 @@ export function getCustomerOrders(customerId?: string): CustomerOrder[] {
     });
 
     if (!customerId) return resolvedOrders;
-    return resolvedOrders.filter((o) => !o.customerId || o.customerId === customerId);
+    return resolvedOrders.filter((o) => o.customerId === customerId);
   } catch {
     return [];
   }
@@ -1126,10 +1055,13 @@ export async function confirmCodCashCollection(
 export async function fetchAllOrdersFromBackend(): Promise<CustomerOrder[]> {
   try {
     const adminToken = getStoredAdminToken();
+    const employeeToken = getStoredEmployeeToken();
+    const token = adminToken || employeeToken;
+    const role = adminToken ? 'admin' : (employeeToken ? 'employee' : 'admin');
     const res = await fetch('/api/orders', {
       headers: {
-        'x-admin-role': 'admin',
-        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+        'x-admin-role': role,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
     const data = await res.json().catch(() => null);
@@ -1539,7 +1471,7 @@ export async function requestPasswordReset(
   const customers = getStoredCustomers();
   const exists = customers.some((c) => c.email.toLowerCase() === trimmed);
 
-  if (!exists && trimmed !== DEMO_CUSTOMER_EMAIL) {
+  if (!exists) {
     return {
       success: false,
       message: `No active account found for "${email}". Please verify or create an account.`,

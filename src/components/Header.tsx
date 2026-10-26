@@ -17,6 +17,7 @@ import {
   LogOut,
   Truck,
 } from 'lucide-react';
+import { AuthorizedEmployee } from '../services/employeeService';
 
 interface HeaderProps {
   currentView: ViewType;
@@ -29,6 +30,8 @@ interface HeaderProps {
   onSearchSubmit?: (query: string) => void;
   selectedCategory: string;
   onSelectCategory: (category: string) => void;
+  currentEmployee?: AuthorizedEmployee | null;
+  onEmployeeLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -42,6 +45,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSearchSubmit,
   selectedCategory,
   onSelectCategory,
+  currentEmployee,
+  onEmployeeLogout,
 }) => {
   const { currentUser, logout } = useAuth();
   const { t } = useLanguage();
@@ -225,6 +230,34 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
+            {/* Employee Portal Toggle */}
+            {currentEmployee && (
+              <button
+                id="header-employee-portal-btn"
+                type="button"
+                onClick={() =>
+                  onToggleView(currentView === 'employee' ? 'storefront' : 'employee')
+                }
+                className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs active:translate-y-0 active:scale-98 border cursor-pointer ${
+                  currentView === 'employee'
+                    ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                    : 'bg-white/35 backdrop-blur-xs text-[#131b2e] border-white/50 hover:bg-white/55'
+                }`}
+              >
+                {currentView === 'employee' ? (
+                  <>
+                    <Store className="w-4 h-4" />
+                    <span>{t('navRetailStorefront')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Truck className="w-4 h-4 text-[#006b2c]" />
+                    <span>Employee Portal</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {/* Cart Button (Navigates to dedicated Cart page; completely removed from Admin Portal) */}
             {currentView !== 'login' && currentView !== 'register' && currentView !== 'admin' && (
               <button
@@ -390,6 +423,30 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     </div>
                   </div>
+                )}
+              </div>
+            ) : currentEmployee ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="header-employee-badge-btn"
+                  onClick={() => onToggleView('employee')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/35 backdrop-blur-xs border border-white/50 text-[12px] font-semibold text-[#0b1c30] cursor-pointer hover:bg-white/60"
+                  title="Go to Employee Portal"
+                >
+                  <Truck className="w-4 h-4 text-[#006b2c]" />
+                  <span className="max-w-[100px] truncate">{currentEmployee.fullName}</span>
+                </button>
+                {onEmployeeLogout && (
+                  <button
+                    type="button"
+                    id="header-employee-logout-btn"
+                    onClick={onEmployeeLogout}
+                    className="p-1.5 rounded-xl bg-white/35 hover:bg-red-50 text-red-600 border border-white/50 cursor-pointer"
+                    title="Employee Logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
                 )}
               </div>
             ) : currentView === 'login' ? (

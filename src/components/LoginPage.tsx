@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { BRAND_LOGO_URL } from '../data/products';
-import { DEMO_CUSTOMER_EMAIL, DEMO_CUSTOMER_PASSWORD } from '../services/authService';
 import {
   Mail,
   Lock,
@@ -18,7 +17,7 @@ import {
 } from 'lucide-react';
 
 import { AuthorizedAdmin } from '../services/adminService';
-import { AuthorizedEmployee, DEMO_EMPLOYEE_EMAIL, DEMO_EMPLOYEE_PASSWORD } from '../services/employeeService';
+import { AuthorizedEmployee } from '../services/employeeService';
 
 interface LoginPageProps {
   onNavigateToRegister: () => void;
@@ -82,18 +81,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  const handleFillCustomerDemo = () => {
-    setIdentifier(DEMO_CUSTOMER_EMAIL);
-    setPassword(DEMO_CUSTOMER_PASSWORD);
-    setErrorMessage(null);
-  };
-
-  const handleFillEmployeeDemo = () => {
-    setIdentifier(DEMO_EMPLOYEE_EMAIL);
-    setPassword(DEMO_EMPLOYEE_PASSWORD);
-    setErrorMessage(null);
-  };
-
   const handleFillAdminDemo = () => {
     setIdentifier('owner@freshcart.com');
     setPassword('FreshCartOwner2026!');
@@ -146,28 +133,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             Single unified sign-in for Customers, Employees, and Administrators
           </p>
 
-          {/* 1-Click Demo Login Pills */}
+          {/* 1-Click Demo Login Pill for Admin */}
           <div className="mt-4 pt-3 border-t border-dashed border-white/40 flex flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              id="demo-login-customer-btn"
-              onClick={handleFillCustomerDemo}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/35 hover:bg-white/60 text-[#006b2c] text-[11px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs border border-white/55 shadow-2xs cursor-pointer"
-              title="Auto-fill pre-seeded customer credentials"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#006b2c]" />
-              <span>Customer Demo</span>
-            </button>
-            <button
-              type="button"
-              id="demo-login-employee-btn"
-              onClick={handleFillEmployeeDemo}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-[#006b2c] text-[11px] font-bold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs border border-emerald-500/40 shadow-2xs cursor-pointer"
-              title="Auto-fill pre-seeded employee credentials"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#10b981]" />
-              <span>Employee Demo</span>
-            </button>
             <button
               type="button"
               id="demo-login-admin-btn"
@@ -213,7 +180,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   setIdentifier(e.target.value);
                   if (errorMessage) setErrorMessage(null);
                 }}
-                placeholder="customer@freshcart.com, employee@freshcart.com, or owner@freshcart.com"
+                placeholder="Enter your email or User ID"
                 autoComplete="username"
                 className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/35 backdrop-blur-xs border border-white/55 text-[13px] text-[#0b1c30] placeholder:text-[#565e74]/70 focus:outline-hidden focus:bg-white/60 focus:ring-2 focus:ring-[#006b2c] focus:border-white/80 transition-all shadow-2xs"
               />
@@ -233,7 +200,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 type="button"
                 id="forgot-password-link"
                 onClick={() => {
-                  setForgotEmail(identifier || DEMO_CUSTOMER_EMAIL);
+                  setForgotEmail(identifier || '');
                   setForgotStatus(null);
                   setShowForgotModal(true);
                 }}

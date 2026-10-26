@@ -351,7 +351,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({
                 <h2 className="text-[17px] font-bold text-white font-display flex flex-wrap items-center gap-2">
                   <span>Welcome, {currentEmployee?.fullName || 'Operations Employee'}</span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold uppercase tracking-wider">
-                    Staff ID: {currentEmployee?.employeeId || 'emp_001'}
+                    Staff ID: {currentEmployee?.employeeId || 'Active Staff'}
                   </span>
                 </h2>
                 <p className="text-[12px] text-slate-300 mt-0.5">

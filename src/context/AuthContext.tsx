@@ -121,7 +121,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             // Sync orders if user still active
-            fetch('/api/orders', {
+            const ordersUrl = user.id ? `/api/orders?customerId=${encodeURIComponent(user.id)}` : '/api/orders';
+            fetch(ordersUrl, {
               headers: { Authorization: `Bearer ${user.token}` },
             })
               .then((res) => res.json())
@@ -172,6 +173,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (res.customer) {
           setCurrentUser(res.customer);
           setOrders(getCustomerOrders(res.customer.id));
+          if (res.customer.token) {
+            const custId = res.customer.id;
+            fetch(`/api/orders?customerId=${encodeURIComponent(custId)}`, {
+              headers: { Authorization: `Bearer ${res.customer.token}` },
+            })
+              .then((r) => r.json())
+              .then((data) => {
+                if (data?.success && Array.isArray(data.orders)) {
+                  syncBackendOrders(data.orders);
+                  setOrders(getCustomerOrders(custId));
+                }
+              })
+              .catch(() => {});
+          }
           return {
             success: true,
             role: 'customer',

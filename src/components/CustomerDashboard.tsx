@@ -114,11 +114,11 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
   // New address form modal/state
   const [showAddAddressModal, setShowAddAddressModal] = useState(false);
-  const [newAddrLabel, setNewAddrLabel] = useState('Work');
+  const [newAddrLabel, setNewAddrLabel] = useState('Home');
   const [newAddrStreet, setNewAddrStreet] = useState('');
-  const [newAddrCity, setNewAddrCity] = useState('Springfield');
-  const [newAddrState, setNewAddrState] = useState('OR');
-  const [newAddrZip, setNewAddrZip] = useState('97477');
+  const [newAddrCity, setNewAddrCity] = useState('');
+  const [newAddrState, setNewAddrState] = useState('');
+  const [newAddrZip, setNewAddrZip] = useState('');
   const [newAddrDefault, setNewAddrDefault] = useState(false);
 
   // Reorder toast feedback
@@ -1885,7 +1885,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           required
                           value={newAddrStreet}
                           onChange={(e) => setNewAddrStreet(e.target.value)}
-                          placeholder="123 Main St, Apt 2"
+                          placeholder="Flat, House no., Building, Street"
                           className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg"
                         />
                       </div>
@@ -1897,6 +1897,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                             required
                             value={newAddrCity}
                             onChange={(e) => setNewAddrCity(e.target.value)}
+                            placeholder="City"
                             className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg"
                           />
                         </div>
@@ -1907,16 +1908,18 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                             required
                             value={newAddrState}
                             onChange={(e) => setNewAddrState(e.target.value)}
+                            placeholder="State"
                             className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg"
                           />
                         </div>
                         <div>
-                          <label className="text-[12px] font-semibold text-[#0b1c30]">ZIP Code</label>
+                          <label className="text-[12px] font-semibold text-[#0b1c30]">PIN / ZIP</label>
                           <input
                             type="text"
                             required
                             value={newAddrZip}
                             onChange={(e) => setNewAddrZip(e.target.value)}
+                            placeholder="PIN / ZIP"
                             className="w-full px-3 py-2 text-[13px] border border-[#cbd5e1] rounded-lg"
                           />
                         </div>

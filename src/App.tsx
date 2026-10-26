@@ -137,16 +137,7 @@ function FreshCartStore() {
     fetchAllProductsFromBackend().then((backendProducts) => {
       console.log('[Diagnostic Stage 2: Customer Portal Service] Fetched from backend count:', backendProducts?.length, 'IDs:', backendProducts?.map((p) => p.id));
       if (Array.isArray(backendProducts) && backendProducts.length > 0) {
-        setProducts((prev) => {
-          const merged = [...backendProducts];
-          prev.forEach((localP) => {
-            if (!merged.some((m) => m.id === localP.id)) {
-              merged.push(localP);
-            }
-          });
-          console.log('[Diagnostic Stage 1: Customer Portal] Merged complete product count:', merged.length, 'IDs:', merged.map((p) => p.id));
-          return merged;
-        });
+        setProducts(backendProducts);
       }
     }).catch((err) => {
       console.warn('[Diagnostic Stage 2: Customer Portal Service] Error syncing backend products:', err);
@@ -1147,6 +1138,8 @@ function FreshCartStore() {
         onSearchSubmit={handleSearchSubmit}
         selectedCategory={selectedCategory}
         onSelectCategory={handleCategorySelect}
+        currentEmployee={currentEmployee}
+        onEmployeeLogout={handleEmployeeLogout}
       />
 
       {/* Main Content Area */}
@@ -1192,7 +1185,7 @@ function FreshCartStore() {
             <EmployeePortal
               currentEmployee={currentEmployee}
               customerOrders={customerOrders}
-              onBackToStorefront={() => navigateToView(currentUser ? 'storefront' : 'login')}
+              onBackToStorefront={() => navigateToView('storefront')}
               onEmployeeLogout={handleEmployeeLogout}
               onUpdateOrderStatus={handleUpdateOrderStatus}
             />
