@@ -383,6 +383,25 @@ function saveStoredCustomers(customers: Customer[]): void {
   localStorage.setItem(STORAGE_CUSTOMERS_KEY, JSON.stringify(customers));
 }
 
+/**
+ * Synchronizes customer into persistent local customers storage.
+ */
+export function saveCustomerLocally(customer: Customer): void {
+  try {
+    const customers = getStoredCustomers();
+    const cleanEmail = (customer.email || '').trim().toLowerCase();
+    const index = customers.findIndex(
+      (c) => c.id === customer.id || (cleanEmail && c.email && c.email.trim().toLowerCase() === cleanEmail)
+    );
+    if (index >= 0) {
+      customers[index] = { ...customers[index], ...customer };
+    } else {
+      customers.push(customer);
+    }
+    saveStoredCustomers(customers);
+  } catch {}
+}
+
 
 /**
  * Generates an authentication token for the customer session.
@@ -502,10 +521,13 @@ export async function loginShared(
           passwordHash: '',
           passwordSalt: '',
           token,
+          role: 'customer',
+          userRole: 'CUSTOMER',
         };
 
         // Persist active session on this device
         localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
+        saveCustomerLocally(sessionUser);
 
         return {
           success: true,
@@ -661,10 +683,13 @@ export async function registerCustomer(
         passwordHash: '',
         passwordSalt: '',
         token,
+        role: 'customer',
+        userRole: 'CUSTOMER',
       };
 
       // Store authenticated session for current device
       localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(sessionUser));
+      saveCustomerLocally(sessionUser);
 
       return {
         success: true,

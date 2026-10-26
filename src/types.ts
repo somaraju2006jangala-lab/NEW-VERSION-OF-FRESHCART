@@ -112,6 +112,8 @@ export interface Customer {
   loyaltyTier?: string;
   token?: string;
   status?: string;
+  role?: 'customer';
+  userRole?: 'CUSTOMER';
 }
 
 export interface AdminCustomerAccount {

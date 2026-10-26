@@ -12,6 +12,7 @@ import {
   ArrowRight,
   ShieldCheck,
   AlertCircle,
+  CheckCircle2,
   ArrowLeft,
   Sparkles,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Simple password strength calculation
   const hasMinLength = password.length >= 8;
@@ -74,6 +76,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     e.preventDefault();
     setErrorMessage(null);
     setPhoneError(null);
+    setSuccessMessage(null);
 
     if (!name.trim()) {
       setErrorMessage('Please enter your full name.');
@@ -115,7 +118,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       });
 
       if (res.success) {
-        onRegisterSuccess();
+        setSuccessMessage('Registration Completed! Opening Customer Portal...');
+        setTimeout(() => {
+          onRegisterSuccess();
+        }, 800);
       } else {
         const errorText = res.error || 'Failed to create customer account. Please try again.';
         setErrorMessage(errorText);
@@ -182,6 +188,17 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             >
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-[#dc2626]" />
               <div className="flex-1 font-medium">{errorMessage}</div>
+            </div>
+          )}
+
+          {/* Global Form Success Message */}
+          {successMessage && (
+            <div
+              id="register-success-alert"
+              className="p-3.5 rounded-xl bg-[#ecfdf5] border border-[#a7f3d0] text-[#065f46] text-[13px] flex items-start gap-2.5 animate-in fade-in duration-200"
+            >
+              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-[#059669]" />
+              <div className="flex-1 font-medium">{successMessage}</div>
             </div>
           )}
 

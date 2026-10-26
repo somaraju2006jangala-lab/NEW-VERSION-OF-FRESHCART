@@ -16,6 +16,7 @@ import {
   RegisterPayload,
   syncBackendOrders,
   STORAGE_CURRENT_USER_KEY,
+  saveCustomerLocally,
 } from '../services/authService';
 import { AuthorizedAdmin } from '../services/adminService';
 import { AuthorizedEmployee } from '../services/employeeService';
@@ -97,10 +98,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   const verifiedCustomer: Customer = {
                     ...user,
                     ...data.customer,
+                    role: 'customer',
+                    userRole: 'CUSTOMER',
                     token: user.token,
                   };
                   setCurrentUser(verifiedCustomer);
                   localStorage.setItem(STORAGE_CURRENT_USER_KEY, JSON.stringify(verifiedCustomer));
+                  saveCustomerLocally(verifiedCustomer);
                   setOrders(getCustomerOrders(verifiedCustomer.id));
                 } else {
                   setCurrentUser(user);

@@ -479,6 +479,7 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       customerId,
       email: cleanEmail,
       name: newCustomer.name,
+      role: 'customer',
     });
 
     const sessionUser = {
@@ -490,10 +491,18 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       loyaltyTier: newCustomer.loyaltyTier,
       savedAddresses: newCustomer.savedAddresses,
       createdAt: verified.createdAt || new Date().toISOString(),
+      role: 'customer',
+      userRole: 'CUSTOMER',
       token,
     };
 
-    sendJson(res, 201, { success: true, customer: sessionUser, token });
+    sendJson(res, 201, {
+      success: true,
+      role: 'customer',
+      userRole: 'CUSTOMER',
+      customer: sessionUser,
+      token,
+    });
   } catch (err: any) {
     sendJson(res, 500, {
       success: false,
@@ -656,6 +665,7 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       customerId: customer.id,
       email: customer.email,
       name: customer.name,
+      role: 'customer',
     });
 
     const sessionUser = {
@@ -667,6 +677,8 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
       loyaltyTier: customer.loyaltyTier,
       savedAddresses: customer.savedAddresses || [],
       createdAt: customer.createdAt || new Date().toISOString(),
+      role: 'customer',
+      userRole: 'CUSTOMER',
       token,
     };
 
@@ -814,9 +826,16 @@ apiRouter.get(['/api/auth/me', '/auth/me'], async (req: Request, res: Response) 
       loyaltyTier: customer.loyaltyTier,
       savedAddresses: customer.savedAddresses || [],
       createdAt: customer.createdAt || new Date().toISOString(),
+      role: 'customer',
+      userRole: 'CUSTOMER',
     };
 
-    sendJson(res, 200, { success: true, customer: sessionUser });
+    sendJson(res, 200, {
+      success: true,
+      role: 'customer',
+      userRole: 'CUSTOMER',
+      customer: sessionUser,
+    });
   } catch (err: any) {
     sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve profile.' });
   }

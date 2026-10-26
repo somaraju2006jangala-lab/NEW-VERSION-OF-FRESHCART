@@ -226,7 +226,7 @@ function FreshCartStore() {
       setCurrentAdmin(data.admin);
       navigateToView('admin');
     } else {
-      navigateToView('storefront');
+      navigateToView('dashboard');
     }
   };
 
@@ -554,9 +554,9 @@ function FreshCartStore() {
             setSelectedCategory(catId);
           }
         } else if (hash === '#/login' || hash === '#/register' || hash === '#login' || hash === '#register') {
-          // Already logged in: redirect to storefront
-          setCurrentView('storefront');
-          window.location.hash = '#/storefront';
+          // Already logged in customer: redirect to Customer Portal
+          setCurrentView('dashboard');
+          window.location.hash = '#/dashboard';
         } else {
           // Default authenticated view is storefront homepage
           setCurrentView('storefront');
@@ -1203,7 +1203,7 @@ function FreshCartStore() {
         ) : currentView === 'register' ? (
           <RegisterPage
             onNavigateToLogin={() => navigateToView('login')}
-            onRegisterSuccess={() => navigateToView('storefront')}
+            onRegisterSuccess={() => navigateToView('dashboard')}
           />
         ) : currentView === 'dashboard' ? (
           currentUser ? (

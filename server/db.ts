@@ -1367,13 +1367,16 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
           OR mobile = ? 
           OR mobile = ? 
           OR mobile = ?
+          OR LOWER(full_name) = ?
+          OR SUBSTRING_INDEX(LOWER(email), '@', 1) = ?
        ORDER BY
          CASE WHEN customer_id = ? THEN 0 ELSE 1 END,
          CASE WHEN LOWER(email) = ? THEN 0 ELSE 1 END,
+         CASE WHEN mobile = ? THEN 0 ELSE 1 END,
          CASE WHEN password_hash IS NOT NULL AND password_hash != '' THEN 0 ELSE 1 END,
          id ASC
        LIMIT 1`,
-      [clean, cleanEmail, cleanEmail, p1, p2, p3, p4, p5, clean, cleanEmail]
+      [clean, cleanEmail, cleanEmail, p1, p2, p3, p4, p5, cleanEmail, cleanEmail, clean, cleanEmail, p2]
     );
 
     if (rows.length === 0) return null;
@@ -1399,6 +1402,8 @@ export async function findCustomerInDb(identifier: string): Promise<any | null> 
       passwordHash: customer.passwordHash,
       loyaltyTier: customer.loyaltyTier,
       status: customer.status || 'Active',
+      role: 'customer',
+      userRole: 'CUSTOMER',
       createdAt: customer.createdAt,
     };
   } catch (err: any) {
