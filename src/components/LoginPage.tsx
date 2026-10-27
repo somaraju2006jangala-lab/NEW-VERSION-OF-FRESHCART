@@ -21,6 +21,7 @@ import { AuthorizedEmployee } from '../services/employeeService';
 
 interface LoginPageProps {
   onNavigateToRegister: () => void;
+  onNavigateToResetPassword?: (token?: string) => void;
   onLoginSuccess: (
     role: 'admin' | 'employee' | 'customer',
     data?: { admin?: AuthorizedAdmin; employee?: AuthorizedEmployee }
@@ -29,6 +30,7 @@ interface LoginPageProps {
 
 export const LoginPage: React.FC<LoginPageProps> = ({
   onNavigateToRegister,
+  onNavigateToResetPassword,
   onLoginSuccess,
 }) => {
   const { login, requestReset } = useAuth();
@@ -43,7 +45,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
-  const [forgotStatus, setForgotStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [forgotStatus, setForgotStatus] = useState<{
+    success: boolean;
+    message: string;
+    resetToken?: string;
+    resetUrl?: string;
+  } | null>(null);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -284,57 +291,84 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
       </div>
 
-      {/* Forgot Password Modal - Crystal Glass */}
+      {/* Forgot Password Modal - Black Liquid Semi-Solid Opaque Glass */}
       {showForgotModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0b1c30]/40 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white/45 backdrop-blur-xl rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-white/60">
-            <div className="p-5 border-b border-white/50 flex items-center justify-between bg-white/30 backdrop-blur-md">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#006b2c] text-white flex items-center justify-center shadow-2xs">
-                  <KeyRound className="w-4 h-4 text-[#7ffc97]" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-[#0a0f16]/95 backdrop-blur-2xl rounded-3xl border border-white/12 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.95),0_0_35px_rgba(16,185,129,0.08),inset_0_1px_1px_rgba(255,255,255,0.2)] overflow-hidden">
+            {/* Specular Liquid Edge Light */}
+            <div className="absolute top-0 inset-x-0 h-[1.5px] bg-gradient-to-r from-transparent via-emerald-400/60 to-transparent" />
+            <div className="absolute -top-10 inset-x-0 h-20 bg-white/5 blur-lg pointer-events-none" />
+
+            {/* Modal Header */}
+            <div className="p-5 border-b border-white/8 flex items-center justify-between bg-white/[0.02]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-emerald-700/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-inner">
+                  <KeyRound className="w-5 h-5 text-emerald-400" />
                 </div>
                 <div>
-                  <h3 className="text-[16px] font-bold text-[#0b1c30] font-display">
+                  <h3 className="text-[17px] font-bold text-white tracking-tight">
                     Reset Password
                   </h3>
-                  <p className="text-[11px] text-[#565e74]">
-                    Verify email to receive your password reset token
+                  <p className="text-[11px] text-slate-400">
+                    Verify email to receive your password reset link
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowForgotModal(false)}
-                className="w-8 h-8 rounded-lg text-[#565e74] hover:bg-white/60 hover:text-[#0b1c30] flex items-center justify-center transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Modal Form */}
             <form onSubmit={handleForgotPasswordSubmit} className="p-6 space-y-4">
               {forgotStatus && (
                 <div
-                  className={`p-3 rounded-xl text-[12px] flex items-start gap-2 ${
+                  className={`p-3.5 rounded-xl text-[12px] flex flex-col gap-2.5 ${
                     forgotStatus.success
-                      ? 'bg-[#dcfce7] border border-[#bbf7d0] text-[#166534]'
-                      : 'bg-[#fef2f2] border border-[#fecaca] text-[#991b1b]'
+                      ? 'bg-emerald-950/40 border border-emerald-500/30 text-emerald-200'
+                      : 'bg-rose-950/40 border border-rose-500/30 text-rose-200'
                   }`}
                 >
-                  {forgotStatus.success ? (
-                    <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-[#16a34a]" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-[#dc2626]" />
+                  <div className="flex items-start gap-2">
+                    {forgotStatus.success ? (
+                      <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-rose-400" />
+                    )}
+                    <span className="leading-snug">{forgotStatus.message}</span>
+                  </div>
+
+                  {forgotStatus.success && forgotStatus.resetToken && (
+                    <button
+                      type="button"
+                      id="btn-open-reset-screen"
+                      onClick={() => {
+                        setShowForgotModal(false);
+                        if (onNavigateToResetPassword) {
+                          onNavigateToResetPassword(forgotStatus.resetToken);
+                        } else {
+                          window.location.hash = `#/reset-password?token=${forgotStatus.resetToken}`;
+                        }
+                      }}
+                      className="mt-1 w-full py-2.5 px-3 rounded-lg bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 text-emerald-300 text-[12px] font-semibold transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <span>Proceed to Enter New Password</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-emerald-300" />
+                    </button>
                   )}
-                  <span>{forgotStatus.message}</span>
                 </div>
               )}
 
-              <p className="text-[13px] text-[#565e74]">
-                Enter the email address registered with your FreshCart account. We will send a secure password reset link.
+              <p className="text-[13px] text-slate-300 leading-relaxed">
+                Enter the email address registered with your FreshCart account. We will dispatch a secure 15-minute reset link.
               </p>
 
               <div className="space-y-1.5">
-                <label className="text-[12px] font-semibold text-[#0b1c30]">
+                <label className="text-[12px] font-semibold text-slate-300">
                   Your Account Email
                 </label>
                 <input
@@ -343,25 +377,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
                   placeholder="name@example.com"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/60 text-[13px] bg-white/40 focus:bg-white/70 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-white/15 text-[13px] text-white placeholder-slate-500 bg-white/[0.05] focus:bg-white/[0.08] focus:border-emerald-500 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30 transition-all"
                 />
               </div>
 
-              <div className="pt-2 flex items-center gap-2 justify-end">
+              <div className="pt-2 flex items-center gap-2.5 justify-end">
                 <button
                   type="button"
                   onClick={() => setShowForgotModal(false)}
-                  className="px-4 py-2 rounded-xl text-[13px] font-medium text-[#565e74] hover:bg-white/40 transition-colors cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-[13px] font-medium text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={forgotLoading}
-                  className="px-5 py-2 rounded-xl bg-[#006b2c] hover:bg-[#00873a] text-white text-[13px] font-semibold transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#006b2c] to-[#00873a] hover:from-[#00873a] hover:to-[#059669] text-white text-[13px] font-semibold transition-all duration-200 flex items-center gap-2 shadow-[0_8px_20px_rgba(0,107,44,0.35)] cursor-pointer disabled:opacity-60"
                 >
                   {forgotLoading ? (
-                    <span>Sending Token...</span>
+                    <span>Dispatching Link...</span>
                   ) : (
                     <span>Send Reset Link</span>
                   )}
