@@ -43,7 +43,7 @@ interface AuthContextType {
   removeAddress: (addressId: string) => void;
   refreshOrders: () => void;
   addOrder: (order: CustomerOrder) => void;
-  requestReset: (email: string) => Promise<{ success: boolean; message: string }>;
+  requestReset: (email: string) => Promise<{ success: boolean; message: string; resetToken?: string; resetUrl?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

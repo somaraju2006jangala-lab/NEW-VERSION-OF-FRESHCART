@@ -1473,7 +1473,7 @@ export function clearCustomerOrders(): void {
  */
 export async function requestPasswordReset(
   email: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; resetToken?: string; resetUrl?: string }> {
   const trimmed = email.trim().toLowerCase();
 
   try {
@@ -1487,6 +1487,8 @@ export async function requestPasswordReset(
       return {
         success: true,
         message: data.message || `A secure password reset link has been dispatched to ${trimmed}.`,
+        resetToken: data.resetToken,
+        resetUrl: data.resetUrl,
       };
     }
   } catch {
@@ -1510,13 +1512,67 @@ export async function requestPasswordReset(
 }
 
 /**
+ * Validates whether a password reset token is active, unexpired, and unused.
+ */
+export async function verifyPasswordResetToken(
+  token: string
+): Promise<{ success: boolean; valid: boolean; message?: string; error?: string; email?: string }> {
+  const trimmed = (token || '').trim();
+  if (!trimmed) {
+    return {
+      success: false,
+      valid: false,
+      error: 'Password reset token is missing.',
+    };
+  }
+
+  try {
+    const res = await fetch(`/api/auth/verify-reset-token?token=${encodeURIComponent(trimmed)}`);
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.valid) {
+      return {
+        success: true,
+        valid: true,
+        message: data.message || 'Token is valid.',
+        email: data.email,
+      };
+    }
+    return {
+      success: false,
+      valid: false,
+      error: data?.error || 'Invalid or expired password reset link. Please request a new one.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      valid: false,
+      error: err?.message || 'Network error while verifying reset link.',
+    };
+  }
+}
+
+/**
  * Resets a customer password using the secure one-way salted password reset API.
+ * Accepts both (newPassword, resetToken) and (identifier, newPassword, resetToken).
  */
 export async function resetCustomerPassword(
-  identifier: string,
-  newPassword: string,
-  resetToken?: string
+  newPasswordOrIdentifier: string,
+  resetTokenOrNewPassword: string,
+  optionalToken?: string
 ): Promise<{ success: boolean; message?: string; error?: string }> {
+  let newPassword = '';
+  let resetToken = '';
+  let identifier: string | undefined = undefined;
+
+  if (optionalToken !== undefined) {
+    identifier = newPasswordOrIdentifier;
+    newPassword = resetTokenOrNewPassword;
+    resetToken = optionalToken;
+  } else {
+    newPassword = newPasswordOrIdentifier;
+    resetToken = resetTokenOrNewPassword;
+  }
+
   try {
     const res = await fetch('/api/auth/reset-password', {
       method: 'POST',

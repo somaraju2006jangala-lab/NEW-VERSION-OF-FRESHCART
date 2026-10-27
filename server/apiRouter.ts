@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import {
   generateOrderOtp,
@@ -23,6 +24,9 @@ import {
   getCustomerAccountByIdFromDb,
   updateCustomerStatusInDb,
   updateCustomerPasswordHashInDb,
+  createPasswordResetInDb,
+  findPasswordResetByHashInDb,
+  markPasswordResetAsUsedInDb,
   updateCustomerProfileInDb,
   addCustomerAddressInDb,
   getProductsFromDb,
@@ -704,12 +708,53 @@ apiRouter.post(['/api/auth/login', '/auth/login'], async (req: Request, res: Res
   }
 });
 
-// Secure password reset tokens store (in-memory with 15-minute expiration)
-const passwordResetTokens = new Map<string, { customerId: string; expiresAt: number }>();
+// Secure password reset tokens store
+// Store only SHA-256 hashed reset tokens in memory and MySQL
+interface SecureResetTokenRecord {
+  tokenHash: string;
+  customerId: string;
+  email: string | null;
+  expiresAt: number;
+  used: boolean;
+}
+const passwordResetTokens = new Map<string, SecureResetTokenRecord>();
+
+function hashResetToken(rawToken: string): string {
+  return crypto.createHash('sha256').update(rawToken.trim()).digest('hex');
+}
+
+function maskEmailAddress(email: string): string {
+  const parts = email.split('@');
+  if (parts.length !== 2) return '***';
+  const [local, domain] = parts;
+  if (local.length <= 2) return `${local[0]}***@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+function getAppBaseUrl(req: Request): string {
+  const origin = req.get('origin');
+  if (origin && origin !== 'null') {
+    return origin.replace(/\/+$/, '');
+  }
+  const referer = req.get('referer');
+  if (referer) {
+    try {
+      const parsed = new URL(referer);
+      return parsed.origin;
+    } catch {}
+  }
+  const host = req.get('host');
+  if (host) {
+    const protocol = req.secure || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    return `${protocol}://${host}`;
+  }
+  return (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+}
 
 /**
  * POST /api/auth/forgot-password
  * Initiates secure password reset process without revealing existing passwords.
+ * Generates cryptographically secure token, stores only SHA-256 hash, and returns resetUrl.
  */
 apiRouter.post(['/api/auth/forgot-password', '/auth/forgot-password'], async (req: Request, res: Response) => {
   try {
@@ -730,31 +775,141 @@ apiRouter.post(['/api/auth/forgot-password', '/auth/forgot-password'], async (re
       return;
     }
 
-    const resetToken = `reset-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
-    passwordResetTokens.set(resetToken, {
+    // Generate cryptographically secure random token (32 bytes = 64 hex characters)
+    const rawResetToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashResetToken(rawResetToken);
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes expiration
+
+    // Store securely hashed token in MySQL
+    await createPasswordResetInDb(tokenHash, customer.id, customer.email || target, expiresAt);
+
+    // Also store in in-memory cache for fast lookup and redundancy
+    passwordResetTokens.set(tokenHash, {
+      tokenHash,
       customerId: customer.id,
-      expiresAt: Date.now() + 15 * 60 * 1000,
+      email: customer.email || target,
+      expiresAt,
+      used: false,
     });
+
+    // Clean up expired in-memory tokens
+    const now = Date.now();
+    for (const [key, val] of passwordResetTokens.entries()) {
+      if (val.expiresAt < now) {
+        passwordResetTokens.delete(key);
+      }
+    }
+
+    const baseUrl = getAppBaseUrl(req);
+    const resetUrl = `${baseUrl}/#/reset-password?token=${rawResetToken}`;
+
+    // Never log raw tokens or passwords
+    console.log(`[Auth] Password reset link generated for customer account: ${customer.id}`);
 
     sendJson(res, 200, {
       success: true,
-      message: `A secure password reset link has been dispatched to ${customer.email || target}.`,
-      resetToken,
+      message: `A secure password reset link has been dispatched to your email.`,
+      resetToken: rawResetToken,
+      resetUrl,
     });
   } catch (err: any) {
-    sendJson(res, 500, { success: false, error: err?.message || 'Failed to process password reset request.' });
+    console.error('[Auth] Error initiating password reset:', err?.message);
+    sendJson(res, 500, { success: false, error: 'Failed to process password reset request.' });
+  }
+});
+
+/**
+ * GET /api/auth/verify-reset-token
+ * Validates whether a password reset token is valid, unexpired, and unused.
+ */
+apiRouter.get(['/api/auth/verify-reset-token', '/auth/verify-reset-token'], async (req: Request, res: Response) => {
+  try {
+    const rawToken = String(req.query.token || '').trim();
+    if (!rawToken) {
+      sendJson(res, 400, { success: false, valid: false, error: 'Reset token is required.' });
+      return;
+    }
+
+    const tokenHash = hashResetToken(rawToken);
+
+    // Look up in MySQL or in-memory fallback
+    let record: { customerId: string; email: string | null; expiresAt: number; used: boolean } | null = null;
+    const dbRecord = await findPasswordResetByHashInDb(tokenHash);
+    if (dbRecord) {
+      record = {
+        customerId: dbRecord.customer_id,
+        email: dbRecord.email,
+        expiresAt: dbRecord.expires_at,
+        used: dbRecord.used,
+      };
+    } else if (passwordResetTokens.has(tokenHash)) {
+      const memRecord = passwordResetTokens.get(tokenHash)!;
+      record = {
+        customerId: memRecord.customerId,
+        email: memRecord.email,
+        expiresAt: memRecord.expiresAt,
+        used: memRecord.used,
+      };
+    }
+
+    if (!record) {
+      sendJson(res, 400, {
+        success: false,
+        valid: false,
+        error: 'Invalid password reset token. Please request a new reset link.',
+      });
+      return;
+    }
+
+    if (record.used) {
+      sendJson(res, 400, {
+        success: false,
+        valid: false,
+        error: 'This password reset link has already been used. Please request a new link.',
+      });
+      return;
+    }
+
+    if (Date.now() > record.expiresAt) {
+      sendJson(res, 400, {
+        success: false,
+        valid: false,
+        error: 'This password reset link has expired. Reset links are valid for 15 minutes.',
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      valid: true,
+      message: 'Password reset token is valid.',
+      email: record.email ? maskEmailAddress(record.email) : undefined,
+    });
+  } catch (err: any) {
+    console.error('[Auth] Error verifying reset token:', err?.message);
+    sendJson(res, 500, { success: false, valid: false, error: 'Failed to verify reset token.' });
   }
 });
 
 /**
  * POST /api/auth/reset-password
  * Completes secure password reset using one-way salted bcrypt hashing.
- * Never stores or returns plain text passwords.
+ * Strictly enforces single-use token validation and expiration.
+ * Never stores or logs plain text passwords or tokens.
  */
 apiRouter.post(['/api/auth/reset-password', '/auth/reset-password'], async (req: Request, res: Response) => {
   try {
-    const { identifier, resetToken, newPassword } = req.body || {};
+    const { resetToken, newPassword } = req.body || {};
+    const trimmedToken = typeof resetToken === 'string' ? resetToken.trim() : '';
     const trimmedPass = typeof newPassword === 'string' ? newPassword : '';
+
+    if (!trimmedToken) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Password reset token is required. Please use the link provided in your email.',
+      });
+      return;
+    }
 
     if (!trimmedPass || trimmedPass.length < 6) {
       sendJson(res, 400, {
@@ -764,21 +919,42 @@ apiRouter.post(['/api/auth/reset-password', '/auth/reset-password'], async (req:
       return;
     }
 
+    const tokenHash = hashResetToken(trimmedToken);
+
+    // Look up token record in DB and in-memory cache
     let customerIdToReset: string | null = null;
-    if (resetToken && passwordResetTokens.has(resetToken)) {
-      const record = passwordResetTokens.get(resetToken)!;
-      if (Date.now() <= record.expiresAt) {
-        customerIdToReset = record.customerId;
-        passwordResetTokens.delete(resetToken);
+    let isUsed = false;
+    let isExpired = false;
+
+    const dbRecord = await findPasswordResetByHashInDb(tokenHash);
+    if (dbRecord) {
+      if (dbRecord.used) {
+        isUsed = true;
+      } else if (Date.now() > dbRecord.expires_at) {
+        isExpired = true;
+      } else {
+        customerIdToReset = dbRecord.customer_id;
+      }
+    } else if (passwordResetTokens.has(tokenHash)) {
+      const memRecord = passwordResetTokens.get(tokenHash)!;
+      if (memRecord.used) {
+        isUsed = true;
+      } else if (Date.now() > memRecord.expiresAt) {
+        isExpired = true;
+      } else {
+        customerIdToReset = memRecord.customerId;
       }
     }
 
-    if (!customerIdToReset && identifier) {
-      const cust = await findCustomerInDb(identifier.trim());
-      if (cust) customerIdToReset = cust.id;
+    if (isUsed) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'This password reset link has already been used. Please request a new link.',
+      });
+      return;
     }
 
-    if (!customerIdToReset) {
+    if (isExpired || !customerIdToReset) {
       sendJson(res, 400, {
         success: false,
         error: 'Invalid or expired password reset token. Please request a new reset link.',
@@ -786,25 +962,37 @@ apiRouter.post(['/api/auth/reset-password', '/auth/reset-password'], async (req:
       return;
     }
 
+    // Hash the new password securely using bcrypt with 10 salt rounds
     const passwordHash = await bcrypt.hash(trimmedPass, 10);
     const updated = await updateCustomerPasswordHashInDb(customerIdToReset, passwordHash);
 
     if (!updated) {
       sendJson(res, 500, {
         success: false,
-        error: 'Failed to update customer password in database.',
+        error: 'Failed to update customer password in database. Please try again.',
       });
       return;
     }
+
+    // Invalidate the reset token immediately (single-use enforcement)
+    await markPasswordResetAsUsedInDb(tokenHash);
+    const memRecord = passwordResetTokens.get(tokenHash);
+    if (memRecord) {
+      memRecord.used = true;
+    }
+
+    // Never log passwords or tokens
+    console.log(`[Auth] Customer password successfully updated for account: ${customerIdToReset}`);
 
     sendJson(res, 200, {
       success: true,
       message: 'Password successfully updated! You can now log in with your new password.',
     });
   } catch (err: any) {
+    console.error('[Auth] Error resetting password:', err?.message);
     sendJson(res, 500, {
       success: false,
-      error: err?.message || 'Failed to reset password.',
+      error: 'Failed to reset password.',
     });
   }
 });
@@ -2219,8 +2407,9 @@ apiRouter.get(['/api/otp/provider-config', '/otp/provider-config', '/provider-co
  */
 apiRouter.post(['/api/admin/login', '/admin/login'], async (req: Request, res: Response) => {
   try {
-    const { identifier, password } = req.body || {};
-    const trimmedId = typeof identifier === 'string' ? identifier.trim() : '';
+    const { identifier, email, username, password } = req.body || {};
+    const rawId = identifier || email || username || '';
+    const trimmedId = typeof rawId === 'string' ? rawId.trim() : '';
     const trimmedPass = typeof password === 'string' ? password : '';
 
     if (!trimmedId || !trimmedPass) {

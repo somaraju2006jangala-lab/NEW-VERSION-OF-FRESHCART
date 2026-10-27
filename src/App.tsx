@@ -24,6 +24,7 @@ import { FloatingCart } from './components/FloatingCart';
 import { AdminPortal } from './components/AdminPortal';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
 import {
   AuthorizedAdmin,
   getStoredAdminUser,
@@ -146,6 +147,7 @@ function FreshCartStore() {
 
   // Default to login when unauthenticated; storefront when authenticated
   const [currentView, setCurrentView] = useState<ViewType>('login');
+  const [resetPasswordToken, setResetPasswordToken] = useState<string>('');
 
   // Authorized Admin Authentication & Session State
   const [currentAdmin, setCurrentAdmin] = useState<AuthorizedAdmin | null>(() => getStoredAdminUser());
@@ -461,6 +463,29 @@ function FreshCartStore() {
     const handleHashChange = () => {
       const hash = window.location.hash.toLowerCase();
       const pathname = window.location.pathname.toLowerCase();
+
+      const extractResetToken = (): string => {
+        const rawHash = window.location.hash;
+        const hashQIndex = rawHash.indexOf('?');
+        if (hashQIndex !== -1) {
+          const params = new URLSearchParams(rawHash.substring(hashQIndex));
+          const t = params.get('token');
+          if (t) return t.trim();
+        }
+        if (window.location.search) {
+          const params = new URLSearchParams(window.location.search);
+          const t = params.get('token');
+          if (t) return t.trim();
+        }
+        return '';
+      };
+
+      if (pathname.startsWith('/reset-password') && !hash.startsWith('#/reset-password') && !hash.startsWith('#reset-password')) {
+        const query = window.location.search;
+        window.location.hash = `#/reset-password${query}`;
+        return;
+      }
+
       if (pathname.startsWith('/checkout') && !hash.startsWith('#/checkout') && !hash.startsWith('#checkout')) {
         const query = window.location.search;
         window.location.hash = `#/checkout${query}`;
@@ -472,9 +497,17 @@ function FreshCartStore() {
         return;
       }
 
+      // Password Reset Route (accessible to any user with a valid link)
+      if (hash.startsWith('#/reset-password') || hash.startsWith('#reset-password')) {
+        setCurrentView('reset-password');
+        const token = extractResetToken();
+        if (token) setResetPasswordToken(token);
+        return;
+      }
+
       if (!currentUser && !currentAdmin && !currentEmployee) {
         // UNAUTHENTICATED USERS:
-        // Only the shared 'login' and customer 'register' pages are accessible.
+        // Only the shared 'login', 'reset-password', and customer 'register' pages are accessible.
         // Direct access to protected routes (#/admin, #/employee, #/storefront, #/dashboard, etc.) redirects to shared login.
         if (hash === '#/register' || hash === '#register') {
           setCurrentView('register');
@@ -617,6 +650,18 @@ function FreshCartStore() {
     ) {
       setCurrentView('login');
       window.location.hash = '#/login';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    if (view === 'reset-password') {
+      setCurrentView('reset-password');
+      if (param) {
+        setResetPasswordToken(param);
+        window.location.hash = `#/reset-password?token=${encodeURIComponent(param)}`;
+      } else {
+        window.location.hash = '#/reset-password';
+      }
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -1198,7 +1243,13 @@ function FreshCartStore() {
         ) : currentView === 'login' ? (
           <LoginPage
             onNavigateToRegister={() => navigateToView('register')}
+            onNavigateToResetPassword={(token) => navigateToView('reset-password', token)}
             onLoginSuccess={handleSharedLoginSuccess}
+          />
+        ) : currentView === 'reset-password' ? (
+          <ResetPasswordPage
+            resetToken={resetPasswordToken}
+            onNavigateToLogin={() => navigateToView('login')}
           />
         ) : currentView === 'register' ? (
           <RegisterPage
@@ -1456,7 +1507,8 @@ function FreshCartStore() {
         currentView !== 'cart' &&
         currentView !== 'checkout' &&
         currentView !== 'login' &&
-        currentView !== 'register' && (
+        currentView !== 'register' &&
+        currentView !== 'reset-password' && (
           <FloatingCart
             cart={cart}
             cartCount={cartCount}

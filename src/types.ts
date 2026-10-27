@@ -148,7 +148,7 @@ export interface Coupon {
   createdAt?: string;
 }
 
-export type ViewType = 'storefront' | 'admin' | 'employee' | 'login' | 'register' | 'dashboard' | 'search' | 'category' | 'cart' | 'checkout';
+export type ViewType = 'storefront' | 'admin' | 'employee' | 'login' | 'register' | 'reset-password' | 'dashboard' | 'search' | 'category' | 'cart' | 'checkout';
 
 export interface DeliveryChargeRule {
   id: string;

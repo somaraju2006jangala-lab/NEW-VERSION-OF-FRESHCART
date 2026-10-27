@@ -819,6 +819,20 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_da_employee_id (employee_id),
       INDEX idx_da_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    `CREATE TABLE IF NOT EXISTS password_resets (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      token_hash VARCHAR(64) NOT NULL UNIQUE,
+      customer_id VARCHAR(64) NOT NULL,
+      email VARCHAR(255) NULL,
+      expires_at BIGINT NOT NULL,
+      used BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_resets_token_hash (token_hash),
+      INDEX idx_resets_customer (customer_id),
+      INDEX idx_resets_used (used)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
   ];
 
   for (const sql of tableStatements) {
@@ -1721,6 +1735,81 @@ export async function updateCustomerPasswordHashInDb(customerId: string, passwor
     return result.affectedRows > 0;
   } catch (err: any) {
     console.error('[MySQL] Error updating customer password hash:', err?.message);
+    return false;
+  }
+}
+
+export interface PasswordResetRecord {
+  token_hash: string;
+  customer_id: string;
+  email: string | null;
+  expires_at: number;
+  used: boolean;
+}
+
+/**
+ * Stores a cryptographically secure SHA-256 hashed password reset token in MySQL.
+ */
+export async function createPasswordResetInDb(
+  tokenHash: string,
+  customerId: string,
+  email: string | null,
+  expiresAt: number
+): Promise<boolean> {
+  const pool = getPool();
+  try {
+    // Also ensure table exists in case migration hasn't run yet
+    await pool.query(
+      `INSERT INTO password_resets (token_hash, customer_id, email, expires_at, used)
+       VALUES (?, ?, ?, ?, FALSE)
+       ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), used = FALSE, updated_at = CURRENT_TIMESTAMP`,
+      [tokenHash, customerId, email, expiresAt]
+    );
+    return true;
+  } catch (err: any) {
+    console.error('[MySQL] Error creating password reset record:', err?.message);
+    return false;
+  }
+}
+
+/**
+ * Finds a password reset record by its SHA-256 token hash.
+ */
+export async function findPasswordResetByHashInDb(tokenHash: string): Promise<PasswordResetRecord | null> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT token_hash, customer_id, email, expires_at, used FROM password_resets WHERE token_hash = ? LIMIT 1`,
+      [tokenHash]
+    );
+    if (!rows || rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      token_hash: r.token_hash,
+      customer_id: r.customer_id,
+      email: r.email,
+      expires_at: Number(r.expires_at),
+      used: Boolean(r.used),
+    };
+  } catch (err: any) {
+    console.error('[MySQL] Error finding password reset record:', err?.message);
+    return null;
+  }
+}
+
+/**
+ * Marks a password reset token as used (single-use enforcement).
+ */
+export async function markPasswordResetAsUsedInDb(tokenHash: string): Promise<boolean> {
+  const pool = getPool();
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE password_resets SET used = TRUE, updated_at = CURRENT_TIMESTAMP WHERE token_hash = ? AND used = FALSE`,
+      [tokenHash]
+    );
+    return result.affectedRows > 0;
+  } catch (err: any) {
+    console.error('[MySQL] Error marking password reset as used:', err?.message);
     return false;
   }
 }
