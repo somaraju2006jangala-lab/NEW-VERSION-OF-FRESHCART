@@ -17,7 +17,23 @@ export const STORAGE_ADMIN_USER_KEY = 'freshcart_authorized_admin_user';
  */
 export function getStoredAdminToken(): string | null {
   try {
-    return localStorage.getItem(STORAGE_ADMIN_TOKEN_KEY) || null;
+    const direct =
+      localStorage.getItem(STORAGE_ADMIN_TOKEN_KEY) ||
+      localStorage.getItem('freshcart_admin_token') ||
+      sessionStorage.getItem(STORAGE_ADMIN_TOKEN_KEY) ||
+      sessionStorage.getItem('freshcart_admin_token');
+    if (direct && direct.trim()) return direct.trim();
+
+    const rawUser =
+      localStorage.getItem(STORAGE_ADMIN_USER_KEY) ||
+      sessionStorage.getItem(STORAGE_ADMIN_USER_KEY);
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser);
+      if (parsed && typeof parsed.token === 'string' && parsed.token.trim()) {
+        return parsed.token.trim();
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -28,7 +44,9 @@ export function getStoredAdminToken(): string | null {
  */
 export function getStoredAdminUser(): AuthorizedAdmin | null {
   try {
-    const raw = localStorage.getItem(STORAGE_ADMIN_USER_KEY);
+    const raw =
+      localStorage.getItem(STORAGE_ADMIN_USER_KEY) ||
+      sessionStorage.getItem(STORAGE_ADMIN_USER_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -42,6 +60,7 @@ export function getStoredAdminUser(): AuthorizedAdmin | null {
 export function saveAdminSession(token: string, admin: AuthorizedAdmin): void {
   try {
     localStorage.setItem(STORAGE_ADMIN_TOKEN_KEY, token);
+    localStorage.setItem('freshcart_admin_token', token);
     localStorage.setItem(STORAGE_ADMIN_USER_KEY, JSON.stringify(admin));
   } catch {
     // Ignore storage quota errors
@@ -54,11 +73,16 @@ export function saveAdminSession(token: string, admin: AuthorizedAdmin): void {
 export function clearAdminSession(): void {
   try {
     localStorage.removeItem(STORAGE_ADMIN_TOKEN_KEY);
+    localStorage.removeItem('freshcart_admin_token');
     localStorage.removeItem(STORAGE_ADMIN_USER_KEY);
+    sessionStorage.removeItem(STORAGE_ADMIN_TOKEN_KEY);
+    sessionStorage.removeItem('freshcart_admin_token');
+    sessionStorage.removeItem(STORAGE_ADMIN_USER_KEY);
   } catch {
     // Ignore
   }
 }
+
 
 /**
  * Authenticates an admin against backend /api/admin/login and MySQL database.

@@ -24,10 +24,34 @@ export const DEMO_EMPLOYEE_PASSWORD = 'FreshCartEmployee2026!';
  */
 export function getStoredEmployeeToken(): string | null {
   try {
-    return localStorage.getItem(STORAGE_EMPLOYEE_TOKEN_KEY) || null;
+    const direct =
+      localStorage.getItem(STORAGE_EMPLOYEE_TOKEN_KEY) ||
+      localStorage.getItem('freshcart_employee_token') ||
+      sessionStorage.getItem(STORAGE_EMPLOYEE_TOKEN_KEY) ||
+      sessionStorage.getItem('freshcart_employee_token');
+    if (direct && direct.trim()) return direct.trim();
+
+    const rawUser =
+      localStorage.getItem(STORAGE_EMPLOYEE_USER_KEY) ||
+      sessionStorage.getItem(STORAGE_EMPLOYEE_USER_KEY);
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser);
+      if (parsed && typeof parsed.token === 'string' && parsed.token.trim()) {
+        return parsed.token.trim();
+      }
+    }
+    return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Returns currently active authenticated staff or admin token.
+ * Prefers admin token for administrative operations like employee registration.
+ */
+export function getStoredStaffToken(): string | null {
+  return getStoredAdminToken() || getStoredEmployeeToken() || null;
 }
 
 /**
@@ -35,7 +59,9 @@ export function getStoredEmployeeToken(): string | null {
  */
 export function getStoredEmployeeUser(): AuthorizedEmployee | null {
   try {
-    const raw = localStorage.getItem(STORAGE_EMPLOYEE_USER_KEY);
+    const raw =
+      localStorage.getItem(STORAGE_EMPLOYEE_USER_KEY) ||
+      sessionStorage.getItem(STORAGE_EMPLOYEE_USER_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -49,6 +75,7 @@ export function getStoredEmployeeUser(): AuthorizedEmployee | null {
 export function saveEmployeeSession(token: string, employee: AuthorizedEmployee): void {
   try {
     localStorage.setItem(STORAGE_EMPLOYEE_TOKEN_KEY, token);
+    localStorage.setItem('freshcart_employee_token', token);
     localStorage.setItem(STORAGE_EMPLOYEE_USER_KEY, JSON.stringify(employee));
   } catch {
     // Ignore storage quota errors
@@ -61,7 +88,11 @@ export function saveEmployeeSession(token: string, employee: AuthorizedEmployee)
 export function clearEmployeeSession(): void {
   try {
     localStorage.removeItem(STORAGE_EMPLOYEE_TOKEN_KEY);
+    localStorage.removeItem('freshcart_employee_token');
     localStorage.removeItem(STORAGE_EMPLOYEE_USER_KEY);
+    sessionStorage.removeItem(STORAGE_EMPLOYEE_TOKEN_KEY);
+    sessionStorage.removeItem('freshcart_employee_token');
+    sessionStorage.removeItem(STORAGE_EMPLOYEE_USER_KEY);
   } catch {
     // Ignore
   }
@@ -114,30 +145,47 @@ export async function fetchEmployeeProfile(): Promise<{
 /**
  * Fetches all registered employees from backend. Admin only.
  */
-export async function fetchRegisteredEmployees(): Promise<{
+export async function fetchRegisteredEmployees(authToken?: string): Promise<{
   success: boolean;
   employees: AuthorizedEmployee[];
   totalCount: number;
   activeCount: number;
   error?: string;
 }> {
-  const token = getStoredAdminToken();
+  const token = (authToken && authToken.trim()) || getStoredAdminToken() || getStoredEmployeeToken();
+  if (!token) {
+    return {
+      success: false,
+      employees: [],
+      totalCount: 0,
+      activeCount: 0,
+      error: 'Admin session has expired or authentication token is missing. Please sign in again.',
+    };
+  }
+
   try {
     const res = await fetch('/api/admin/employees', {
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        'x-admin-token': token,
       },
     });
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) {
+      const fallback =
+        res.status === 401
+          ? 'Admin session has expired. Please sign in again.'
+          : res.status === 403
+          ? 'Access denied: Administrator privileges required.'
+          : 'Failed to load employees from MySQL database.';
       return {
         success: false,
         employees: [],
         totalCount: 0,
         activeCount: 0,
-        error: data.error || 'Failed to load employees from MySQL database.',
+        error: data.error || fallback,
       };
     }
 
@@ -161,36 +209,57 @@ export async function fetchRegisteredEmployees(): Promise<{
 /**
  * Provisions a new employee in MySQL. Admin only.
  */
-export async function createEmployee(data: {
-  fullName: string;
-  email: string;
-  mobile?: string;
-  username?: string;
-  password: string;
-  employeeId?: string;
-  status?: 'active' | 'inactive';
-}): Promise<{
+export async function createEmployee(
+  data: {
+    fullName: string;
+    email: string;
+    mobile?: string;
+    username?: string;
+    password: string;
+    employeeId?: string;
+    status?: 'active' | 'inactive';
+  },
+  authToken?: string
+): Promise<{
   success: boolean;
   employee?: AuthorizedEmployee;
   message?: string;
   error?: string;
+  isAuthError?: boolean;
 }> {
-  const token = getStoredAdminToken();
+  const token = (authToken && authToken.trim()) || getStoredAdminToken() || getStoredEmployeeToken();
+  if (!token) {
+    return {
+      success: false,
+      error: 'Admin session has expired or authentication token is missing. Please sign in again.',
+      isAuthError: true,
+    };
+  }
+
   try {
     const res = await fetch('/api/admin/employees', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        'x-admin-token': token,
       },
       body: JSON.stringify(data),
     });
 
     const result = await res.json().catch(() => ({}));
     if (!res.ok || !result.success) {
+      const isAuthError = res.status === 401 || res.status === 403;
+      const fallback =
+        res.status === 401
+          ? 'Admin session has expired. Please sign in again.'
+          : res.status === 403
+          ? 'Access denied: Administrator privileges required to register employees.'
+          : 'Failed to create employee account.';
       return {
         success: false,
-        error: result.error || 'Failed to create employee account.',
+        error: result.error || fallback,
+        isAuthError,
       };
     }
 
@@ -207,6 +276,7 @@ export async function createEmployee(data: {
   }
 }
 
+
 /**
  * Updates employee details (name, email, mobile, username, status). Admin only.
  */
@@ -218,20 +288,29 @@ export async function updateEmployee(
     mobile?: string;
     username?: string;
     status?: 'active' | 'inactive';
-  }
+  },
+  authToken?: string
 ): Promise<{
   success: boolean;
   employee?: AuthorizedEmployee;
   message?: string;
   error?: string;
 }> {
-  const token = getStoredAdminToken();
+  const token = (authToken && authToken.trim()) || getStoredAdminToken() || getStoredEmployeeToken();
+  if (!token) {
+    return {
+      success: false,
+      error: 'Admin session has expired or authentication token is missing. Please sign in again.',
+    };
+  }
+
   try {
     const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        'x-admin-token': token,
       },
       body: JSON.stringify(data),
     });
@@ -262,20 +341,29 @@ export async function updateEmployee(
  */
 export async function toggleEmployeeStatus(
   employeeId: string,
-  status: 'active' | 'inactive'
+  status: 'active' | 'inactive',
+  authToken?: string
 ): Promise<{
   success: boolean;
   status?: string;
   message?: string;
   error?: string;
 }> {
-  const token = getStoredAdminToken();
+  const token = (authToken && authToken.trim()) || getStoredAdminToken() || getStoredEmployeeToken();
+  if (!token) {
+    return {
+      success: false,
+      error: 'Admin session has expired or authentication token is missing. Please sign in again.',
+    };
+  }
+
   try {
     const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}/status`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        'x-admin-token': token,
       },
       body: JSON.stringify({ status }),
     });
@@ -306,19 +394,28 @@ export async function toggleEmployeeStatus(
  */
 export async function resetEmployeePassword(
   employeeId: string,
-  newPassword: string
+  newPassword: string,
+  authToken?: string
 ): Promise<{
   success: boolean;
   message?: string;
   error?: string;
 }> {
-  const token = getStoredAdminToken();
+  const token = (authToken && authToken.trim()) || getStoredAdminToken() || getStoredEmployeeToken();
+  if (!token) {
+    return {
+      success: false,
+      error: 'Admin session has expired or authentication token is missing. Please sign in again.',
+    };
+  }
+
   try {
     const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}/reset-password`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        'x-admin-token': token,
       },
       body: JSON.stringify({ newPassword }),
     });
@@ -347,19 +444,28 @@ export async function resetEmployeePassword(
  * Permanently removes an employee account. Admin only.
  */
 export async function deleteEmployee(
-  employeeId: string
+  employeeId: string,
+  authToken?: string
 ): Promise<{
   success: boolean;
   message?: string;
   error?: string;
 }> {
-  const token = getStoredAdminToken();
+  const token = (authToken && authToken.trim()) || getStoredAdminToken() || getStoredEmployeeToken();
+  if (!token) {
+    return {
+      success: false,
+      error: 'Admin session has expired or authentication token is missing. Please sign in again.',
+    };
+  }
+
   try {
     const res = await fetch(`/api/admin/employees/${encodeURIComponent(employeeId)}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${token}`,
+        'x-admin-token': token,
       },
     });
 

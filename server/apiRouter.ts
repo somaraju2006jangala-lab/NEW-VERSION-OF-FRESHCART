@@ -183,13 +183,21 @@ export async function extractAdminAuth(req: Request): Promise<{
     (req.headers.authorization as string) ||
     (req.headers['authorization'] as string) ||
     (req.headers['Authorization'] as string);
-  const customAdminToken = (req.headers['x-admin-token'] as string);
+  const customAdminToken =
+    (req.headers['x-admin-token'] as string) ||
+    (req.headers['x-staff-token'] as string) ||
+    (req.headers['x-auth-token'] as string);
   let token = '';
 
   if (customAdminToken && typeof customAdminToken === 'string' && customAdminToken.trim()) {
     token = customAdminToken.trim();
-  } else if (authHeader && authHeader.trim().toLowerCase().startsWith('bearer ')) {
-    token = authHeader.trim().slice(7).trim();
+  } else if (authHeader && typeof authHeader === 'string' && authHeader.trim()) {
+    const trimmed = authHeader.trim();
+    if (trimmed.toLowerCase().startsWith('bearer ')) {
+      token = trimmed.slice(7).trim();
+    } else if (trimmed.startsWith('ey') || trimmed.split('.').length === 3) {
+      token = trimmed;
+    }
   } else if (req.query?.adminToken && typeof req.query.adminToken === 'string') {
     token = req.query.adminToken.trim();
   } else if (req.query?.token && typeof req.query.token === 'string') {
@@ -198,6 +206,8 @@ export async function extractAdminAuth(req: Request): Promise<{
     if (testAdmin.valid && testAdmin.decoded) {
       token = candidate;
     }
+  } else if (req.body && typeof req.body === 'object' && req.body.adminToken && typeof req.body.adminToken === 'string') {
+    token = req.body.adminToken.trim();
   }
 
   if (token) {
@@ -322,7 +332,7 @@ export const apiRouter = express.Router();
 apiRouter.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-customer-id, x-admin-role, x-vercel-matched-path');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-customer-id, x-admin-role, x-admin-token, x-staff-token, x-auth-token, x-vercel-matched-path');
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
