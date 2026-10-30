@@ -642,14 +642,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
   };
 
-  const handleContinueToPayment = (e?: React.FormEvent) => {
+  const handleContinueToSummary = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!address.trim()) {
       setAddressError('Please enter a delivery address to proceed.');
       return;
     }
     setAddressError(null);
-    setCheckoutStep('payment');
+    setCheckoutStep('summary');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -658,13 +658,19 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleContinueToSummary = (e?: React.FormEvent) => {
+  const handleContinueToPayment = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!address.trim()) {
       setAddressError('Please enter a delivery address.');
       setCheckoutStep('delivery');
       return;
     }
+    setAddressError(null);
+    setCheckoutStep('payment');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleBackToSummary = () => {
     setCheckoutStep('summary');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1180,7 +1186,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   >
                     <ArrowLeft className="w-5 h-5 text-cyan-400" />
                   </button>
-                ) : checkoutStep === 'payment' ? (
+                ) : checkoutStep === 'summary' ? (
                   <button
                     type="button"
                     id="checkout-back-to-delivery-btn"
@@ -1194,11 +1200,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 ) : (
                   <button
                     type="button"
-                    id="checkout-back-to-payment-btn"
-                    data-testid="checkout-back-to-payment-btn"
-                    onClick={handleBackToPayment}
+                    id="checkout-back-to-summary-btn"
+                    data-testid="checkout-back-to-summary-btn"
+                    onClick={handleBackToSummary}
                     className="w-10 h-10 rounded-full bg-slate-900/90 border border-white/15 hover:border-cyan-400 hover:bg-slate-800 text-cyan-400 transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm active:scale-95"
-                    title="Back to Payment Method"
+                    title="Back to Order Items & Summary"
                   >
                     <ArrowLeft className="w-5 h-5 text-cyan-400" />
                   </button>
@@ -1207,21 +1213,21 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight font-display">
                     {checkoutStep === 'delivery'
                       ? 'Delivery Details'
-                      : checkoutStep === 'payment'
-                      ? 'Select Payment Method'
-                      : 'Order Items & Summary'}
+                      : checkoutStep === 'summary'
+                      ? 'Order Items & Summary'
+                      : 'Select Payment Method'}
                   </h1>
                   <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
                     {checkoutStep === 'delivery'
                       ? 'Step 1 of 3: Provide your delivery address and schedule'
-                      : checkoutStep === 'payment'
-                      ? 'Step 2 of 3: Choose your payment method and verify details'
-                      : 'Step 3 of 3: Review your order breakdown and confirm payment'}
+                      : checkoutStep === 'summary'
+                      ? 'Step 2 of 3: Review your order items, pack sizes, and total'
+                      : 'Step 3 of 3: Choose your payment method and confirm order'}
                   </p>
                 </div>
               </div>
 
-              {/* Stepper Progress Badges */}
+              {/* Stepper Progress Badges: Exact Labels: 1. Delivery Details → 2. Order Items & Summary → 3. Select Payment Method */}
               <div className="flex items-center gap-1.5 sm:gap-2 self-start sm:self-auto bg-slate-950/80 p-1.5 px-3 rounded-xl border border-white/10 overflow-x-auto max-w-full">
                 {/* Step 1: Delivery Details */}
                 <button
@@ -1244,65 +1250,74 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   >
                     {checkoutStep !== 'delivery' ? '✓' : '1'}
                   </span>
-                  <span className="whitespace-nowrap">1. Delivery</span>
+                  <span className="whitespace-nowrap">1. Delivery Details</span>
                 </button>
 
                 <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
 
-                {/* Step 2: Payment Method */}
+                {/* Step 2: Order Items & Summary */}
                 <button
                   type="button"
                   onClick={() => {
-                    if (checkoutStep === 'summary') handleBackToPayment();
-                    else if (checkoutStep === 'delivery') handleContinueToPayment();
+                    if (checkoutStep === 'payment') {
+                      handleBackToSummary();
+                    } else if (checkoutStep === 'delivery') {
+                      handleContinueToSummary();
+                    }
                   }}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    checkoutStep === 'payment'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                      : checkoutStep === 'summary'
-                      ? 'text-slate-300 hover:text-white cursor-pointer'
-                      : 'text-slate-500 cursor-pointer'
-                  }`}
-                >
-                  <span
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                      checkoutStep === 'payment'
-                        ? 'bg-emerald-500 text-slate-950'
-                        : checkoutStep === 'summary'
-                        ? 'bg-emerald-500/30 text-emerald-300'
-                        : 'bg-slate-800 text-slate-500'
-                    }`}
-                  >
-                    {checkoutStep === 'summary' ? '✓' : '2'}
-                  </span>
-                  <span className="whitespace-nowrap">2. Payment</span>
-                </button>
-
-                <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-
-                {/* Step 3: Order Summary */}
-                <div
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                     checkoutStep === 'summary'
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                      : 'text-slate-500'
+                      : checkoutStep === 'payment'
+                      ? 'text-slate-300 hover:text-white cursor-pointer'
+                      : 'text-slate-500 cursor-default'
                   }`}
                 >
                   <span
                     className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
                       checkoutStep === 'summary'
                         ? 'bg-emerald-500 text-slate-950'
+                        : checkoutStep === 'payment'
+                        ? 'bg-emerald-500/30 text-emerald-300'
+                        : 'bg-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {checkoutStep === 'payment' ? '✓' : '2'}
+                  </span>
+                  <span className="whitespace-nowrap">2. Order Items & Summary</span>
+                </button>
+
+                <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+
+                {/* Step 3: Select Payment Method */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (checkoutStep === 'summary') {
+                      handleContinueToPayment();
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    checkoutStep === 'payment'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                      : 'text-slate-500 cursor-default'
+                  }`}
+                >
+                  <span
+                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      checkoutStep === 'payment'
+                        ? 'bg-emerald-500 text-slate-950'
                         : 'bg-slate-800 text-slate-500'
                     }`}
                   >
                     3
                   </span>
-                  <span className="whitespace-nowrap">3. Summary</span>
-                </div>
+                  <span className="whitespace-nowrap">3. Select Payment Method</span>
+                </button>
               </div>
             </div>
 
-            {/* PAGE 1: DELIVERY ADDRESS & TIME SLOT */}
+            {/* PAGE 1: DELIVERY DETAILS (Step 1) */}
             {checkoutStep === 'delivery' && (
               <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
                 <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-4">
@@ -1310,10 +1325,10 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     <div className="flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
                       <h2 className="text-base sm:text-lg font-semibold text-white tracking-tight font-display">
-                        Delivery Address & Time Slot
+                        Delivery Address & Notes
                       </h2>
                     </div>
-                    <span className="text-xs text-slate-400">Step 1 Required</span>
+                    <span className="text-xs text-slate-400">Step 1 of 3</span>
                   </div>
 
                   {addressError && (
@@ -1342,7 +1357,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
                     <div>
                       <label className="block text-xs text-slate-400 mb-1.5 font-normal">
-                        Delivery Note (Optional)
+                        Delivery Instructions / Special Notes (Optional)
                       </label>
                       <input
                         type="text"
@@ -1375,34 +1390,215 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     type="button"
                     id="checkout-continue-btn"
                     data-testid="checkout-continue-btn"
-                    onClick={handleContinueToPayment}
+                    onClick={handleContinueToSummary}
                     className="py-3.5 px-8 rounded-xl checkout-neon-btn text-white text-sm sm:text-base font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
                   >
-                    <span>Continue to Payment Method</span>
+                    <span>Continue to Order Items & Summary</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
             )}
 
-            {/* PAGE 2: SELECT PAYMENT METHOD */}
+            {/* PAGE 2: ORDER ITEMS & SUMMARY (Step 2) */}
+            {checkoutStep === 'summary' && (
+              <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
+                {/* 1. DELIVERY DETAILS RECAP */}
+                <div className="checkout-panel rounded-2xl p-5 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight font-display">
+                        Delivery Destination
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      id="checkout-edit-delivery-btn"
+                      onClick={handleBackToDelivery}
+                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit Address & Notes</span>
+                    </button>
+                  </div>
+
+                  <div className="checkout-subpanel rounded-xl p-3.5 space-y-2 text-xs">
+                    <div>
+                      <p className="text-slate-400 text-[11px]">Address:</p>
+                      <p className="font-medium text-white">{address}</p>
+                    </div>
+                    {deliveryNote && (
+                      <div>
+                        <p className="text-slate-400 text-[11px]">Instructions / Notes:</p>
+                        <p className="text-slate-300 italic">{deliveryNote}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. ORDER ITEMS & FINANCIAL BREAKDOWN */}
+                <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShoppingBag className="w-4 h-4 text-cyan-400 shrink-0" />
+                      <h2 className="text-base sm:text-lg font-semibold text-white tracking-tight font-display">
+                        Order Items & Summary
+                      </h2>
+                    </div>
+                    <span className="text-xs text-slate-400">
+                      {totalItemCount} {totalItemCount === 1 ? 'item' : 'items'}
+                    </span>
+                  </div>
+
+                  {/* Items List */}
+                  <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                    {items.map((item) => {
+                      const itemPackSize = item.selectedPackSize || item.product.unit;
+                      const itemPrice = item.selectedPrice ?? item.product.price;
+
+                      return (
+                        <div
+                          key={`${item.product.id}-${itemPackSize}`}
+                          className="flex items-center gap-3.5 checkout-subpanel p-3.5 rounded-xl text-xs"
+                        >
+                          <img
+                            src={item.product.image}
+                            alt={item.product.title}
+                            className="w-14 h-14 rounded-lg object-cover bg-slate-900 border border-white/10 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white font-semibold truncate sm:text-sm">{item.product.title}</p>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-slate-400 text-[11px] mt-1">
+                              <span>Pack Size: <span className="text-emerald-400 font-medium">{itemPackSize}</span></span>
+                              <span>•</span>
+                              <span>Qty: <span className="text-white font-medium">{item.quantity}</span></span>
+                              <span>•</span>
+                              <span>Price: <span className="text-slate-300 font-medium">{formatINR(itemPrice)}</span></span>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-[10px] uppercase tracking-wider text-slate-400">Item Total</p>
+                            <p className="font-bold text-white tabular-nums sm:text-sm">
+                              {formatINR(itemPrice * item.quantity)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Financial Breakdown */}
+                  <div className="checkout-subpanel rounded-xl p-4 sm:p-5 space-y-3">
+                    <div className="flex justify-between items-center text-xs sm:text-sm text-slate-300">
+                      <span>Subtotal ({totalItemCount} {totalItemCount === 1 ? 'item' : 'items'})</span>
+                      <span className="font-semibold text-white tabular-nums">
+                        {formatINR(subtotal)}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs sm:text-sm text-slate-300">
+                      <span>Delivery Charges</span>
+                      <span
+                        className={`tabular-nums ${
+                          deliveryChargesAmount > 0
+                            ? 'font-semibold text-white'
+                            : 'text-emerald-400 font-semibold'
+                        }`}
+                      >
+                        {items.length === 0
+                          ? '₹0'
+                          : deliveryChargesAmount > 0
+                          ? formatINR(deliveryChargesAmount)
+                          : 'FREE'}
+                      </span>
+                    </div>
+
+                    {discount > 0 && activeCoupon && (
+                      <div className="flex justify-between items-center text-xs sm:text-sm text-emerald-400 font-medium">
+                        <span>Discount ({activeCoupon.discountPercentage}% OFF - {activeCoupon.code})</span>
+                        <span className="tabular-nums font-semibold">-{formatINR(discount)}</span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-baseline pt-3 border-t border-white/10">
+                      <div>
+                        <span className="text-base sm:text-lg font-bold text-white">Final Payable Amount</span>
+                        <p className="text-[11px] text-slate-400">Inclusive of all applicable taxes</p>
+                      </div>
+                      <span className="text-2xl sm:text-3xl font-extrabold text-[#00e699] tabular-nums font-display">
+                        {formatINR(total)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. STEP 2 ACTION BAR */}
+                <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col-reverse sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      id="checkout-back-to-delivery-btn-bottom"
+                      data-testid="checkout-back-to-delivery-btn"
+                      onClick={handleBackToDelivery}
+                      className="flex-1 sm:flex-none py-3 px-5 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 border border-white/15"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>Back to Delivery Details</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="checkout-return-to-cart-btn"
+                      onClick={onBackToCart}
+                      className="py-3 px-4 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 text-xs sm:text-sm font-medium transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <span>Return to Cart</span>
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    id="checkout-continue-to-payment-btn"
+                    data-testid="checkout-continue-to-payment-btn"
+                    onClick={handleContinueToPayment}
+                    className="w-full sm:w-auto py-3.5 px-8 rounded-xl checkout-neon-btn text-white text-sm sm:text-base font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
+                  >
+                    <span>Continue to Payment</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* PAGE 3: SELECT PAYMENT METHOD (Step 3) */}
             {checkoutStep === 'payment' && (
               <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
-                {/* Delivery Address Pill */}
-                <div className="checkout-subpanel rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-xs">
+                {/* Delivery & Items Recap Bar */}
+                <div className="checkout-subpanel rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-2 min-w-0">
                     <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
                     <span className="text-slate-400 shrink-0">Delivering to:</span>
                     <span className="text-white font-medium truncate">{address}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleBackToDelivery}
-                    className="text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors shrink-0"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>Edit</span>
-                  </button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleBackToDelivery}
+                      className="text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit Address</span>
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button
+                      type="button"
+                      onClick={handleBackToSummary}
+                      className="text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <ShoppingBag className="w-3.5 h-3.5" />
+                      <span>Review Items ({totalItemCount})</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Payment Methods Selection Panel */}
@@ -1842,172 +2038,54 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   )}
                 </div>
 
-                {/* Page 2 Bottom Bar: Back to Delivery & Continue to Order Summary */}
-                <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-4">
-                  <button
-                    type="button"
-                    id="checkout-back-to-delivery-btn-bottom"
-                    data-testid="checkout-back-to-delivery-btn"
-                    onClick={handleBackToDelivery}
-                    className="py-3 px-6 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 border border-white/15"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                    <span>Back to Delivery Details</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    id="checkout-continue-to-summary-btn"
-                    data-testid="checkout-continue-to-summary-btn"
-                    onClick={handleContinueToSummary}
-                    className="py-3.5 px-8 rounded-xl checkout-neon-btn text-white text-sm sm:text-base font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
-                  >
-                    <span>Continue to Order Summary</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* PAGE 3: ORDER ITEMS & SUMMARY */}
-            {checkoutStep === 'summary' && (
-              <div className="space-y-4 sm:space-y-4.5 animate-fadeIn">
-                {/* 1. DELIVERY DETAILS RECAP */}
-                <div className="checkout-panel rounded-2xl p-5 space-y-3.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
-                      <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight font-display">
-                        Delivery Destination
-                      </h2>
-                    </div>
-                    <button
-                      type="button"
-                      id="checkout-edit-delivery-btn"
-                      onClick={handleBackToDelivery}
-                      className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                {/* Step 3: Final Payable Amount Breakdown Panel */}
+                <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-3">
+                  <div className="flex justify-between items-center text-xs sm:text-sm text-slate-300">
+                    <span>Subtotal ({totalItemCount} {totalItemCount === 1 ? 'item' : 'items'})</span>
+                    <span className="font-semibold text-white tabular-nums">{formatINR(subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs sm:text-sm text-slate-300">
+                    <span>Delivery Charges</span>
+                    <span
+                      className={`tabular-nums ${
+                        deliveryChargesAmount > 0 ? 'font-semibold text-white' : 'text-emerald-400 font-semibold'
+                      }`}
                     >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-                  </div>
-
-                  <div className="checkout-subpanel rounded-xl p-3.5 space-y-2 text-xs">
-                    <div>
-                      <p className="text-slate-400 text-[11px]">Address:</p>
-                      <p className="font-medium text-white">{address}</p>
-                    </div>
-                    {deliveryNote && (
-                      <div>
-                        <p className="text-slate-400 text-[11px]">Note:</p>
-                        <p className="text-slate-300 italic">{deliveryNote}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2. ORDER ITEMS & FINANCIAL BREAKDOWN */}
-                <div className="checkout-panel rounded-2xl p-5 sm:p-6 space-y-5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ShoppingBag className="w-4 h-4 text-cyan-400 shrink-0" />
-                      <h2 className="text-base sm:text-lg font-semibold text-white tracking-tight font-display">
-                        Order Items & Summary
-                      </h2>
-                    </div>
-                    <span className="text-xs text-slate-400">
-                      {totalItemCount} {totalItemCount === 1 ? 'item' : 'items'}
+                      {items.length === 0
+                        ? '₹0'
+                        : deliveryChargesAmount > 0
+                        ? formatINR(deliveryChargesAmount)
+                        : 'FREE'}
                     </span>
                   </div>
-
-                  {/* Items List */}
-                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                    {items.map((item) => {
-                      const itemPackSize = item.selectedPackSize || item.product.unit;
-                      const itemPrice = item.selectedPrice ?? item.product.price;
-
-                      return (
-                        <div
-                          key={`${item.product.id}-${itemPackSize}`}
-                          className="flex items-center gap-3 checkout-subpanel p-3 rounded-xl text-xs"
-                        >
-                          <img
-                            src={item.product.image}
-                            alt={item.product.title}
-                            className="w-12 h-12 rounded-lg object-cover bg-slate-900 border border-white/10 shrink-0"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white font-semibold truncate sm:text-sm">{item.product.title}</p>
-                            <p className="text-slate-400 text-[11px] mt-0.5">
-                              Qty: <span className="text-white font-medium">{item.quantity}</span> <span className="text-emerald-400 font-medium">({itemPackSize})</span> × {formatINR(itemPrice)}
-                            </p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="font-bold text-white tabular-nums sm:text-sm">
-                              {formatINR(itemPrice * item.quantity)}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Financial Breakdown */}
-                  <div className="checkout-subpanel rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between items-center text-xs sm:text-sm text-slate-300">
-                      <span>Subtotal</span>
-                      <span className="font-semibold text-white tabular-nums">
-                        {formatINR(subtotal)}
-                      </span>
+                  {discount > 0 && activeCoupon && (
+                    <div className="flex justify-between items-center text-xs sm:text-sm text-emerald-400 font-medium">
+                      <span>Discount ({activeCoupon.discountPercentage}% OFF - {activeCoupon.code})</span>
+                      <span className="tabular-nums font-semibold">-{formatINR(discount)}</span>
                     </div>
-
-                    <div className="flex justify-between items-center text-xs sm:text-sm text-slate-300">
-                      <span>Delivery Charges</span>
-                      <span
-                        className={`tabular-nums ${
-                          deliveryChargesAmount > 0
-                            ? 'font-semibold text-white'
-                            : 'text-emerald-400 font-semibold'
-                        }`}
-                      >
-                        {items.length === 0
-                          ? '₹0'
-                          : deliveryChargesAmount > 0
-                          ? formatINR(deliveryChargesAmount)
-                          : 'FREE'}
-                      </span>
+                  )}
+                  <div className="flex justify-between items-baseline pt-3 border-t border-white/10">
+                    <div>
+                      <span className="text-base sm:text-lg font-bold text-white">Final Payable Amount</span>
+                      <p className="text-[11px] text-slate-400">Inclusive of all applicable taxes</p>
                     </div>
-
-                    {discount > 0 && activeCoupon && (
-                      <div className="flex justify-between items-center text-xs sm:text-sm text-emerald-400 font-medium">
-                        <span>Discount ({activeCoupon.discountPercentage}% OFF - {activeCoupon.code})</span>
-                        <span className="tabular-nums font-semibold">-{formatINR(discount)}</span>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between items-baseline pt-3 border-t border-white/10">
-                      <div>
-                        <span className="text-base sm:text-lg font-bold text-white">Final Payable Amount</span>
-                        <p className="text-[11px] text-slate-400">Inclusive of all applicable taxes</p>
-                      </div>
-                      <span className="text-2xl sm:text-3xl font-extrabold text-[#00e699] tabular-nums font-display">
-                        {formatINR(total)}
-                      </span>
-                    </div>
+                    <span className="text-2xl sm:text-3xl font-extrabold text-[#00e699] tabular-nums font-display">
+                      {formatINR(total)}
+                    </span>
                   </div>
                 </div>
 
-                {/* 3. FINAL CONFIRMATION ACTION BAR */}
+                {/* Page 3 Bottom Bar: Back to Order Items & Summary and Confirm Order / Pay Now */}
                 <div className="checkout-panel rounded-2xl p-4 sm:p-6 flex flex-col-reverse sm:flex-row items-center justify-between gap-4">
                   <button
                     type="button"
-                    id="checkout-back-to-payment-btn-bottom"
-                    data-testid="checkout-back-to-payment-btn"
-                    onClick={handleBackToPayment}
+                    id="checkout-back-to-summary-btn-bottom"
+                    data-testid="checkout-back-to-summary-btn"
+                    onClick={handleBackToSummary}
                     className="w-full sm:w-auto py-3 px-6 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-xs sm:text-sm font-semibold transition-all cursor-pointer flex items-center justify-center gap-2 border border-white/15"
                   >
                     <ArrowLeft className="w-4 h-4" />
-                    <span>Back to Payment Method</span>
+                    <span>Back to Order Items & Summary</span>
                   </button>
 
                   <button
