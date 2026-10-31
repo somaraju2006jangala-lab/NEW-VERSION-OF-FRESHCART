@@ -18,6 +18,7 @@ import {
   Truck,
 } from 'lucide-react';
 import { AuthorizedEmployee } from '../services/employeeService';
+import { AuthorizedAdmin } from '../services/adminService';
 
 interface HeaderProps {
   currentView: ViewType;
@@ -32,6 +33,7 @@ interface HeaderProps {
   onSelectCategory: (category: string) => void;
   currentEmployee?: AuthorizedEmployee | null;
   onEmployeeLogout?: () => void;
+  currentAdmin?: AuthorizedAdmin | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -47,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectCategory,
   currentEmployee,
   onEmployeeLogout,
+  currentAdmin,
 }) => {
   const { currentUser, logout } = useAuth();
   const { t } = useLanguage();
@@ -197,38 +200,40 @@ export const Header: React.FC<HeaderProps> = ({
               <LanguageSelector variant="light" compact={true} idPrefix="header-lang" />
             )}
 
-            {/* Toggle between Storefront/Login & Admin Portal */}
-            <button
-              id="toggle-admin-portal-btn"
-              type="button"
-              data-path="dashboard-overview"
-              onClick={() =>
-                onToggleView(
+            {/* Toggle between Storefront/Login & Admin Portal (Hidden for logged-in customers and on Customer Dashboard) */}
+            {((currentAdmin && (currentView === 'admin' || currentView === 'storefront')) || (!currentUser && currentView !== 'dashboard')) && (
+              <button
+                id="toggle-admin-portal-btn"
+                type="button"
+                data-path="dashboard-overview"
+                onClick={() =>
+                  onToggleView(
+                    currentView === 'admin'
+                      ? currentUser
+                        ? 'storefront'
+                        : 'login'
+                      : 'admin'
+                  )
+                }
+                className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs active:translate-y-0 active:scale-98 border cursor-pointer ${
                   currentView === 'admin'
-                    ? currentUser
-                      ? 'storefront'
-                      : 'login'
-                    : 'admin'
-                )
-              }
-              className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xs active:translate-y-0 active:scale-98 border cursor-pointer ${
-                currentView === 'admin'
-                  ? 'bg-[#006b2c] text-white border-[#006b2c] shadow-xs'
-                  : 'bg-white/35 backdrop-blur-xs text-[#131b2e] border-white/50 hover:bg-white/55'
-              }`}
-            >
-              {currentView === 'admin' ? (
-                <>
-                  <Store className="w-4 h-4" />
-                  <span>{currentUser ? t('navRetailStorefront') : t('navSignIn')}</span>
-                </>
-              ) : (
-                <>
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>{t('navAdminPortal')}</span>
-                </>
-              )}
-            </button>
+                    ? 'bg-[#006b2c] text-white border-[#006b2c] shadow-xs'
+                    : 'bg-white/35 backdrop-blur-xs text-[#131b2e] border-white/50 hover:bg-white/55'
+                }`}
+              >
+                {currentView === 'admin' ? (
+                  <>
+                    <Store className="w-4 h-4" />
+                    <span>{currentUser ? t('navRetailStorefront') : t('navSignIn')}</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4" />
+                    <span>{t('navAdminPortal')}</span>
+                  </>
+                )}
+              </button>
+            )}
 
             {/* Employee Portal Toggle */}
             {currentEmployee && (

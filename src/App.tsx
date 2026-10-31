@@ -1185,6 +1185,7 @@ function FreshCartStore() {
         onSelectCategory={handleCategorySelect}
         currentEmployee={currentEmployee}
         onEmployeeLogout={handleEmployeeLogout}
+        currentAdmin={currentAdmin}
       />
 
       {/* Main Content Area */}

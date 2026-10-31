@@ -12,7 +12,14 @@ export const DEMO_CUSTOMER_PASSWORD = 'FreshCart2026!';
 
 import { hashPassword, generateSalt } from '../utils/crypto';
 import { AuthorizedAdmin, saveAdminSession, loginAdmin, getStoredAdminToken } from './adminService';
-import { AuthorizedEmployee, saveEmployeeSession, getStoredEmployeeToken } from './employeeService';
+import {
+  AuthorizedEmployee,
+  saveEmployeeSession,
+  getStoredEmployeeToken,
+  clearEmployeeSession,
+  STORAGE_EMPLOYEE_USER_KEY,
+  DEMO_EMPLOYEE_EMAIL,
+} from './employeeService';
 
 export { hashPassword, generateSalt, getStoredAdminToken, getStoredEmployeeToken };
 
@@ -271,6 +278,17 @@ export async function initializeAuthStore(): Promise<void> {
         const cur = JSON.parse(currentRaw);
         if (cur && (cur.id === 'cust-demo-1' || cur.email === DEMO_CUSTOMER_EMAIL)) {
           localStorage.removeItem(STORAGE_CURRENT_USER_KEY);
+        }
+      } catch {}
+    }
+
+    // Clean up any stale demo employee session to prevent auto-jumping to Employee Portal
+    const employeeRaw = localStorage.getItem(STORAGE_EMPLOYEE_USER_KEY);
+    if (employeeRaw) {
+      try {
+        const emp = JSON.parse(employeeRaw);
+        if (emp && (emp.email === DEMO_EMPLOYEE_EMAIL || emp.employeeId === 'emp_001')) {
+          clearEmployeeSession();
         }
       } catch {}
     }
