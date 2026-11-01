@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Dimensions,
+  Platform,
 } from 'react-native';
 import {
   Search,
@@ -21,7 +22,6 @@ import {
   Minus,
   Sparkles,
   ShoppingBag,
-  Clock,
   ArrowRight,
   Filter,
   CheckCircle2,
@@ -109,32 +109,6 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
 
   const renderListHeader = () => (
     <View style={styles.headerComponentWrapper}>
-      {/* Trending Search Suggestions Strip (matching the reference screenshot top text) */}
-      <View style={styles.trendingContainer}>
-        <Text style={styles.trendingPrefix}>Trending:</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.trendingScroll}
-        >
-          {[
-            { label: 'Honeycrisp Apples', query: 'Honeycrisp Apples' },
-            { label: 'Artisan Sourdough', query: 'Sourdough' },
-            { label: 'Grade-A Cow Milk', query: 'Milk' },
-            { label: 'Fresh Bananas', query: 'Bananas' },
-            { label: 'Cold-Pressed Oil', query: 'Oil' },
-          ].map((item) => (
-            <TouchableOpacity
-              key={item.label}
-              style={styles.trendingPill}
-              onPress={() => setSearchQuery(item.query)}
-            >
-              <Text style={styles.trendingPillText}>{item.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
       {/* Premium Interactive Product Image Carousel */}
       <ProductImageCarousel
         products={products}
@@ -197,21 +171,7 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
 
       {/* Top Customer Info & Action Strip */}
       <View style={styles.userStrip}>
-        <View style={styles.deliveryBadge}>
-          <Clock size={13} color="#006b2c" />
-          <Text style={styles.deliveryText}>24-30 Min Direct Express</Text>
-        </View>
-
         <View style={styles.userActionsRow}>
-          {/* AI Assistant Header Button */}
-          <TouchableOpacity
-            style={styles.aiAssistantHeaderBtn}
-            onPress={() => setShowAssistantModal(true)}
-          >
-            <Sparkles size={14} color="#006b2c" />
-            <Text style={styles.aiAssistantHeaderBtnText}>Ask AI</Text>
-          </TouchableOpacity>
-
           {currentCustomer ? (
             <TouchableOpacity style={styles.ordersBtn} onPress={onOpenOrders}>
               <Package size={14} color="#0284c7" />
@@ -272,6 +232,9 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
             </View>
           }
           renderItem={({ item }) => {
+            const hasMultiplePacks = Array.isArray(item.packSizes) && item.packSizes.length > 1;
+            const itemsInCartForProduct = cart.filter((c) => c.product.id === item.id);
+            const totalInCart = itemsInCartForProduct.reduce((sum, c) => sum + c.quantity, 0);
             const cartMatch = cart.find((c) => c.product.id === item.id);
             const inCartQty = cartMatch ? cartMatch.quantity : 0;
 
@@ -298,13 +261,32 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
                   <Text style={styles.productTitle} numberOfLines={2}>
                     {item.title}
                   </Text>
-                  <Text style={styles.productUnit}>{item.unit}</Text>
+                  <Text style={styles.productUnit}>
+                    {item.unit}
+                    {hasMultiplePacks ? ` • ${item.packSizes!.length} sizes` : ''}
+                  </Text>
 
                   <View style={styles.cardBottomRow}>
                     <Text style={styles.productPrice}>₹{item.price}</Text>
 
-                    {/* Add to cart / Stepper - Customer-facing stock status removed */}
-                    {inCartQty > 0 ? (
+                    {/* Add to cart / Stepper */}
+                    {hasMultiplePacks ? (
+                      totalInCart > 0 ? (
+                        <TouchableOpacity
+                          style={[styles.smallAddBtn, styles.multiPackBadgeBtn]}
+                          onPress={() => setSelectedProduct(item)}
+                        >
+                          <Text style={styles.multiPackBadgeText}>{totalInCart} in cart</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <TouchableOpacity
+                          style={styles.smallAddBtn}
+                          onPress={() => setSelectedProduct(item)}
+                        >
+                          <Text style={styles.smallAddBtnText}>OPTIONS</Text>
+                        </TouchableOpacity>
+                      )
+                    ) : inCartQty > 0 ? (
                       <View style={styles.smallStepper}>
                         <TouchableOpacity
                           style={styles.smallStepperBtn}
@@ -337,33 +319,34 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
         />
       )}
 
-      {/* Floating Cart Bar (when items in cart) */}
-      {itemCount > 0 && (
-        <View style={styles.floatingCartBar}>
-          <View style={styles.floatingCartLeft}>
-            <Text style={styles.floatingCartQty}>
-              {itemCount} item{itemCount === 1 ? '' : 's'}
-            </Text>
-            <Text style={styles.floatingCartTotal}>₹{subtotal.toLocaleString('en-IN')}</Text>
-          </View>
-          <TouchableOpacity style={styles.floatingCartAction} onPress={onOpenCart}>
-            <Text style={styles.floatingCartActionText}>View Cart</Text>
-            <ArrowRight size={16} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Floating AI Assistant Button (Always accessible) */}
+      {/* Floating Shopping Cart Icon (Bottom-Right Corner) */}
       <TouchableOpacity
-        style={[
-          styles.floatingAiBtn,
-          itemCount > 0 ? { bottom: 84 } : { bottom: 20 },
-        ]}
+        style={styles.floatingCartIconBtn}
+        activeOpacity={0.85}
+        onPress={onOpenCart}
+        accessibilityLabel={`Shopping cart, ${itemCount} items`}
+        accessibilityRole="button"
+      >
+        <View style={styles.floatingCartIconInner}>
+          <ShoppingCart size={26} color="#006b2c" />
+          {itemCount > 0 && (
+            <View style={styles.floatingCartBadge}>
+              <Text style={styles.floatingCartBadgeText}>
+                {itemCount > 99 ? '99+' : itemCount}
+              </Text>
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+
+      {/* Floating AI Assistant Button (Bottom-Left Corner) */}
+      <TouchableOpacity
+        style={styles.floatingAiBtn}
         activeOpacity={0.88}
         onPress={() => setShowAssistantModal(true)}
       >
         <View style={styles.floatingAiIconCircle}>
-          <Bot size={20} color="#ffffff" />
+          <Bot size={18} color="#ffffff" />
           <View style={styles.aiPulseDot} />
         </View>
         <View style={styles.floatingAiTextCol}>
@@ -371,7 +354,7 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
             <Text style={styles.floatingAiTitle}>AI Assistant</Text>
             <Sparkles size={11} color="#86efac" />
           </View>
-          <Text style={styles.floatingAiSubtitle}>Voice & Chat Shopping</Text>
+          <Text style={styles.floatingAiSubtitle}>Voice & Chat</Text>
         </View>
       </TouchableOpacity>
 
@@ -404,27 +387,13 @@ const styles = StyleSheet.create({
   },
   userStrip: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
-  },
-  deliveryBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#f0fdf4',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  deliveryText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#166534',
   },
   userActionsRow: {
     flexDirection: 'row',
@@ -629,6 +598,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#006b2c',
   },
+  multiPackBadgeBtn: {
+    backgroundColor: '#006b2c',
+    borderColor: '#006b2c',
+  },
+  multiPackBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
   smallStepper: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -646,69 +624,62 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  floatingCartBar: {
+  floatingCartIconBtn: {
     position: 'absolute',
-    bottom: 16,
-    left: 16,
-    right: 16,
-    backgroundColor: '#006b2c',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    bottom: 24,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#ffffff',
+    borderWidth: 2.5,
+    borderColor: '#00e676',
     alignItems: 'center',
-    shadowColor: '#006b2c',
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
+    justifyContent: 'center',
+    zIndex: 99,
+    ...(Platform.OS === 'web'
+      ? {
+          boxShadow: '0 4px 18px rgba(0, 230, 118, 0.45), 0 8px 24px rgba(0, 0, 0, 0.12)',
+          cursor: 'pointer',
+        }
+      : {
+          shadowColor: '#00e676',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.45,
+          shadowRadius: 10,
+          elevation: 12,
+        }),
   },
-  floatingCartLeft: {
-    flexDirection: 'row',
+  floatingCartIconInner: {
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
+    position: 'relative',
   },
-  floatingCartQty: {
-    fontSize: 12,
-    color: '#bbf7d0',
-    fontWeight: '600',
-  },
-  floatingCartTotal: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  floatingCartAction: {
-    flexDirection: 'row',
+  floatingCartBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#00e676',
+    borderRadius: 11,
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 4,
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#ffffff',
   },
-  floatingCartActionText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  aiAssistantHeaderBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ecfdf5',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-    marginRight: 6,
-  },
-  aiAssistantHeaderBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#006b2c',
+  floatingCartBadgeText: {
+    color: '#064e3b',
+    fontSize: 11,
+    fontWeight: '900',
   },
   floatingAiBtn: {
     position: 'absolute',
-    right: 16,
+    left: 16,
+    bottom: 24,
     backgroundColor: '#0b1726',
     borderRadius: 24,
     paddingVertical: 7,
@@ -723,6 +694,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 9,
     gap: 8,
+    zIndex: 90,
   },
   floatingAiIconCircle: {
     width: 32,
@@ -760,38 +732,6 @@ const styles = StyleSheet.create({
   headerComponentWrapper: {
     width: '100%',
     paddingBottom: 4,
-  },
-  trendingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-  },
-  trendingPrefix: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#0f172a',
-    marginRight: 8,
-  },
-  trendingScroll: {
-    gap: 8,
-    alignItems: 'center',
-  },
-  trendingPill: {
-    paddingHorizontal: 9,
-    paddingVertical: 3.5,
-    borderRadius: 7,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  trendingPillText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#0f172a',
   },
   sectionHeaderRow: {
     flexDirection: 'row',

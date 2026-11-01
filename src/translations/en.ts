@@ -54,8 +54,8 @@ export const en = {
   resetAllFilters: 'Reset All Filters',
 
   // Product Card & Details
-  availableStock: 'Available: {stock}',
-  onlyAvailableStock: 'Only {stock} available',
+  availableStock: 'In Stock',
+  onlyAvailableStock: 'In Stock',
   unavailable: 'Unavailable',
   pack: 'pack',
   packs: 'packs',

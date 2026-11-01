@@ -1189,34 +1189,22 @@ function getLocalizedText(
     }
 
     case 'EXCEEDS_STOCK': {
-      const { available, unit, title, inCart, canAdd } = vars;
+      const { title } = vars;
       if (isHi) {
         return {
-          display: canAdd > 0
-            ? `हमारे पास "${title}" के केवल ${available} ${unit} स्टॉक में हैं (आपके कार्ट में पहले से ${inCart} हैं)। क्या आप ${canAdd} और जोड़ना चाहते हैं?`
-            : `आपके कार्ट में पहले से "${title}" के सभी ${available} ${unit} मौजूद हैं!`,
-          spoken: canAdd > 0
-            ? `केवल ${available} ${unit} स्टॉक में उपलब्ध हैं।`
-            : `स्टॉक में उपलब्ध सभी वस्तुएं आपके कार्ट में हैं।`,
+          display: `"${title}" के लिए अधिकतम उपलब्ध सीमा पूरी हो चुकी है।`,
+          spoken: `"${title}" के लिए अधिकतम स्टॉक सीमा पूरी हो चुकी है।`,
         };
       }
       if (isTe) {
         return {
-          display: canAdd > 0
-            ? `మా వద్ద "${title}" కేవలం ${available} ${unit} మాత్రమే స్టాక్‌లో ఉన్నాయి (మీ కార్ట్‌లో ఇప్పటికే ${inCart} ఉన్నాయి). మీరు ఇంకా ${canAdd} జోడించాలనుకుంటున్నారా?`
-            : `మీ కార్ట్‌లో ఇప్పటికే "${title}" యొక్క అన్ని ${available} ${unit} ఉన్నాయి!`,
-          spoken: canAdd > 0
-            ? `కేవలం ${available} ${unit} మాత్రమే స్టాక్‌లో ఉన్నాయి.`
-            : `స్టాక్‌లో ఉన్నవన్నీ మీ కార్ట్‌లో ఉన్నాయి.`,
+          display: `"${title}" కోసం గరిష్ట అందుబాటు పరిమితి చేరుకుంది.`,
+          spoken: `"${title}" కోసం గరిష్ట స్టాక్ పరిమితి చేరుకుంది.`,
         };
       }
       return {
-        display: canAdd > 0
-          ? `We only have ${available} ${unit} of "${title}" available in stock (you already have ${inCart} in cart). Would you like to add ${canAdd} more?`
-          : `You already have all ${available} available ${unit} of "${title}" in your cart!`,
-        spoken: canAdd > 0
-          ? `Only ${available} ${unit} available in stock.`
-          : `You already have all available items in your cart.`,
+        display: `Maximum available stock limit reached for "${title}".`,
+        spoken: `Maximum available stock reached for "${title}".`,
       };
     }
 
@@ -2065,7 +2053,7 @@ export async function handleAssistantChat(
           products: [product],
           message: txt.display,
           spokenMessage: txt.spoken,
-          quickReplies: canAdd > 0 ? [`Add ${canAdd} ${product.unit} ${product.title}`, 'View Cart'] : ['View Cart', 'Show All Products'],
+          quickReplies: ['View Cart', 'Show All Products'],
         });
         return;
       }
@@ -2141,9 +2129,9 @@ export async function handleAssistantChat(
           actionExecuted: false,
           cartUpdated: false,
           language: userLang,
-          message: `Only ${availableStock} ${matchingItem.product.unit} available in stock for "${matchingItem.product.title}".`,
-          spokenMessage: `Only ${availableStock} available in stock.`,
-          quickReplies: [`Set to ${availableStock}`, 'View Cart'],
+          message: `Maximum available stock limit reached for "${matchingItem.product.title}".`,
+          spokenMessage: 'Maximum available stock reached.',
+          quickReplies: ['View Cart'],
         });
         return;
       }

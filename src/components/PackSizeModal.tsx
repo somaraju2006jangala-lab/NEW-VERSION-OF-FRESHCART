@@ -213,9 +213,13 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
                           <span className="text-xs font-semibold text-emerald-400 tabular-nums">
                             {formatINR(ps.price)}
                           </span>
-                          {packStock > 0 && (
-                            <span className="text-[10px] text-slate-400">
-                              · {packStock} left
+                          {packStock > 0 ? (
+                            <span className="text-[10px] text-emerald-400 font-medium">
+                              · In Stock
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-rose-400 font-medium">
+                              · Out of stock
                             </span>
                           )}
                         </div>
@@ -250,7 +254,7 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
               <span className="text-[11px] text-slate-400 mt-0.5 block">
                 {isOutOfStock || effectiveMaxStock <= 0
                   ? t('unavailable')
-                  : `${effectiveMaxStock} available in stock`}
+                  : 'In Stock'}
               </span>
             </div>
 
@@ -286,7 +290,7 @@ export const PackSizeModal: React.FC<PackSizeModalProps> = ({
 
           {isAtMaxStock && !isOutOfStock && (
             <p className="text-[11px] text-amber-400 font-medium px-1">
-              Max available stock reached for {selectedPackSize?.size} ({effectiveMaxStock} available)
+              Max available stock reached for {selectedPackSize?.size}
             </p>
           )}
 

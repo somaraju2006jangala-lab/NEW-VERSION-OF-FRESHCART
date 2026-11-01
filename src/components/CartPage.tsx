@@ -406,7 +406,7 @@ export const CartPage: React.FC<CartPageProps> = ({
                             </div>
                             {isAtMaxStock && (
                               <p className="text-[11px] text-amber-400 font-medium mt-1">
-                                Max available stock reached ({item.product.stock} {item.product.unit})
+                                Max available stock reached
                               </p>
                             )}
                           </div>

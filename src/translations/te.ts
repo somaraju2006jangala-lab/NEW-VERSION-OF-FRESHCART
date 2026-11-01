@@ -56,8 +56,8 @@ export const te: typeof en = {
   resetAllFilters: 'అన్ని ఫిల్టర్‌లను రీసెట్ చేయండి',
 
   // Product Card & Details
-  availableStock: 'అందుబాటులో ఉంది: {stock}',
-  onlyAvailableStock: 'కేవలం {stock} మాత్రమే ఉన్నాయి',
+  availableStock: 'స్టాక్‌లో అందుబాటులో ఉంది',
+  onlyAvailableStock: 'స్టాక్‌లో అందుబాటులో ఉంది',
   unavailable: 'అందుబాటులో లేదు',
   pack: 'ప్యాక్',
   packs: 'ప్యాక్‌లు',

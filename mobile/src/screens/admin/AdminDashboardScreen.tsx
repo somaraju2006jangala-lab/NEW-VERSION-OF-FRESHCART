@@ -35,11 +35,22 @@ import {
   Shield,
   Tag,
   LogOut,
+  Upload,
+  Sparkles,
+  AlertCircle,
+  Image as ImageIcon,
 } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../context/AuthContext';
 import { adminApi } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
-import { Product, Order, AuthorizedEmployee, Coupon, InventoryLog } from '../../types';
+import { Product, Order, AuthorizedEmployee, Coupon, InventoryLog, PackSizeOption } from '../../types';
+import {
+  formatUnitString,
+  getQuickAddPresetsForUnit,
+  getPackSizeConversionFactor,
+  isSamePackSize,
+} from '../../utils/packSize';
 
 type AdminTab = 'overview' | 'inventory' | 'orders' | 'employees' | 'settings';
 
@@ -86,15 +97,28 @@ export const AdminDashboardScreen: React.FC = () => {
   const [assigningOrder, setAssigningOrder] = useState<any | null>(null);
 
   // Form states
-  const [productForm, setProductForm] = useState({
+  const [productForm, setProductForm] = useState<{
+    title: string;
+    category: string;
+    price: string;
+    stock: string;
+    unit: string;
+    supplier: string;
+    badge: string;
+    image: string;
+    description: string;
+    packSizes: PackSizeOption[];
+  }>({
     title: '',
     category: 'produce',
     price: '',
     stock: '',
     unit: '1 kg',
-    supplier: 'FreshCart Farm',
-    badge: 'Fresh',
-    image: 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?auto=format&fit=crop&q=80&w=400',
+    supplier: 'Local Farm Direct',
+    badge: 'Fresh Harvest',
+    image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80',
+    description: '',
+    packSizes: [{ size: '1 kg', price: 0, stock: 0, isAvailable: true }],
   });
 
   const [employeeForm, setEmployeeForm] = useState({
@@ -136,7 +160,6 @@ export const AdminDashboardScreen: React.FC = () => {
         adminApi.getOrdersToDeliver(adminToken).catch(() => null),
         adminApi.getPaymentVerificationQueue(adminToken).catch(() => null),
       ]);
-
       if (overviewRes?.success && overviewRes.overview) {
         setMetrics(overviewRes.overview);
       }
@@ -158,31 +181,273 @@ export const AdminDashboardScreen: React.FC = () => {
     loadAllData();
   }, [loadAllData]);
 
-  // Handle Add Product
+  // Pack sizes handlers for Add/Edit product modal
+  const handleOpenAddProduct = () => {
+    setEditingProduct(null);
+    setProductForm({
+      title: '',
+      category: '',
+      price: '',
+      stock: '',
+      unit: '1 kg',
+      supplier: 'Local Farm Direct',
+      badge: 'Fresh Harvest',
+      image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80',
+      description: '',
+      packSizes: [{ size: '1 kg', price: 0, stock: 0, isAvailable: true }],
+    });
+    setShowAddProductModal(true);
+  };
+
+  const handleOpenEditProduct = (prod: Product) => {
+    setEditingProduct(prod);
+    const initialPackSizes: PackSizeOption[] =
+      Array.isArray(prod.packSizes) && prod.packSizes.length > 0
+        ? prod.packSizes.map((ps) => ({
+            size: ps.size,
+            price: Number(ps.price) || prod.price,
+            stock: ps.stock !== undefined ? ps.stock : prod.stock,
+            isAvailable: ps.isAvailable !== false,
+          }))
+        : [
+            {
+              size: prod.unit || '1 kg',
+              price: prod.price,
+              stock: prod.stock,
+              isAvailable: true,
+            },
+          ];
+
+    setProductForm({
+      title: prod.title,
+      category: prod.category,
+      price: String(prod.price),
+      stock: String(prod.stock),
+      unit: prod.unit || '1 kg',
+      supplier: prod.supplier || 'Local Farm Direct',
+      badge: prod.badge || '',
+      image: prod.image,
+      description: prod.description || '',
+      packSizes: initialPackSizes,
+    });
+    setShowAddProductModal(true);
+  };
+
+  // Sync top-level unit with packSizes[0]
+  const handleUnitChange = (newUnit: string) => {
+    setProductForm((prev) => {
+      const nextPackSizes = [...prev.packSizes];
+      const numericPrice = parseFloat(prev.price) || 0;
+      const numericStock = parseInt(prev.stock, 10) || 0;
+      if (nextPackSizes.length > 0) {
+        nextPackSizes[0] = { ...nextPackSizes[0], size: newUnit, price: numericPrice, stock: numericStock };
+      } else {
+        nextPackSizes.push({ size: newUnit, price: numericPrice, stock: numericStock, isAvailable: true });
+      }
+      return {
+        ...prev,
+        unit: newUnit,
+        packSizes: nextPackSizes.filter((ps, idx) => idx === 0 || !isSamePackSize(ps.size, newUnit)),
+      };
+    });
+  };
+
+  // Sync top-level price with packSizes[0]
+  const handlePriceChange = (newPrice: string) => {
+    setProductForm((prev) => {
+      const nextPackSizes = [...prev.packSizes];
+      const num = parseFloat(newPrice) || 0;
+      if (nextPackSizes.length > 0) {
+        nextPackSizes[0] = { ...nextPackSizes[0], price: num };
+      }
+      return { ...prev, price: newPrice, packSizes: nextPackSizes };
+    });
+  };
+
+  // Sync top-level stock with packSizes[0]
+  const handleStockChange = (newStock: string) => {
+    setProductForm((prev) => {
+      const nextPackSizes = [...prev.packSizes];
+      const num = parseInt(newStock, 10) || 0;
+      if (nextPackSizes.length > 0) {
+        nextPackSizes[0] = { ...nextPackSizes[0], stock: num };
+      }
+      return { ...prev, stock: newStock, packSizes: nextPackSizes };
+    });
+  };
+
+  // Handle editing pack-size price
+  const handlePackSizePriceChange = (idx: number, newPriceVal: number) => {
+    setProductForm((prev) => {
+      const next = [...prev.packSizes];
+      next[idx] = { ...next[idx], price: newPriceVal };
+      const updatedPrice = idx === 0 ? (newPriceVal > 0 ? String(newPriceVal) : '') : prev.price;
+      return { ...prev, price: updatedPrice, packSizes: next };
+    });
+  };
+
+  // Handle editing pack-size stock
+  const handlePackSizeStockChange = (idx: number, newStockVal: number) => {
+    setProductForm((prev) => {
+      const next = [...prev.packSizes];
+      next[idx] = { ...next[idx], stock: newStockVal };
+      const updatedStock = idx === 0 ? (newStockVal >= 0 ? String(newStockVal) : '') : prev.stock;
+      return { ...prev, stock: updatedStock, packSizes: next };
+    });
+  };
+
+  // Handle editing pack size name
+  const handlePackSizeNameChange = (idx: number, newName: string) => {
+    setProductForm((prev) => {
+      const next = [...prev.packSizes];
+      next[idx] = { ...next[idx], size: newName };
+      const updatedUnit = idx === 0 ? newName : prev.unit;
+      return { ...prev, unit: updatedUnit, packSizes: next };
+    });
+  };
+
+  // Toggle pack size availability
+  const handleTogglePackSizeAvailability = (idx: number) => {
+    setProductForm((prev) => {
+      const next = [...prev.packSizes];
+      next[idx] = { ...next[idx], isAvailable: next[idx].isAvailable === false ? true : false };
+      return { ...prev, packSizes: next };
+    });
+  };
+
+  // Remove pack size row (default pack size cannot be removed)
+  const handleRemovePackSizeRow = (idx: number) => {
+    if (idx === 0) return;
+    setProductForm((prev) => ({
+      ...prev,
+      packSizes: prev.packSizes.filter((_, i) => i !== idx),
+    }));
+  };
+
+  // Add a new custom pack size row (manual entry)
+  const handleAddPackSizeRow = () => {
+    setProductForm((prev) => {
+      const numericPrice = parseFloat(prev.price) || 0;
+      const numericStock = parseInt(prev.stock, 10) || 0;
+      return {
+        ...prev,
+        packSizes: [
+          ...prev.packSizes,
+          {
+            size: '',
+            price: numericPrice,
+            stock: numericStock,
+            isAvailable: true,
+          },
+        ],
+      };
+    });
+  };
+
+  // Handle image upload from gallery
+  const handlePickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Needed', 'Please allow camera roll access to pick an image.');
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.8,
+        base64: true,
+      });
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const asset = res.assets[0];
+        const uri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setProductForm((prev) => ({ ...prev, image: uri }));
+      }
+    } catch (err: any) {
+      Alert.alert('Image Pick Error', err.message || 'Could not pick image.');
+    }
+  };
+
+  // Handle Add/Edit Product with pack sizes validation and persistence
   const handleSaveProduct = async () => {
     if (!adminToken) return;
-    if (!productForm.title.trim() || !productForm.price || !productForm.stock) {
-      Alert.alert('Missing Fields', 'Please enter title, price, and initial stock.');
+    if (!productForm.title.trim()) {
+      Alert.alert('Missing Field', 'Please enter a product title.');
       return;
     }
+    if (!productForm.category.trim()) {
+      Alert.alert('Missing Field', 'Please enter a category.');
+      return;
+    }
+    if (!productForm.unit.trim()) {
+      Alert.alert('Missing Field', 'Please enter a unit / pack size.');
+      return;
+    }
+    const numericPrice = parseFloat(productForm.price) || 0;
+    if (numericPrice <= 0) {
+      Alert.alert('Invalid Price', 'Please enter a valid price greater than ₹0.');
+      return;
+    }
+    const numericStock = parseInt(productForm.stock, 10);
+    if (isNaN(numericStock) || numericStock < 0) {
+      Alert.alert('Invalid Stock', 'Please enter a valid stock quantity.');
+      return;
+    }
+
+    // Validate all pack sizes
+    for (let i = 0; i < productForm.packSizes.length; i++) {
+      const ps = productForm.packSizes[i];
+      if (!ps.size || !ps.size.trim()) {
+        Alert.alert('Pack Size Error', `Please enter a pack size name for pack size #${i + 1}.`);
+        return;
+      }
+      const pNum = Number(ps.price);
+      if (isNaN(pNum) || pNum <= 0) {
+        Alert.alert('Pack Size Error', `Pack size "${ps.size}" must have a valid price greater than ₹0.`);
+        return;
+      }
+      if (ps.stock !== undefined && (isNaN(Number(ps.stock)) || Number(ps.stock) < 0)) {
+        Alert.alert('Pack Size Error', `Pack size "${ps.size}" must have a valid non-negative stock quantity.`);
+        return;
+      }
+    }
+
+    // Check duplicate pack sizes
+    const sizeNames = productForm.packSizes.map((ps) => ps.size.trim().toLowerCase());
+    const duplicate = sizeNames.find((name, idx) => sizeNames.indexOf(name) !== idx);
+    if (duplicate) {
+      Alert.alert('Duplicate Pack Size', `Duplicate pack size "${duplicate}" found. Each pack size must be unique.`);
+      return;
+    }
+
     try {
+      const finalPackSizes: PackSizeOption[] = productForm.packSizes.map((ps, idx) => ({
+        size: ps.size.trim(),
+        price: Math.max(1, Math.round(Number(ps.price) || numericPrice)),
+        isAvailable: ps.isAvailable !== false,
+        stock: idx === 0 ? numericStock : Math.max(0, parseInt(String(ps.stock), 10) || 0),
+      }));
+
       const payload: Partial<Product> = {
         title: productForm.title.trim(),
-        category: productForm.category,
-        price: parseFloat(productForm.price) || 0,
-        stock: parseInt(productForm.stock, 10) || 0,
-        unit: productForm.unit,
-        supplier: productForm.supplier,
-        badge: productForm.badge,
-        image: productForm.image,
+        category: productForm.category.trim().toLowerCase(),
+        price: numericPrice,
+        stock: numericStock,
+        unit: productForm.unit.trim(),
+        supplier: productForm.supplier.trim() || 'Local Farm Direct',
+        badge: productForm.badge.trim() || 'Fresh Harvest',
+        image: productForm.image.trim() || 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=600&q=80',
+        description: '',
+        packSizes: finalPackSizes,
       };
 
       if (editingProduct) {
         await adminApi.updateProduct(adminToken, editingProduct.id, payload);
-        Alert.alert('Updated', 'Product details updated in MySQL.');
+        Alert.alert('Updated', 'Product details and pack sizes updated in MySQL.');
       } else {
         await adminApi.addProduct(adminToken, payload);
-        Alert.alert('Success', 'New product added to inventory.');
+        Alert.alert('Success', 'New product with pack sizes added to inventory.');
       }
       setShowAddProductModal(false);
       setEditingProduct(null);
@@ -455,20 +720,7 @@ export const AdminDashboardScreen: React.FC = () => {
             <View style={styles.quickActionRow}>
               <TouchableOpacity
                 style={styles.quickActionBtn}
-                onPress={() => {
-                  setEditingProduct(null);
-                  setProductForm({
-                    title: '',
-                    category: 'produce',
-                    price: '',
-                    stock: '',
-                    unit: '1 kg',
-                    supplier: 'FreshCart Farm',
-                    badge: 'Fresh',
-                    image: 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?auto=format&fit=crop&q=80&w=400',
-                  });
-                  setShowAddProductModal(true);
-                }}
+                onPress={handleOpenAddProduct}
               >
                 <Plus size={20} color="#006b2c" />
                 <Text style={styles.quickActionText}>Add Product</Text>
@@ -524,20 +776,7 @@ export const AdminDashboardScreen: React.FC = () => {
               <Text style={styles.sectionTitle}>Product Inventory ({products.length})</Text>
               <TouchableOpacity
                 style={styles.addPrimaryBtn}
-                onPress={() => {
-                  setEditingProduct(null);
-                  setProductForm({
-                    title: '',
-                    category: 'produce',
-                    price: '',
-                    stock: '',
-                    unit: '1 kg',
-                    supplier: 'FreshCart Farm',
-                    badge: 'Fresh',
-                    image: 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?auto=format&fit=crop&q=80&w=400',
-                  });
-                  setShowAddProductModal(true);
-                }}
+                onPress={handleOpenAddProduct}
               >
                 <Plus size={16} color="#fff" />
                 <Text style={styles.addPrimaryBtnText}>New Product</Text>
@@ -569,44 +808,22 @@ export const AdminDashboardScreen: React.FC = () => {
                   <Image source={{ uri: prod.image }} style={styles.productAdminImg} />
                   <View style={styles.productAdminInfo}>
                     <Text style={styles.productAdminTitle}>{prod.title}</Text>
-                    <Text style={styles.productAdminMeta}>
-                      {prod.category} • {prod.unit} • ₹{prod.price}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+                      <Text style={styles.productAdminMeta}>
+                        {prod.category} • {prod.unit} • ₹{prod.price}
+                      </Text>
+                      {prod.packSizes && prod.packSizes.length > 0 && (
+                        <View style={styles.packSizeCountBadge}>
+                          <Text style={styles.packSizeCountBadgeText}>
+                            {prod.packSizes.length} Pack Sizes
+                          </Text>
+                        </View>
+                      )}
+                    </View>
 
-                    {/* Stock level modifier */}
+                    {/* Stock level display */}
                     <View style={styles.stockModifierRow}>
-                      <Text style={styles.stockLabel}>Stock: </Text>
-                      <TouchableOpacity
-                        style={styles.stockStepperBtn}
-                        onPress={() => handleAdjustStock(prod, -5)}
-                      >
-                        <Text style={styles.stockStepperText}>-5</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.stockStepperBtn}
-                        onPress={() => handleAdjustStock(prod, -1)}
-                      >
-                        <Text style={styles.stockStepperText}>-1</Text>
-                      </TouchableOpacity>
-                      <View style={[styles.stockBadge, prod.stock <= 5 && styles.stockBadgeLow]}>
-                        <Text
-                          style={[styles.stockBadgeText, prod.stock <= 5 && styles.stockBadgeTextLow]}
-                        >
-                          {prod.stock}
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        style={styles.stockStepperBtn}
-                        onPress={() => handleAdjustStock(prod, 1)}
-                      >
-                        <Text style={styles.stockStepperText}>+1</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={styles.stockStepperBtn}
-                        onPress={() => handleAdjustStock(prod, 10)}
-                      >
-                        <Text style={styles.stockStepperText}>+10</Text>
-                      </TouchableOpacity>
+                      <Text style={styles.stockLabel}>Stock: {prod.stock}</Text>
                     </View>
                   </View>
 
@@ -614,20 +831,7 @@ export const AdminDashboardScreen: React.FC = () => {
                   <View style={styles.productAdminActions}>
                     <TouchableOpacity
                       style={styles.actionIconBtn}
-                      onPress={() => {
-                        setEditingProduct(prod);
-                        setProductForm({
-                          title: prod.title,
-                          category: prod.category,
-                          price: String(prod.price),
-                          stock: String(prod.stock),
-                          unit: prod.unit,
-                          supplier: prod.supplier,
-                          badge: prod.badge || '',
-                          image: prod.image,
-                        });
-                        setShowAddProductModal(true);
-                      }}
+                      onPress={() => handleOpenEditProduct(prod)}
                     >
                       <Edit2 size={16} color="#0284c7" />
                     </TouchableOpacity>
@@ -874,7 +1078,7 @@ export const AdminDashboardScreen: React.FC = () => {
         onRequestClose={() => setShowAddProductModal(false)}
       >
         <SafeAreaView style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { maxHeight: '92%' }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingProduct ? 'Edit Product' : 'Add New Product'}
@@ -884,72 +1088,219 @@ export const AdminDashboardScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.formLabel}>Product Title</Text>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {/* Product Name */}
+              <Text style={styles.formLabel}>Product Name *</Text>
               <TextInput
                 style={styles.formInput}
-                placeholder="e.g. Organic Farm Bananas"
+                placeholder="e.g. Sona Masoori Rice / Organic Farm Bananas"
+                placeholderTextColor="#94a3b8"
                 value={productForm.title}
                 onChangeText={(v) => setProductForm({ ...productForm, title: v })}
               />
 
-              <View style={styles.formRow}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.formLabel}>Price (₹)</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="150"
-                    keyboardType="numeric"
-                    value={productForm.price}
-                    onChangeText={(v) => setProductForm({ ...productForm, price: v })}
-                  />
-                </View>
-
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.formLabel}>Stock Qty</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="50"
-                    keyboardType="numeric"
-                    value={productForm.stock}
-                    onChangeText={(v) => setProductForm({ ...productForm, stock: v })}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.formLabel}>Category</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="produce / dairy / bakery"
-                    value={productForm.category}
-                    onChangeText={(v) => setProductForm({ ...productForm, category: v })}
-                  />
-                </View>
-
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.formLabel}>Unit</Text>
-                  <TextInput
-                    style={styles.formInput}
-                    placeholder="1 kg / 500 ml"
-                    value={productForm.unit}
-                    onChangeText={(v) => setProductForm({ ...productForm, unit: v })}
-                  />
-                </View>
-              </View>
-
-              <Text style={styles.formLabel}>Image URL</Text>
+              {/* Category (Manual Entry Only) */}
+              <Text style={styles.formLabel}>Category *</Text>
               <TextInput
                 style={styles.formInput}
-                placeholder="https://..."
-                value={productForm.image}
-                onChangeText={(v) => setProductForm({ ...productForm, image: v })}
+                placeholder="e.g. Fruits & Vegetables, Dairy, Bakery, Beverages, Spices..."
+                placeholderTextColor="#94a3b8"
+                value={productForm.category}
+                onChangeText={(v) => setProductForm({ ...productForm, category: v })}
               />
 
+              {/* Unit / Pack Size (Manual Entry Only) */}
+              <Text style={styles.formLabel}>Unit / Pack Size *</Text>
+              <TextInput
+                style={styles.formInput}
+                placeholder="e.g. 100 g, 250 g, 500 g, 1 kg, 500 ml, 1 litre, 1 piece..."
+                placeholderTextColor="#94a3b8"
+                value={productForm.unit}
+                onChangeText={handleUnitChange}
+              />
+
+              {/* Price & Stock Row */}
+              <View style={styles.formRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.formLabel}>Price (₹) *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. 90"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="numeric"
+                    value={productForm.price}
+                    onChangeText={handlePriceChange}
+                  />
+                </View>
+
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.formLabel}>Stock Quantity *</Text>
+                  <TextInput
+                    style={styles.formInput}
+                    placeholder="e.g. 50"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="numeric"
+                    value={productForm.stock}
+                    onChangeText={handleStockChange}
+                  />
+                </View>
+              </View>
+
+              {/* DEDICATED SECTION: Pack Sizes, Prices, Stock & Availability */}
+              <View style={styles.packSizesSectionCard}>
+                <View style={styles.packSizesHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.packSizesSectionTitle}>
+                      Pack Sizes, Prices, Stock & Availability
+                    </Text>
+                    <Text style={styles.packSizesSectionSubtitle}>
+                      Configure independent prices, stock, and availability status for each pack size.
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.addPackSizeBtn}
+                    onPress={handleAddPackSizeRow}
+                  >
+                    <Plus size={14} color="#ffffff" />
+                    <Text style={styles.addPackSizeBtnText}>Add Pack Size</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Pack Size Rows */}
+                <View style={styles.packRowsList}>
+                  {productForm.packSizes.map((ps, idx) => {
+                    const isDefault = idx === 0;
+                    const isAvailable = ps.isAvailable !== false;
+
+                    return (
+                      <View
+                        key={`pack-${idx}`}
+                        style={[styles.packSizeRowCard, isDefault && styles.packSizeRowDefault]}
+                      >
+                        {/* Row Header: Sub-unit # & Delete Option */}
+                        <View style={styles.packRowTopLine}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={styles.packRowIndexLabel}>Sub-Unit #{idx + 1}</Text>
+                            {isDefault && (
+                              <View style={styles.defaultPackBadge}>
+                                <Text style={styles.defaultPackBadgeText}>Default Unit</Text>
+                              </View>
+                            )}
+                          </View>
+
+                          {/* Delete option */}
+                          {!isDefault && (
+                            <TouchableOpacity
+                              onPress={() => handleRemovePackSizeRow(idx)}
+                              style={styles.deletePackBtn}
+                              accessibilityLabel={`Remove pack size ${ps.size}`}
+                            >
+                              <Trash2 size={16} color="#ef4444" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+
+                        {/* Input Fields */}
+                        <View style={styles.packInputsRow}>
+                          {/* Pack Size */}
+                          <View style={{ flex: 1.2, marginRight: 6 }}>
+                            <Text style={styles.packInputMiniLabel}>Pack Size</Text>
+                            <TextInput
+                              style={styles.packMiniInput}
+                              placeholder="e.g. 500 g"
+                              placeholderTextColor="#94a3b8"
+                              value={ps.size}
+                              onChangeText={(v) => handlePackSizeNameChange(idx, v)}
+                            />
+                          </View>
+
+                          {/* Price */}
+                          <View style={{ flex: 0.9, marginRight: 6 }}>
+                            <Text style={styles.packInputMiniLabel}>Price (₹)</Text>
+                            <TextInput
+                              style={styles.packMiniInput}
+                              placeholder="₹0"
+                              placeholderTextColor="#94a3b8"
+                              keyboardType="numeric"
+                              value={ps.price > 0 ? String(ps.price) : ''}
+                              onChangeText={(v) => handlePackSizePriceChange(idx, parseFloat(v) || 0)}
+                            />
+                          </View>
+
+                          {/* Stock Quantity */}
+                          <View style={{ flex: 0.9 }}>
+                            <Text style={styles.packInputMiniLabel}>Stock Qty</Text>
+                            <TextInput
+                              style={styles.packMiniInput}
+                              placeholder="0"
+                              placeholderTextColor="#94a3b8"
+                              keyboardType="numeric"
+                              value={ps.stock !== undefined ? String(ps.stock) : ''}
+                              onChangeText={(v) => handlePackSizeStockChange(idx, parseInt(v, 10) || 0)}
+                            />
+                          </View>
+                        </View>
+
+                        {/* Availability Status Toggle */}
+                        <View style={styles.packRowStatusLine}>
+                          <Text style={styles.packStatusPrompt}>Availability Status:</Text>
+                          <TouchableOpacity
+                            style={[
+                              styles.availabilityToggleBtn,
+                              isAvailable ? styles.availabilityBtnActive : styles.availabilityBtnInactive,
+                            ]}
+                            onPress={() => handleTogglePackSizeAvailability(idx)}
+                          >
+                            {isAvailable ? (
+                              <>
+                                <Check size={14} color="#006b2c" strokeWidth={3} />
+                                <Text style={styles.availabilityTextActive}>Available</Text>
+                              </>
+                            ) : (
+                              <>
+                                <X size={14} color="#dc2626" strokeWidth={3} />
+                                <Text style={styles.availabilityTextInactive}>Unavailable</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Product Image */}
+              <View style={styles.imageSection}>
+                <Text style={styles.formLabel}>Product Image</Text>
+                <View style={styles.imagePreviewRow}>
+                  {productForm.image ? (
+                    <Image source={{ uri: productForm.image }} style={styles.imagePreviewThumb} />
+                  ) : (
+                    <View style={styles.imagePlaceholder}>
+                      <ImageIcon size={24} color="#94a3b8" />
+                    </View>
+                  )}
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <TouchableOpacity style={styles.uploadImgBtn} onPress={handlePickImage}>
+                      <Upload size={15} color="#006b2c" />
+                      <Text style={styles.uploadImgBtnText}>Choose from Gallery</Text>
+                    </TouchableOpacity>
+                    <TextInput
+                      style={[styles.formInput, { marginBottom: 0 }]}
+                      placeholder="Or paste Image URL..."
+                      placeholderTextColor="#94a3b8"
+                      value={productForm.image}
+                      onChangeText={(v) => setProductForm({ ...productForm, image: v })}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* Submit Button */}
               <TouchableOpacity style={styles.saveSubmitBtn} onPress={handleSaveProduct}>
                 <Text style={styles.saveSubmitBtnText}>
-                  {editingProduct ? 'Save Changes' : 'Create Product'}
+                  {editingProduct ? 'Save Changes' : 'Add Product'}
                 </Text>
               </TouchableOpacity>
             </ScrollView>
@@ -1359,11 +1710,12 @@ const styles = StyleSheet.create({
   stockModifierRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    marginTop: 2,
   },
   stockLabel: {
-    fontSize: 11,
-    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
   },
   stockStepperBtn: {
     backgroundColor: '#f1f5f9',
@@ -1797,5 +2149,265 @@ const styles = StyleSheet.create({
   empAssignEmail: {
     fontSize: 11,
     color: '#64748b',
+  },
+  categoryPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  categorySmallPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  categorySmallPillActive: {
+    backgroundColor: '#006b2c',
+    borderColor: '#006b2c',
+  },
+  categorySmallPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  categorySmallPillTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  packSizesSectionCard: {
+    marginTop: 14,
+    marginBottom: 14,
+    padding: 12,
+    backgroundColor: '#f0fdf4',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#86efac',
+  },
+  packSizesHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 10,
+  },
+  packSizesSectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#006b2c',
+  },
+  packSizesSectionSubtitle: {
+    fontSize: 11,
+    color: '#166534',
+    marginTop: 2,
+  },
+  addPackSizeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#006b2c',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  addPackSizeBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  quickAddBar: {
+    borderTopWidth: 1,
+    borderTopColor: '#bbf7d0',
+    paddingTop: 8,
+    marginBottom: 10,
+  },
+  quickAddLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+    marginBottom: 4,
+  },
+  quickAddScroll: {
+    gap: 6,
+    alignItems: 'center',
+  },
+  quickAddChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  quickAddChipDisabled: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
+    opacity: 0.6,
+  },
+  quickAddChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#006b2c',
+  },
+  quickAddChipTextDisabled: {
+    color: '#94a3b8',
+  },
+  packRowsList: {
+    gap: 8,
+  },
+  packSizeRowCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    padding: 10,
+  },
+  packSizeRowDefault: {
+    borderColor: '#00e676',
+    borderWidth: 1.5,
+  },
+  packRowTopLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  packRowIndexLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  defaultPackBadge: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  defaultPackBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#006b2c',
+  },
+  deletePackBtn: {
+    padding: 4,
+  },
+  packInputsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  packInputMiniLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 2,
+  },
+  packMiniInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  packRowStatusLine: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  packStatusPrompt: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  availabilityToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  availabilityBtnActive: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  availabilityBtnInactive: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  availabilityTextActive: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#006b2c',
+  },
+  availabilityTextInactive: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#dc2626',
+  },
+  imageSection: {
+    marginVertical: 10,
+  },
+  imagePreviewRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  imagePreviewThumb: {
+    width: 70,
+    height: 70,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  imagePlaceholder: {
+    width: 70,
+    height: 70,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadImgBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#86efac',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  uploadImgBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#006b2c',
+  },
+  packSizeCountBadge: {
+    backgroundColor: '#e0f2fe',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+  packSizeCountBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0369a1',
   },
 });

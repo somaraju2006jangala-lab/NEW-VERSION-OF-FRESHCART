@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -8,6 +8,7 @@ import {
   StyleSheet,
   ScrollView,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import { Product, PackSizeOption } from '../../types';
 import { useCart } from '../../context/CartContext';
@@ -29,11 +30,33 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const { cart, addToCart, updateQuantity } = useCart();
   const [selectedPack, setSelectedPack] = useState<PackSizeOption | null>(null);
 
+  useEffect(() => {
+    if (product) {
+      if (product.packSizes && product.packSizes.length > 0) {
+        const firstAvailable =
+          product.packSizes.find(
+            (ps) => ps.isAvailable !== false && (ps.stock === undefined || ps.stock > 0)
+          ) || product.packSizes[0];
+        setSelectedPack(firstAvailable);
+      } else {
+        setSelectedPack(null);
+      }
+    }
+  }, [product]);
+
   if (!product) return null;
 
   const packSizes = product.packSizes && product.packSizes.length > 0 ? product.packSizes : null;
   const currentPack = selectedPack || (packSizes ? packSizes[0] : null);
   const activePrice = currentPack ? currentPack.price : product.price;
+
+  const isCurrentPackAvailable = currentPack
+    ? currentPack.isAvailable !== false && (currentPack.stock === undefined || currentPack.stock > 0)
+    : product.stock > 0;
+
+  const isCurrentPackOutOfStock = currentPack
+    ? currentPack.stock !== undefined && currentPack.stock <= 0
+    : product.stock <= 0;
 
   // Check if item already in cart
   const cartItem = cart.find(
@@ -44,10 +67,23 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const inCartQty = cartItem ? cartItem.quantity : 0;
 
   const handleAdd = () => {
+    if (!isCurrentPackAvailable) {
+      Alert.alert(
+        'Item Unavailable',
+        currentPack?.isAvailable === false
+          ? `Pack size "${currentPack?.size}" is currently marked unavailable.`
+          : `Pack size "${currentPack?.size}" is currently out of stock.`
+      );
+      return;
+    }
     addToCart(product, 1, currentPack?.size, activePrice);
   };
 
   const handleIncrement = () => {
+    if (currentPack && currentPack.stock !== undefined && inCartQty >= currentPack.stock) {
+      Alert.alert('Maximum Limit Reached', `Maximum available stock reached for ${currentPack.size}.`);
+      return;
+    }
     addToCart(product, 1, currentPack?.size, activePrice);
   };
 
@@ -97,14 +133,32 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             {/* Pack Size Selector if available */}
             {packSizes && packSizes.length > 0 && (
               <View style={styles.packSection}>
-                <Text style={styles.packHeading}>Choose Pack Size:</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={styles.packHeading}>Choose Pack Size:</Text>
+                  {currentPack && (
+                    <Text style={[styles.packStockTag, !isCurrentPackAvailable && styles.packStockTagUnavailable]}>
+                      {currentPack.isAvailable === false
+                        ? 'Unavailable'
+                        : isCurrentPackOutOfStock
+                        ? 'Out of Stock'
+                        : 'In Stock'}
+                    </Text>
+                  )}
+                </View>
                 <View style={styles.packSizesRow}>
                   {packSizes.map((ps) => {
                     const isSelected = currentPack?.size === ps.size;
+                    const isPsAvail = ps.isAvailable !== false;
+                    const isPsOut = ps.stock !== undefined && ps.stock <= 0;
+
                     return (
                       <TouchableOpacity
                         key={ps.size}
-                        style={[styles.packPill, isSelected && styles.packPillActive]}
+                        style={[
+                          styles.packPill,
+                          isSelected && styles.packPillActive,
+                          (!isPsAvail || isPsOut) && styles.packPillDisabled,
+                        ]}
                         onPress={() => setSelectedPack(ps)}
                       >
                         <Text style={[styles.packPillText, isSelected && styles.packPillTextActive]}>
@@ -113,6 +167,13 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                         <Text style={[styles.packPillPrice, isSelected && styles.packPillPriceActive]}>
                           ₹{ps.price}
                         </Text>
+                        {!isPsAvail ? (
+                          <Text style={styles.packPillStatusText}>Unavailable</Text>
+                        ) : isPsOut ? (
+                          <Text style={styles.packPillStatusText}>Out of stock</Text>
+                        ) : (
+                          <Text style={styles.packPillStockText}>In Stock</Text>
+                        )}
                       </TouchableOpacity>
                     );
                   })}
@@ -148,7 +209,18 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
           {/* Bottom Add to Cart Bar */}
           <View style={styles.bottomBar}>
-            {inCartQty > 0 ? (
+            {!isCurrentPackAvailable ? (
+              <TouchableOpacity
+                style={[styles.addBtn, styles.addBtnDisabled]}
+                disabled
+                activeOpacity={0.7}
+              >
+                <ShieldAlert size={18} color="#fff" />
+                <Text style={styles.addBtnText}>
+                  {currentPack?.isAvailable === false ? 'Currently Unavailable' : 'Out of Stock'}
+                </Text>
+              </TouchableOpacity>
+            ) : inCartQty > 0 ? (
               <View style={styles.stepperContainer}>
                 <TouchableOpacity style={styles.stepperBtn} onPress={handleDecrement}>
                   <Minus size={18} color="#006b2c" />
@@ -303,6 +375,31 @@ const styles = StyleSheet.create({
   packPillPriceActive: {
     color: '#166534',
     fontWeight: '700',
+  },
+  packStockTag: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#006b2c',
+  },
+  packStockTagUnavailable: {
+    color: '#dc2626',
+  },
+  packPillDisabled: {
+    borderColor: '#fca5a5',
+    backgroundColor: '#fff5f5',
+    opacity: 0.75,
+  },
+  packPillStatusText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#dc2626',
+    marginTop: 2,
+  },
+  packPillStockText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#006b2c',
+    marginTop: 2,
   },
   infoBlock: {
     marginBottom: 14,

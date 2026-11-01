@@ -42,17 +42,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
   const [price, setPrice] = useState<string>('');
   const [quantity, setQuantity] = useState<string>('');
   const [unit, setUnit] = useState<string>('1 kg');
-  const [category, setCategory] = useState<string>('produce');
-  const [isNewCategory, setIsNewCategory] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState('');
+  const [category, setCategory] = useState<string>('');
   const [image, setImage] = useState('');
   const [imagePreview, setImagePreview] = useState('');
   const [imageFileName, setImageFileName] = useState('');
   const [imageFileSize, setImageFileSize] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const [description, setDescription] = useState('');
-  const [customUnit, setCustomUnit] = useState('');
-  const [isCustomUnit, setIsCustomUnit] = useState(false);
   const [packSizes, setPackSizes] = useState<PackSizeOption[]>([
     { size: '1 kg', price: 0, stock: 0, isAvailable: true },
   ]);
@@ -64,17 +59,12 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
     setPrice('');
     setQuantity('');
     setUnit('1 kg');
-    setIsCustomUnit(false);
-    setCustomUnit('');
-    setCategory('produce');
-    setIsNewCategory(false);
-    setNewCategoryName('');
+    setCategory('');
     setImage('');
     setImagePreview('');
     setImageFileName('');
     setImageFileSize('');
     setIsUploadingImage(false);
-    setDescription('');
     setError('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -98,13 +88,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
 
   if (!isOpen) return null;
 
-  const activeUnit = isCustomUnit ? customUnit.trim() : unit;
-  const quickAddPresets = getQuickAddPresetsForUnit(activeUnit || '1 kg');
-
   // Handle top-level Unit change (keeps packSizes[0] automatically synchronized)
   const handleUnitChange = (newUnit: string) => {
     setUnit(newUnit);
-    setIsCustomUnit(false);
     setPackSizes((prev) => {
       const next = [...prev];
       const numericPrice = parseFloat(price) || 0;
@@ -114,24 +100,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       } else {
         next.push({ size: newUnit, price: numericPrice, stock: numericQty, isAvailable: true });
       }
-      // Deduplicate: remove any additional pack sizes that match the new unit
-      return next.filter((ps, idx) => idx === 0 || !isSamePackSize(ps.size, newUnit));
+      return next;
     });
-  };
-
-  // Handle custom unit changes
-  const handleCustomUnitChange = (newCustomUnit: string) => {
-    setCustomUnit(newCustomUnit);
-    const trimmed = newCustomUnit.trim();
-    if (trimmed) {
-      setPackSizes((prev) => {
-        const next = [...prev];
-        if (next.length > 0) {
-          next[0] = { ...next[0], size: trimmed };
-        }
-        return next.filter((ps, idx) => idx === 0 || !isSamePackSize(ps.size, trimmed));
-      });
-    }
   };
 
   // Handle top-level Price change (maps to packSizes[0].price)
@@ -192,57 +162,18 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       return next;
     });
     if (idx === 0) {
-      if (isCustomUnit) {
-        setCustomUnit(newName);
-      } else {
-        setUnit(newName);
-      }
+      setUnit(newName);
     }
   };
 
-  // Add an additional pack size row (independent price & stock, no duplicates)
+  // Add an additional pack size row (independent price & stock, manual entry)
   const handleAddPackSizeRow = () => {
-    const existingSizes = packSizes.map((ps) => ps.size.trim().toLowerCase());
-    const availablePreset = quickAddPresets.find((p) => !existingSizes.includes(p.toLowerCase()));
-
-    const newSize = availablePreset || '';
     const numericPrice = parseFloat(price) || 0;
-    let initialPrice = numericPrice;
-    if (newSize) {
-      const factor = getPackSizeConversionFactor(newSize, activeUnit);
-      if (factor && factor > 0 && numericPrice > 0) {
-        initialPrice = Math.max(1, Math.round(numericPrice * factor));
-      }
-    }
-
     setPackSizes((prev) => [
       ...prev,
       {
-        size: newSize,
-        price: initialPrice,
-        stock: quantity !== '' ? Math.max(0, parseInt(quantity, 10) || 0) : undefined,
-        isAvailable: true,
-      },
-    ]);
-  };
-
-  // Add a specific preset pack size via quick-add (independent price & stock, prevents duplicates)
-  const handleAddPresetPackSize = (preset: string) => {
-    const alreadyAdded = packSizes.some((ps) => isSamePackSize(ps.size, preset));
-    if (alreadyAdded) return;
-
-    const numericPrice = parseFloat(price) || 0;
-    let newPrice = numericPrice;
-    const factor = getPackSizeConversionFactor(preset, activeUnit);
-    if (factor && factor > 0 && numericPrice > 0) {
-      newPrice = Math.max(1, Math.round(numericPrice * factor));
-    }
-
-    setPackSizes((prev) => [
-      ...prev,
-      {
-        size: preset,
-        price: newPrice,
+        size: '',
+        price: numericPrice,
         stock: quantity !== '' ? Math.max(0, parseInt(quantity, 10) || 0) : undefined,
         isAvailable: true,
       },
@@ -384,14 +315,15 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       return;
     }
 
-    const selectedUnit = isCustomUnit ? customUnit.trim() : unit;
+    const selectedUnit = unit.trim();
     if (!selectedUnit) {
-      setError('Please specify a product unit.');
+      setError('Please specify a product unit / pack size.');
       return;
     }
 
-    if (!description.trim()) {
-      setError('Please provide a brief description of the product.');
+    const trimmedCat = category.trim();
+    if (!trimmedCat) {
+      setError('Please enter a category.');
       return;
     }
 
@@ -417,21 +349,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       return;
     }
 
-    let finalCategory = category;
-    let finalCategoryLabel = '';
-
-    if (isNewCategory) {
-      const trimmedNewCat = newCategoryName.trim();
-      if (!trimmedNewCat) {
-        setError('Please enter a new category name.');
-        return;
-      }
-      finalCategory = trimmedNewCat.toLowerCase().replace(/\s+/g, '-');
-      finalCategoryLabel = trimmedNewCat;
-    } else {
-      const categoryObj = CATEGORY_OPTIONS.find((c) => c.id === category);
-      finalCategoryLabel = categoryObj?.aisle || categoryObj?.label || category;
-    }
+    const finalCategory = trimmedCat.toLowerCase();
+    const finalCategoryLabel = trimmedCat;
 
     const finalPackSizes = packSizes.map((ps, idx) => ({
       size: ps.size.trim(),
@@ -459,7 +378,7 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
       image: finalImage,
       category: finalCategory,
       categoryLabel: finalCategoryLabel,
-      description: description.trim(),
+      description: '',
       isOrganic: true,
       isQuickPrep: true,
       farmOrigin: 'Central Valley Organic Hub',
@@ -531,144 +450,34 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
             />
           </div>
 
-          {/* Category & Unit */}
+          {/* Category & Unit / Pack Size (Manual Entry Only) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="text-[12px] font-semibold text-slate-200">
-                {t('categoryLabel')}
+                Category
               </label>
-              <select
-                value={isNewCategory ? '__new__' : category}
-                onChange={(e) => {
-                  if (e.target.value === '__new__') {
-                    setIsNewCategory(true);
-                  } else {
-                    setIsNewCategory(false);
-                    setCategory(e.target.value);
-                  }
-                }}
-                className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer"
-              >
-                <optgroup label="Standard Categories" className="bg-[#0b121e] text-white">
-                  {CATEGORY_OPTIONS.map((c) => {
-                    const catLabel =
-                      c.id === 'produce'
-                        ? t('catProduce')
-                        : c.id === 'dairy'
-                        ? t('catDairy')
-                        : c.id === 'bakery'
-                        ? t('catBakery')
-                        : c.id === 'beverages'
-                        ? t('catBeverages')
-                        : c.id === 'snacks'
-                        ? t('catSnacks')
-                        : t('catGrains');
-                    return (
-                      <option key={c.id} value={c.id} className="bg-[#0b121e] text-white">
-                        {catLabel}
-                      </option>
-                    );
-                  })}
-                </optgroup>
-                {allCategories.filter((c) => !CATEGORY_OPTIONS.some((co) => co.id === c)).length > 0 && (
-                  <optgroup label="Custom Categories" className="bg-[#0b121e] text-white">
-                    {allCategories
-                      .filter((c) => !CATEGORY_OPTIONS.some((co) => co.id === c))
-                      .map((c) => (
-                        <option key={c} value={c} className="bg-[#0b121e] text-white">
-                          {c}
-                        </option>
-                      ))}
-                  </optgroup>
-                )}
-                <option value="__new__" className="bg-[#0b121e] text-emerald-400 font-semibold">
-                  + Add New Category...
-                </option>
-              </select>
-              {isNewCategory && (
-                <div className="mt-2">
-                  <input
-                    type="text"
-                    required
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    placeholder="e.g. Personal Care, Household, Organic Spices"
-                    className="w-full px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
-                  />
-                </div>
-              )}
+              <input
+                type="text"
+                required
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="e.g. Fruits & Vegetables, Dairy, Bakery, Beverages, Spices..."
+                className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              />
             </div>
 
             <div className="space-y-1">
               <label className="text-[12px] font-semibold text-slate-200">
-                {t('unitPackSizeLabel')}
+                Unit / Pack Size
               </label>
-              {!isCustomUnit ? (
-                <div className="flex gap-1.5">
-                  <select
-                    value={unit}
-                    onChange={(e) => {
-                      if (e.target.value === 'custom') {
-                        setIsCustomUnit(true);
-                      } else {
-                        handleUnitChange(e.target.value);
-                      }
-                    }}
-                    className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white focus:outline-hidden focus:ring-2 focus:ring-[#006b2c] cursor-pointer font-semibold"
-                  >
-                    <optgroup label="Weight" className="bg-[#0b121e] text-white">
-                      <option value="100 g" className="bg-[#0b121e] text-white">100 g</option>
-                      <option value="250 g" className="bg-[#0b121e] text-white">250 g</option>
-                      <option value="500 g" className="bg-[#0b121e] text-white">500 g</option>
-                      <option value="1 kg" className="bg-[#0b121e] text-white">1 kg</option>
-                      <option value="2 kg" className="bg-[#0b121e] text-white">2 kg</option>
-                      <option value="5 kg" className="bg-[#0b121e] text-white">5 kg</option>
-                    </optgroup>
-                    <optgroup label="Volume" className="bg-[#0b121e] text-white">
-                      <option value="100 ml" className="bg-[#0b121e] text-white">100 ml</option>
-                      <option value="250 ml" className="bg-[#0b121e] text-white">250 ml</option>
-                      <option value="500 ml" className="bg-[#0b121e] text-white">500 ml</option>
-                      <option value="1 litre" className="bg-[#0b121e] text-white">1 litre</option>
-                      <option value="2 litres" className="bg-[#0b121e] text-white">2 litres</option>
-                      <option value="5 litres" className="bg-[#0b121e] text-white">5 litres</option>
-                    </optgroup>
-                    <optgroup label="Pieces" className="bg-[#0b121e] text-white">
-                      <option value="1 piece" className="bg-[#0b121e] text-white">1 piece</option>
-                      <option value="2 pieces" className="bg-[#0b121e] text-white">2 pieces</option>
-                      <option value="4 pieces" className="bg-[#0b121e] text-white">4 pieces</option>
-                      <option value="1 packet" className="bg-[#0b121e] text-white">1 packet</option>
-                      <option value="1 box" className="bg-[#0b121e] text-white">1 box</option>
-                      <option value="1 bunch" className="bg-[#0b121e] text-white">1 bunch</option>
-                    </optgroup>
-                    <optgroup label="Dozen" className="bg-[#0b121e] text-white">
-                      <option value="1/2 dozen" className="bg-[#0b121e] text-white">1/2 dozen</option>
-                      <option value="1 dozen" className="bg-[#0b121e] text-white">1 dozen</option>
-                      <option value="2 dozen" className="bg-[#0b121e] text-white">2 dozen</option>
-                    </optgroup>
-                    <option value="custom" className="bg-[#0b121e] text-white">{t('enterCustomUnitBtn')}</option>
-                  </select>
-                </div>
-              ) : (
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={customUnit}
-                    onChange={(e) => handleCustomUnitChange(e.target.value)}
-                    placeholder="e.g. 500 g, 1 kg, 1 L, 1 dozen"
-                    className="flex-1 px-3 py-2 text-[13px] border border-emerald-500 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCustomUnit(false);
-                      handleUnitChange(unit);
-                    }}
-                    className="px-2.5 py-1 text-[11px] text-emerald-400 hover:text-emerald-300 underline cursor-pointer"
-                  >
-                    {t('switchToStandardUnits')}
-                  </button>
-                </div>
-              )}
+              <input
+                type="text"
+                required
+                value={unit}
+                onChange={(e) => handleUnitChange(e.target.value)}
+                placeholder="e.g. 100 g, 250 g, 500 g, 1 kg, 500 ml, 1 litre, 1 piece..."
+                className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              />
             </div>
           </div>
 
@@ -734,37 +543,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                   <span>Add Pack Size</span>
                 </button>
               </div>
-            </div>
-
-            {/* Quick Add Presets Bar */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-white/10">
-              <span className="text-[11px] font-semibold text-slate-400">Quick add:</span>
-              {quickAddPresets.length > 0 ? (
-                quickAddPresets.map((preset) => {
-                  const alreadyAdded = packSizes.some((ps) =>
-                    isSamePackSize(ps.size, preset)
-                  );
-                  return (
-                    <button
-                      key={preset}
-                      type="button"
-                      disabled={alreadyAdded}
-                      onClick={() => handleAddPresetPackSize(preset)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer border ${
-                        alreadyAdded
-                          ? 'bg-white/5 text-slate-500 border-white/10 cursor-not-allowed opacity-50'
-                          : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 hover:border-emerald-400'
-                      }`}
-                    >
-                      + {preset}
-                    </button>
-                  );
-                })
-              ) : (
-                <span className="text-[11px] text-slate-400 italic">
-                  Enter a custom unit to see quick add options, or use &quot;Add Pack Size&quot; above.
-                </span>
-              )}
             </div>
 
             {/* Pack Size Rows */}
@@ -1001,21 +779,6 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
                 </button>
               </div>
             )}
-          </div>
-
-          {/* Description */}
-          <div className="space-y-1">
-            <label className="text-[12px] font-semibold text-slate-200">
-              {t('productDescriptionLabel')}
-            </label>
-            <textarea
-              rows={3}
-              required
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={t('productDescriptionPlaceholder')}
-              className="w-full px-3 py-2 text-[13px] border border-white/15 rounded-lg bg-black/60 text-white placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
-            />
           </div>
 
           {/* Action Buttons */}

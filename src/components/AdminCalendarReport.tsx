@@ -76,7 +76,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
     const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
     const msUntilMidnight = Math.max(1000, nextMidnight.getTime() - now.getTime());
 
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: ReturnType<typeof setTimeout>;
     const scheduleMidnight = (delay: number) => {
       timeoutId = setTimeout(() => {
         updateToday();

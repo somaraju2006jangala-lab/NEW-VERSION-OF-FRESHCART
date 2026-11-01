@@ -56,8 +56,8 @@ export const hi: typeof en = {
   resetAllFilters: 'सभी फ़िल्टर रीसेट करें',
 
   // Product Card & Details
-  availableStock: 'उपलब्ध: {stock}',
-  onlyAvailableStock: 'केवल {stock} उपलब्ध',
+  availableStock: 'स्टॉक में उपलब्ध',
+  onlyAvailableStock: 'स्टॉक में उपलब्ध',
   unavailable: 'अनुपलब्ध',
   pack: 'पैक',
   packs: 'पैक',
