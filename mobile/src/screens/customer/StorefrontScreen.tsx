@@ -37,6 +37,7 @@ import { Product } from '../../types';
 import { ProductDetailModal } from './ProductDetailModal';
 import { CustomerAuthModal } from './CustomerAuthModal';
 import { AssistantModal } from './AssistantModal';
+import { ProductImageCarousel } from '../../components/carousel/ProductImageCarousel';
 
 const CATEGORIES = [
   { id: 'all', name: 'All Aisles', slug: 'all' },
@@ -106,6 +107,85 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
     return matchesCat && matchesSearch;
   });
 
+  const renderListHeader = () => (
+    <View style={styles.headerComponentWrapper}>
+      {/* Trending Search Suggestions Strip (matching the reference screenshot top text) */}
+      <View style={styles.trendingContainer}>
+        <Text style={styles.trendingPrefix}>Trending:</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.trendingScroll}
+        >
+          {[
+            { label: 'Honeycrisp Apples', query: 'Honeycrisp Apples' },
+            { label: 'Artisan Sourdough', query: 'Sourdough' },
+            { label: 'Grade-A Cow Milk', query: 'Milk' },
+            { label: 'Fresh Bananas', query: 'Bananas' },
+            { label: 'Cold-Pressed Oil', query: 'Oil' },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.label}
+              style={styles.trendingPill}
+              onPress={() => setSearchQuery(item.query)}
+            >
+              <Text style={styles.trendingPillText}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Premium Interactive Product Image Carousel */}
+      <ProductImageCarousel
+        products={products}
+        onSelectProduct={(prod) => setSelectedProduct(prod)}
+      />
+
+      {/* Horizontal Category Filter Pills */}
+      <View style={styles.categoriesWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoriesScroll}
+        >
+          {CATEGORIES.map((cat) => {
+            const isSelected = selectedCategory === cat.slug;
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                style={[styles.categoryPill, isSelected && styles.categoryPillActive]}
+                onPress={() => setSelectedCategory(cat.slug)}
+              >
+                <Text
+                  style={[
+                    styles.categoryPillText,
+                    isSelected && styles.categoryPillTextActive,
+                  ]}
+                >
+                  {cat.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* Section Header Row */}
+      <View style={styles.sectionHeaderRow}>
+        <Text style={styles.sectionTitle}>
+          {searchQuery
+            ? `Results for "${searchQuery}"`
+            : selectedCategory === 'all'
+            ? 'Farm-Fresh Catalogue'
+            : CATEGORIES.find((c) => c.slug === selectedCategory)?.name || 'Products'}
+        </Text>
+        <Text style={styles.sectionSubtitle}>
+          {filteredProducts.length} item{filteredProducts.length === 1 ? '' : 's'} available
+        </Text>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <Header
@@ -168,35 +248,6 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
         </View>
       </View>
 
-      {/* Horizontal Category Filter Pills */}
-      <View style={styles.categoriesWrapper}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoriesScroll}
-        >
-          {CATEGORIES.map((cat) => {
-            const isSelected = selectedCategory === cat.slug;
-            return (
-              <TouchableOpacity
-                key={cat.id}
-                style={[styles.categoryPill, isSelected && styles.categoryPillActive]}
-                onPress={() => setSelectedCategory(cat.slug)}
-              >
-                <Text
-                  style={[
-                    styles.categoryPillText,
-                    isSelected && styles.categoryPillTextActive,
-                  ]}
-                >
-                  {cat.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-
       {/* Products Grid */}
       {isLoading && !isRefreshing ? (
         <View style={styles.loadingBox}>
@@ -208,6 +259,7 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
           data={filteredProducts}
           keyExtractor={(item) => item.id}
           numColumns={2}
+          ListHeaderComponent={renderListHeader}
           contentContainerStyle={styles.gridContent}
           refreshControl={
             <RefreshControl refreshing={isRefreshing} onRefresh={() => loadProducts(true)} />
@@ -704,6 +756,60 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#86efac',
     fontWeight: '500',
+  },
+  headerComponentWrapper: {
+    width: '100%',
+    paddingBottom: 4,
+  },
+  trendingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  trendingPrefix: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginRight: 8,
+  },
+  trendingScroll: {
+    gap: 8,
+    alignItems: 'center',
+  },
+  trendingPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 3.5,
+    borderRadius: 7,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  trendingPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#64748b',
   },
 });
 
