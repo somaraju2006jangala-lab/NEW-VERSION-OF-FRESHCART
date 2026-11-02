@@ -10,6 +10,7 @@ interface CartContextType {
   updateQuantity: (productId: string, quantity: number, packSize?: string) => void;
   removeFromCart: (productId: string, packSize?: string) => void;
   clearCart: () => void;
+  syncCart: (items: CartItem[]) => void;
   itemCount: number;
   subtotal: number;
 }
@@ -132,6 +133,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const syncCart = (items: CartItem[]) => {
+    if (Array.isArray(items)) {
+      setCart(items);
+    }
+  };
+
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const subtotal = cart.reduce((sum, item) => {
@@ -147,6 +154,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateQuantity,
         removeFromCart,
         clearCart,
+        syncCart,
         itemCount,
         subtotal,
       }}

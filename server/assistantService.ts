@@ -1282,8 +1282,8 @@ function getLocalizedText(
         };
       }
       return {
-        display: `Your cart has ${count} items. Subtotal: ₹${subtotal}, Delivery Fee: ₹${deliveryFee}, Total: ₹${total}.`,
-        spoken: `Your cart has ${count} items with a total of ₹${total}.`,
+        display: `Here are the items in your cart, along with their quantities and total price:`,
+        spoken: `Here are the items in your cart, along with their quantities and total price. Total is ₹${total}.`,
       };
     }
 
@@ -1330,18 +1330,18 @@ function getLocalizedText(
       const { code, discountAmt, pct } = vars;
       if (isHi) {
         return {
-          display: `कूपन कोड "${code}" सफलतापूर्वक लागू हुआ! आपको ${pct}% की छूट मिली (बचत: ₹${discountAmt})।`,
+          display: `मैं जांच करूँगा कि ${code} कूपन मान्य है या नहीं। कूपन कोड "${code}" सफलतापूर्वक लागू हुआ! आपको ${pct}% की छूट मिली (बचत: ₹${discountAmt})।`,
           spoken: `कूपन "${code}" लागू हो गया है। आपने ₹${discountAmt} की बचत की।`,
         };
       }
       if (isTe) {
         return {
-          display: `కూపన్ కోడ్ "${code}" విజయవంతంగా వర్తించబడింది! మీకు ${pct}% తగ్గింపు లభించింది (ఆదా: ₹${discountAmt}).`,
+          display: `నేను ${code} కూపన్ చెల్లుబాటు అవుతుందో లేదో తనిఖీ చేస్తాను. కూపన్ కోడ్ "${code}" విజయవంతంగా వర్తించబడింది! మీకు ${pct}% తగ్గింపు లభించింది (ఆదా: ₹${discountAmt}).`,
           spoken: `కూపన్ "${code}" వర్తించబడింది! మీరు ₹${discountAmt} ఆదా చేశారు.`,
         };
       }
       return {
-        display: `Coupon "${code}" applied successfully! You save ₹${discountAmt} (${pct}% OFF).`,
+        display: `I'll check whether the ${code} coupon is valid and apply it if eligible.\n\nCoupon "${code}" applied successfully! You save ₹${discountAmt} (${pct}% OFF).`,
         spoken: `Coupon "${code}" applied! You save ₹${discountAmt}.`,
       };
     }
@@ -1350,18 +1350,18 @@ function getLocalizedText(
       const { code, minOrder, subtotal, diff } = vars;
       if (isHi) {
         return {
-          display: `कूपन "${code}" के लिए न्यूनतम ₹${minOrder} का ऑर्डर चाहिए। आपका वर्तमान उप-कुल ₹${subtotal} है। छूट पाने के लिए ₹${diff} और जोड़ें!`,
+          display: `मैं जांच करूँगा कि ${code} कूपन मान्य है या नहीं। कूपन "${code}" के लिए न्यूनतम ₹${minOrder} का ऑर्डर चाहिए। आपका वर्तमान उप-कुल ₹${subtotal} है। छूट पाने के लिए ₹${diff} और जोड़ें!`,
           spoken: `कूपन "${code}" के लिए न्यूनतम ₹${minOrder} का ऑर्डर चाहिए।`,
         };
       }
       if (isTe) {
         return {
-          display: `కూపన్ "${code}" కోసం కనీస ఆర్డర్ ₹${minOrder} ఉండాలి. మీ ప్రస్తుత మొత్తం ₹${subtotal}. ఈ తగ్గింపు కోసం ఇంకా ₹${diff} జోడించండి!`,
+          display: `నేను ${code} కూపన్ చెల్లుబాటు అవుతుందో లేదో తనిఖీ చేస్తాను. కూపన్ "${code}" కోసం కనీస ఆర్డర్ ₹${minOrder} ఉండాలి. మీ ప్రస్తుత మొత్తం ₹${subtotal}. ఈ తగ్గింపు కోసం ఇంకా ₹${diff} జోడించండి!`,
           spoken: `కూపన్ "${code}" కోసం కనీస ఆర్డర్ ₹${minOrder} ఉండాలి.`,
         };
       }
       return {
-        display: `Coupon "${code}" requires a minimum order of ₹${minOrder}. Your current cart subtotal is ₹${subtotal}. Add ₹${diff} more to unlock this discount!`,
+        display: `I'll check whether the ${code} coupon is valid and apply it if eligible.\n\nCoupon "${code}" requires a minimum order of ₹${minOrder}. Your current cart subtotal is ₹${subtotal}. Add ₹${diff} more to unlock this discount!`,
         spoken: `Coupon "${code}" requires a minimum order of ₹${minOrder}. Add ₹${diff} more to unlock it.`,
       };
     }
@@ -2627,11 +2627,15 @@ export async function handleAssistantChat(
       }
 
       const catMsg =
-        userLang === 'hi-IN'
-          ? `${catLabel} श्रेणी में ${filtered.length} उत्पाद मिले:`
+        filtered.length === 0
+          ? `We currently don't have items in stock under ${catLabel}. Please explore our other fresh categories below!`
+          : userLang === 'hi-IN'
+          ? `यहाँ FreshCart में वर्तमान में उपलब्ध ताज़ा ${catLabel} हैं:`
           : userLang === 'te-IN'
-          ? `${catLabel} విభాగంలో ${filtered.length} ఉత్పత్తులు లభించాయి:`
-          : `Found ${filtered.length} items in ${catLabel}:`;
+          ? `ఇక్కడ FreshCartలో ప్రస్తుతం అందుబాటులో ఉన్న తాజా ${catLabel} ఉన్నాయి:`
+          : catLabel.toLowerCase().includes('vegetable')
+          ? `Here are the fresh vegetables currently available in FreshCart.`
+          : `Here are the fresh ${catLabel.toLowerCase()} currently available in FreshCart.`;
 
       res.json({
         success: true,
@@ -2643,7 +2647,7 @@ export async function handleAssistantChat(
         language: userLang,
         message: catMsg,
         spokenMessage: catMsg,
-        quickReplies: ['Show All Products', 'View Cart'],
+        quickReplies: [...CONSISTENT_QUICK_ACTIONS],
       });
       return;
     }
@@ -2741,17 +2745,17 @@ export async function handleAssistantChat(
 
       const budgetMsg =
         userLang === 'hi-IN'
-          ? `आपके ₹${budget} के बजट में ${basket.length} वस्तुओं की टोकरी तैयार है (कुल: ₹${totalCost}):\n\n${breakdown}\n\nशेष बजट: ₹${budget - totalCost}।`
+          ? `मैं आपके ₹${budget} के बजट में उपलब्ध उत्पादों का उपयोग करके एक किराने की सूची तैयार करूँगा (कुल: ₹${totalCost}):\n\n${breakdown}\n\nशेष बजट: ₹${budget - totalCost}।`
           : userLang === 'te-IN'
-          ? `మీ ₹${budget} బడ్జెట్‌లో ${basket.length} వస్తువుల బాస్కెట్ సిద్ధంగా ఉంది (మొత్తం: ₹${totalCost}):\n\n${breakdown}\n\nమిగిలిన బడ్జెట్: ₹${budget - totalCost}.`
-          : `Here is a curated ${targetCat || 'grocery'} basket for under ₹${budget} (Total: ₹${totalCost}):\n\n${breakdown}\n\nRemaining budget: ₹${budget - totalCost}.`;
+          ? `నేను మీ ₹${budget} బడ్జెట్‌లో అందుబాటులో ఉన్న ఉత్పత్తులతో ఒక కిరాణా జాబితాను సిద్ధం చేస్తాను (మొత్తం: ₹${totalCost}):\n\n${breakdown}\n\nమిగిలిన బడ్జెట్: ₹${budget - totalCost}.`
+          : `I'll prepare a grocery list within your ₹${budget} budget using available products (Total: ₹${totalCost}):\n\n${breakdown}\n\nRemaining budget: ₹${budget - totalCost}.`;
 
       const spokenBudget =
         userLang === 'hi-IN'
           ? `₹${budget} के बजट में ${basket.length} वस्तुएं तैयार हैं। कुल योग ₹${totalCost} है।`
           : userLang === 'te-IN'
           ? `₹${budget} బడ్జెట్‌లో ${basket.length} వస్తువులు సిద్ధంగా ఉన్నాయి. మొత్తం ₹${totalCost}.`
-          : `Curated ${basket.length} items within your ₹${budget} budget, totaling ₹${totalCost}.`;
+          : `I'll prepare a grocery list within your ₹${budget} budget using available products. Curated ${basket.length} items totaling ₹${totalCost}.`;
 
       res.json({
         success: true,

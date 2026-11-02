@@ -10,6 +10,11 @@ import {
   UpiPaymentSettings,
   PendingDeliveryOrder,
   InventoryLog,
+  AppSettings,
+  DailyReportResponse,
+  CalendarMonthResponse,
+  AdminCustomerAccount,
+  PaymentVerificationItem,
 } from '../types';
 
 interface RequestOptions {
@@ -65,6 +70,13 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {
       throw new Error('Connection timed out. Please check that FreshCart server is running.');
+    }
+    if (
+      err.message === 'Load failed' ||
+      err.message?.includes('Failed to fetch') ||
+      err.message?.includes('NetworkError')
+    ) {
+      throw new Error(`Unable to connect to FreshCart backend at ${baseUrl}. Please ensure the server is active.`);
     }
     throw err;
   }
@@ -259,6 +271,22 @@ export const adminApi = {
     });
   },
 
+  async confirmCashCollection(orderId: string, token?: string) {
+    const cleanId = orderId.replace(/^#/, '');
+    return request<{
+      success: boolean;
+      error?: string;
+      paymentStatus?: string;
+      status?: string;
+      verifiedAt?: string;
+      verifiedBy?: string;
+    }>(`/api/orders/${encodeURIComponent(cleanId)}/confirm-cash-collection`, {
+      method: 'POST',
+      token,
+      body: {},
+    });
+  },
+
   async deleteOrder(orderId: string, token?: string) {
     return request(`/api/orders/${encodeURIComponent(orderId)}`, {
       method: 'DELETE',
@@ -298,9 +326,114 @@ export const adminApi = {
     });
   },
 
+  async updateCoupon(token: string, code: string, coupon: Partial<Coupon>) {
+    return request(`/api/coupons/${encodeURIComponent(code)}`, {
+      method: 'PUT',
+      token,
+      body: coupon,
+    });
+  },
+
   async deleteCoupon(token: string, code: string) {
     return request(`/api/coupons/${encodeURIComponent(code)}`, {
       method: 'DELETE',
+      token,
+    });
+  },
+
+  async getDeliverySettings() {
+    return request<{ success: boolean; settings: AppSettings }>('/api/settings');
+  },
+
+  async updateDeliverySettings(token: string, settings: Partial<AppSettings>) {
+    return request<{ success: boolean; settings: AppSettings }>('/api/settings', {
+      method: 'POST',
+      token,
+      body: settings,
+    });
+  },
+
+  async getUpiSettings() {
+    return request<{ success: boolean; settings: UpiPaymentSettings | null; upiId?: string; merchantName?: string }>(
+      '/api/payment-settings/upi'
+    );
+  },
+
+  async saveUpiSettings(
+    token: string,
+    settings: {
+      upiId: string;
+      merchantName: string;
+      enabled?: boolean;
+      qrCodeUrl?: string;
+    }
+  ) {
+    return request<{ success: boolean; settings?: UpiPaymentSettings; error?: string }>(
+      '/api/payment-settings/upi',
+      {
+        method: 'POST',
+        token,
+        body: settings,
+      }
+    );
+  },
+
+  async getAuthorizedAdmins(token: string) {
+    return request<{
+      success: boolean;
+      admins: AuthorizedAdmin[];
+      activeCount: number;
+      maxLimit: number;
+      error?: string;
+    }>('/api/admin/users', { token });
+  },
+
+  async createAuthorizedAdmin(
+    token: string,
+    data: {
+      fullName: string;
+      email: string;
+      password: string;
+      adminId?: string;
+    }
+  ) {
+    return request<{ success: boolean; admin?: AuthorizedAdmin; error?: string }>('/api/admin/users', {
+      method: 'POST',
+      token,
+      body: data,
+    });
+  },
+
+  async toggleAdminStatus(token: string, adminId: string, status: 'active' | 'inactive') {
+    return request<{ success: boolean; error?: string }>(
+      `/api/admin/users/${encodeURIComponent(adminId)}/status`,
+      {
+        method: 'PATCH',
+        token,
+        body: { status },
+      }
+    );
+  },
+
+  async deleteAuthorizedAdmin(token: string, adminId: string) {
+    return request<{ success: boolean; error?: string }>(`/api/admin/users/${encodeURIComponent(adminId)}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  async getDailyReport(token: string, dateStr: string): Promise<DailyReportResponse> {
+    return request<DailyReportResponse>(`/api/admin/reports/daily?date=${encodeURIComponent(dateStr)}`, {
+      token,
+    });
+  },
+
+  async getCalendarMonthSummary(
+    token: string,
+    year: number,
+    month: number
+  ): Promise<CalendarMonthResponse> {
+    return request<CalendarMonthResponse>(`/api/admin/reports/calendar-month?year=${year}&month=${month}`, {
       token,
     });
   },

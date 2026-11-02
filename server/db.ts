@@ -2224,6 +2224,12 @@ export async function getCartForCustomerInDb(customerId: string): Promise<any[]>
   const pool = getPool();
 
   try {
+    // Ensure customer row exists to satisfy foreign key constraint
+    await pool.query(
+      'INSERT IGNORE INTO customers (customer_id, full_name, email, password_hash) VALUES (?, ?, ?, ?)',
+      [customerId, 'Customer', `${customerId}@freshcart.local`, 'hash']
+    );
+
     // 1. Get or create cart atomically using LAST_INSERT_ID to avoid race conditions
     const [insertRes] = await pool.query<ResultSetHeader>(
       'INSERT INTO carts (customer_id) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',
@@ -2294,6 +2300,12 @@ export async function saveCartItemInDb(
   const pool = getPool();
 
   try {
+    // Ensure customer row exists to satisfy foreign key constraint
+    await pool.query(
+      'INSERT IGNORE INTO customers (customer_id, full_name, email, password_hash) VALUES (?, ?, ?, ?)',
+      [customerId, 'Customer', `${customerId}@freshcart.local`, 'hash']
+    );
+
     // Ensure cart exists atomically using LAST_INSERT_ID to avoid race conditions
     const [insertRes] = await pool.query<ResultSetHeader>(
       'INSERT INTO carts (customer_id) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',

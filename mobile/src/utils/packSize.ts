@@ -272,3 +272,25 @@ export function getAvailablePackSizes(product: Product): PackSizeOption[] {
     },
   ];
 }
+
+/**
+ * Returns configured pack sizes for a product (used in Admin Portal).
+ */
+export function getProductPackSizes(product: Product): PackSizeOption[] {
+  if (Array.isArray(product.packSizes) && product.packSizes.length > 0) {
+    return product.packSizes.map((ps) => ({
+      ...ps,
+      isAvailable: ps.isAvailable !== false && (ps as any).available !== false,
+      price: Math.max(1, Number(ps.price) || product.price || 1),
+    }));
+  }
+  return [
+    {
+      size: formatUnitString(product.unit || '1 unit'),
+      price: Math.max(1, Number(product.price) || 1),
+      isAvailable: true,
+      stock: product.stock,
+    },
+  ];
+}
+

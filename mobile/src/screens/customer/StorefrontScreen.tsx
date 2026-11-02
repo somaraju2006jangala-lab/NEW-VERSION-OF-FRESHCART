@@ -374,7 +374,14 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
       <AssistantModal
         visible={showAssistantModal}
         onClose={() => setShowAssistantModal(false)}
-        onNavigateToCart={onOpenCart}
+        onNavigateToCart={() => {
+          setShowAssistantModal(false);
+          onOpenCart();
+        }}
+        onSelectProduct={(product) => {
+          setShowAssistantModal(false);
+          setSelectedProduct(product);
+        }}
       />
     </SafeAreaView>
   );

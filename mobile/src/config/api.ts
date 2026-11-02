@@ -8,10 +8,19 @@ export const DEFAULT_LAN_IP = '10.211.209.237';
 export const DEFAULT_PORT = '3000';
 
 export function getDefaultApiUrl(): string {
-  if (Platform.OS === 'android') {
-    // For physical devices or emulator, LAN IP works across the local WiFi network
+  // If running in browser (Expo Web), automatically match host IP/domain so devices on WiFi can connect
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname;
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return `http://${hostname}:${DEFAULT_PORT}`;
+    }
+  }
+
+  // For physical mobile devices on WiFi, use LAN IP
+  if (Platform.OS === 'android' || Platform.OS === 'ios') {
     return `http://${DEFAULT_LAN_IP}:${DEFAULT_PORT}`;
   }
+
   return `http://localhost:${DEFAULT_PORT}`;
 }
 

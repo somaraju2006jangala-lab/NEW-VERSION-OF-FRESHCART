@@ -200,3 +200,103 @@ export interface PendingDeliveryOrder {
     price?: number;
   }>;
 }
+
+export interface AppSettings {
+  deliveryChargeRules: DeliveryChargeRule[];
+  deliveryCharges?: number;
+}
+
+export interface PaymentVerificationItem {
+  id: string;
+  orderId: string;
+  amount: number;
+  paymentMethod: string;
+  paymentStatus: string;
+  screenshotPath?: string;
+  screenshotUrl?: string;
+  screenshotUploadedAt?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
+  verificationNotes?: string;
+  otpSent?: boolean;
+  otpSentAt?: string;
+  createdAt: string;
+  customerName?: string;
+  customerMobile?: string;
+  customerEmail?: string;
+  orderTotal?: number;
+  subtotal?: number;
+  discount?: number;
+}
+
+export interface AdminCustomerAccount {
+  id: string;
+  customerId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address?: string | null;
+  status: string;
+  loyaltyTier?: string;
+  createdAt: string;
+}
+
+export interface DailyReportOrder {
+  id: string;
+  customerId: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  deliveryAddress: string;
+  deliveryTimeSlot?: string;
+  subtotal: number;
+  discount: number;
+  total: number;
+  couponCode?: string;
+  paymentId?: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  status: string;
+  screenshotUrl?: string;
+  verifiedAt?: string | null;
+  verifiedBy?: string | null;
+  createdAt: string;
+}
+
+export interface DailyReportData {
+  selectedDate: string;
+  totalOrders: number;
+  upiOrdersCount: number;
+  codOrdersCount: number;
+  totalUpiTransactions: number;
+  totalCodCollections: number;
+  totalCollectedAmount: number;
+  pendingUpiCount: number;
+  pendingUpiAmount: number;
+  rejectedUpiCount: number;
+  rejectedUpiAmount: number;
+  pendingCodCount: number;
+  pendingCodAmount: number;
+  orders: DailyReportOrder[];
+}
+
+export interface MonthDayActivity {
+  date: string;
+  orderCount: number;
+  hasOrders: boolean;
+}
+
+export interface DailyReportResponse {
+  success: boolean;
+  report?: DailyReportData;
+  error?: string;
+}
+
+export interface CalendarMonthResponse {
+  success: boolean;
+  year?: number;
+  month?: number;
+  days?: Record<string, MonthDayActivity>;
+  error?: string;
+}
+
