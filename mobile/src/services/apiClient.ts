@@ -23,6 +23,7 @@ interface RequestOptions {
   body?: any;
   token?: string | null;
   timeoutMs?: number;
+  retries?: number;
 }
 
 export async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -42,44 +43,103 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
     headers['x-staff-token'] = options.token;
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+  const maxAttempts = typeof options.retries === 'number' ? options.retries + 1 : (options.method === 'GET' || !options.method ? 2 : 1);
+  let lastError: any = null;
 
-  try {
-    const fetchOptions: RequestInit = {
-      method: options.method || 'GET',
-      headers,
-      signal: controller.signal,
-    };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
 
-    if (options.body !== undefined && options.method !== 'GET') {
-      fetchOptions.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+    try {
+      const fetchOptions: RequestInit = {
+        method: options.method || 'GET',
+        headers,
+        signal: controller.signal,
+      };
+
+      if (options.body !== undefined && options.method !== 'GET') {
+        fetchOptions.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+      }
+
+      const res = await fetch(url, fetchOptions);
+      clearTimeout(timeoutId);
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errorMsg = json?.error || json?.message || `HTTP ${res.status}: Request failed`;
+        throw new Error(errorMsg);
+      }
+
+      return json as T;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      lastError = err;
+
+      const msg = String(err?.message || '');
+      const isNetworkIssue =
+        err?.name === 'AbortError' ||
+        msg === 'Load failed' ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('NetworkError') ||
+        msg.includes('Network request failed') ||
+        msg.includes('ConnectException') ||
+        msg.includes('Failed to connect') ||
+        msg.includes('ECONNREFUSED') ||
+        msg.includes('ENOTFOUND') ||
+        msg.includes('fetch failed') ||
+        msg.includes('timed out');
+
+      // Retry if this is a transient network issue and we still have attempts left
+      if (isNetworkIssue && attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        continue;
+      }
+
+      if (err?.name === 'AbortError') {
+        throw new Error('Connection timed out. Please check your network connection and try again.');
+      }
+
+      if (isNetworkIssue) {
+        throw new Error(
+          'Unable to connect to FreshCart server. Please check your network connection and try again.'
+        );
+      }
+
+      throw err;
     }
-
-    const res = await fetch(url, fetchOptions);
-    clearTimeout(timeoutId);
-
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errorMsg = json?.error || json?.message || `HTTP ${res.status}: Request failed`;
-      throw new Error(errorMsg);
-    }
-
-    return json as T;
-  } catch (err: any) {
-    clearTimeout(timeoutId);
-    if (err.name === 'AbortError') {
-      throw new Error('Connection timed out. Please check that FreshCart server is running.');
-    }
-    if (
-      err.message === 'Load failed' ||
-      err.message?.includes('Failed to fetch') ||
-      err.message?.includes('NetworkError')
-    ) {
-      throw new Error(`Unable to connect to FreshCart backend at ${baseUrl}. Please ensure the server is active.`);
-    }
-    throw err;
   }
+
+  throw lastError || new Error('Request failed');
+}
+
+/**
+ * Strips raw IPs, internal ports, URLs, and Java stack trace headers from user-facing UI messages
+ */
+export function cleanErrorMessage(err: any, fallback = 'Unable to connect to FreshCart server.'): string {
+  if (!err) return fallback;
+  const raw = typeof err === 'string' ? err : err?.message || fallback;
+  if (
+    raw.includes('ConnectException') ||
+    raw.includes('Failed to connect') ||
+    raw.includes('Network request failed') ||
+    raw.includes('fetch failed') ||
+    raw.includes('Load failed') ||
+    raw.includes('ECONNREFUSED') ||
+    raw.includes('ENOTFOUND') ||
+    raw.includes('timed out') ||
+    raw.includes('AbortError') ||
+    raw.includes('Unable to connect') ||
+    raw.includes('Connection unavailable') ||
+    raw.includes('NetworkError')
+  ) {
+    return 'Unable to connect to FreshCart server. Please check your network connection and try again.';
+  }
+  return raw
+    .replace(/https?:\/\/[^\s]+/gi, '')
+    .replace(/\/?\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b/g, '')
+    .replace(/localhost(:\d+)?/gi, '')
+    .replace(/\bport \d+\b/gi, '')
+    .trim() || fallback;
 }
 
 // -------------------------------------------------------------
@@ -110,7 +170,15 @@ export const authApi = {
   }) {
     return request('/api/auth/register', {
       method: 'POST',
-      body: data,
+      body: {
+        name: data.fullName,
+        fullName: data.fullName,
+        email: data.email,
+        phone: data.mobile,
+        mobile: data.mobile,
+        password: data.password,
+        address: data.address,
+      },
     });
   },
 
@@ -503,9 +571,87 @@ export const employeeApi = {
 // Customer APIs
 // -------------------------------------------------------------
 export const customerApi = {
-  async getProducts() {
-    const res = await request<{ success: boolean; products: Product[] }>('/api/products');
+  async getProducts(params?: { category?: string; search?: string; limit?: number; offset?: number }) {
+    const query = new URLSearchParams();
+    if (params?.category && params.category !== 'all') query.set('category', params.category);
+    if (params?.search && params.search.trim()) query.set('search', params.search.trim());
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+
+    const qs = query.toString();
+    const endpoint = qs ? `/api/products?${qs}` : '/api/products';
+    const res = await request<{
+      success: boolean;
+      products: Product[];
+      total?: number;
+      count?: number;
+      hasMore?: boolean;
+    }>(endpoint);
+
     return res.products || [];
+  },
+
+  async getAllProducts(params?: { category?: string; search?: string }): Promise<Product[]> {
+    try {
+      const query = new URLSearchParams();
+      if (params?.category && params.category !== 'all') query.set('category', params.category);
+      if (params?.search && params.search.trim()) query.set('search', params.search.trim());
+      const qs = query.toString();
+      const endpoint = qs ? `/api/products?${qs}` : '/api/products';
+
+      const res = await request<{
+        success: boolean;
+        products: Product[];
+        total?: number;
+        hasMore?: boolean;
+      }>(endpoint);
+
+      if (res && res.success && Array.isArray(res.products)) {
+        const all: Product[] = [...res.products];
+        const seen = new Set<string>(all.map((p) => p.id));
+        const total = res.total ?? all.length;
+
+        // If backend paginated, automatically fetch all remaining pages to ensure 100% complete catalogue
+        if (res.hasMore && all.length < total) {
+          let offset = all.length;
+          const batchSize = 50;
+
+          while (all.length < total) {
+            const pageQuery = new URLSearchParams();
+            if (params?.category && params.category !== 'all') pageQuery.set('category', params.category);
+            if (params?.search && params.search.trim()) pageQuery.set('search', params.search.trim());
+            pageQuery.set('offset', String(offset));
+            pageQuery.set('limit', String(batchSize));
+
+            const pageRes = await request<{
+              success: boolean;
+              products: Product[];
+              total?: number;
+              hasMore?: boolean;
+            }>(`/api/products?${pageQuery.toString()}`);
+
+            if (!pageRes?.products || pageRes.products.length === 0) break;
+
+            for (const item of pageRes.products) {
+              if (!seen.has(item.id)) {
+                seen.add(item.id);
+                all.push(item);
+              }
+            }
+
+            if (!pageRes.hasMore || pageRes.products.length < batchSize) break;
+            offset += pageRes.products.length;
+          }
+        }
+
+        return all;
+      }
+    } catch (err) {
+      console.warn('getAllProducts error:', err);
+      throw err;
+    }
+
+    return [];
   },
 
   async getCart(token: string) {
@@ -638,12 +784,16 @@ export interface AssistantChatResponse {
   products?: any[];
   coupons?: any[];
   quickReplies?: string[];
+  groceryListReview?: any;
   error?: string;
 }
 
 export const assistantApi = {
   async chat(payload: AssistantChatPayload): Promise<AssistantChatResponse> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      'x-client-platform': 'mobile',
+      'x-client': 'mobile',
+    };
     if (payload.customerId) {
       headers['x-customer-id'] = payload.customerId;
     }

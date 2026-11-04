@@ -294,7 +294,7 @@ export const CustomerAccountsSection: React.FC<CustomerAccountsSectionProps> = (
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
   },
   headerCard: {
     backgroundColor: '#0f172a',

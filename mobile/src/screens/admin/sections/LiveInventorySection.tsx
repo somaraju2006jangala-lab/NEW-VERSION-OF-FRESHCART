@@ -140,26 +140,26 @@ export const LiveInventorySection: React.FC<LiveInventorySectionProps> = ({
       <View style={styles.metricsRow}>
         <View style={[styles.metricChip, { borderColor: '#10b981' }]}>
           <Text style={styles.metricChipVal}>{products.length}</Text>
-          <Text style={styles.metricChipLabel}>Total SKUs</Text>
+          <Text style={styles.metricChipLabel} numberOfLines={1}>Total SKUs</Text>
         </View>
         <View style={[styles.metricChip, { borderColor: '#059669' }]}>
           <Text style={[styles.metricChipVal, { color: '#10b981' }]}>{healthyCount}</Text>
-          <Text style={styles.metricChipLabel}>Healthy</Text>
+          <Text style={styles.metricChipLabel} numberOfLines={1}>Healthy</Text>
         </View>
         <View style={[styles.metricChip, { borderColor: '#f59e0b' }]}>
           <Text style={[styles.metricChipVal, { color: '#f59e0b' }]}>{lowCount}</Text>
-          <Text style={styles.metricChipLabel}>Low Stock</Text>
+          <Text style={styles.metricChipLabel} numberOfLines={1}>Low Stock</Text>
         </View>
         <View style={[styles.metricChip, { borderColor: '#ef4444' }]}>
           <Text style={[styles.metricChipVal, { color: '#ef4444' }]}>{outCount}</Text>
-          <Text style={styles.metricChipLabel}>Out of Stock</Text>
+          <Text style={styles.metricChipLabel} numberOfLines={1}>Out of Stock</Text>
         </View>
       </View>
 
       {/* Action Bar */}
       <View style={styles.actionBar}>
         <View style={styles.searchContainer}>
-          <Search size={16} color="#64748b" style={styles.searchIcon} />
+          <Search size={15} color="#64748b" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search SKU, item, farm supplier..."
@@ -169,13 +169,13 @@ export const LiveInventorySection: React.FC<LiveInventorySectionProps> = ({
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <X size={16} color="#94a3b8" />
+              <X size={15} color="#94a3b8" />
             </TouchableOpacity>
           )}
         </View>
 
         <TouchableOpacity style={styles.addBtn} onPress={handleOpenAdd}>
-          <Plus size={18} color="#fff" />
+          <Plus size={16} color="#fff" />
           <Text style={styles.addBtnText}>Add Product</Text>
         </TouchableOpacity>
       </View>
@@ -305,14 +305,16 @@ export const LiveInventorySection: React.FC<LiveInventorySectionProps> = ({
                       <TouchableOpacity
                         style={styles.editIconBtn}
                         onPress={() => handleOpenEdit(prod)}
+                        accessibilityLabel="Edit Product"
                       >
-                        <Edit2 size={16} color="#006b2c" />
+                        <Edit2 size={15} color="#34d399" />
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={styles.deleteIconBtn}
                         onPress={() => handleDeleteProduct(prod)}
+                        accessibilityLabel="Delete Product"
                       >
-                        <Trash2 size={16} color="#ef4444" />
+                        <Trash2 size={15} color="#f87171" />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -360,36 +362,39 @@ export const LiveInventorySection: React.FC<LiveInventorySectionProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
   },
   metricsRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 14,
+    gap: 6,
+    marginBottom: 12,
   },
   metricChip: {
     flex: 1,
     backgroundColor: '#0f172a',
     borderRadius: 10,
     borderWidth: 1,
-    paddingVertical: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   metricChipVal: {
-    fontSize: 16,
+    fontSize: 14.5,
     fontWeight: '800',
     color: '#f8fafc',
   },
   metricChipLabel: {
-    fontSize: 10,
+    fontSize: 8.5,
     color: '#94a3b8',
     marginTop: 2,
     fontWeight: '500',
+    textAlign: 'center',
   },
   actionBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     marginBottom: 12,
   },
   searchContainer: {
@@ -400,52 +405,54 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#1e293b',
-    paddingHorizontal: 12,
-    height: 42,
+    paddingHorizontal: 10,
+    height: 40,
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: 6,
   },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12.5,
     color: '#f8fafc',
+    paddingVertical: 0,
   },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     backgroundColor: '#006b2c',
-    paddingHorizontal: 14,
-    height: 42,
+    paddingHorizontal: 10,
+    height: 40,
     borderRadius: 10,
+    flexShrink: 0,
   },
   addBtnText: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
   },
   filterScroll: {
-    marginBottom: 14,
+    marginBottom: 12,
   },
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: '#0f172a',
     borderWidth: 1,
     borderColor: '#1e293b',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginRight: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 18,
+    marginRight: 6,
   },
   filterChipActive: {
     backgroundColor: '#006b2c',
     borderColor: '#10b981',
   },
   filterChipText: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: '#94a3b8',
     fontWeight: '600',
   },
@@ -462,17 +469,18 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#1e293b',
-    padding: 12,
-    gap: 12,
+    padding: 10,
+    gap: 10,
   },
   productThumb: {
-    width: 72,
-    height: 72,
+    width: 62,
+    height: 62,
     borderRadius: 8,
     backgroundColor: '#1e293b',
   },
   productInfo: {
     flex: 1,
+    minWidth: 0,
   },
   productHeaderRow: {
     flexDirection: 'row',
@@ -482,14 +490,15 @@ const styles = StyleSheet.create({
   },
   productTitle: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#f8fafc',
   },
   statusPill: {
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
+    flexShrink: 0,
   },
   statusPillHealthy: {
     backgroundColor: '#064e3b',
@@ -501,7 +510,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#7f1d1d',
   },
   statusPillText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
   },
   statusTextHealthy: {
@@ -514,12 +523,12 @@ const styles = StyleSheet.create({
     color: '#fca5a5',
   },
   productMeta: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#94a3b8',
     marginTop: 2,
   },
   productSupplier: {
-    fontSize: 11,
+    fontSize: 10.5,
     color: '#64748b',
     marginTop: 1,
   },
@@ -527,18 +536,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#1e293b',
   },
   productPrice: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#10b981',
   },
   productUnit: {
-    fontSize: 10,
+    fontSize: 9.5,
     color: '#94a3b8',
   },
   stockController: {
@@ -549,8 +560,8 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   stockAdjBtn: {
-    width: 26,
-    height: 26,
+    width: 24,
+    height: 24,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#0f172a',
@@ -560,9 +571,10 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontSize: 14,
     fontWeight: '700',
+    lineHeight: 16,
   },
   stockDisplay: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     alignItems: 'center',
   },
   stockVal: {
@@ -572,7 +584,7 @@ const styles = StyleSheet.create({
   },
   stockUnits: {
     color: '#64748b',
-    fontSize: 9,
+    fontSize: 8.5,
   },
   actionButtons: {
     flexDirection: 'row',
@@ -580,12 +592,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   editIconBtn: {
-    padding: 6,
+    padding: 5,
     backgroundColor: '#064e3b',
     borderRadius: 6,
   },
   deleteIconBtn: {
-    padding: 6,
+    padding: 5,
     backgroundColor: '#7f1d1d',
     borderRadius: 6,
   },

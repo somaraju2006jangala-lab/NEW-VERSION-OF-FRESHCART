@@ -6,9 +6,10 @@ import {
   StyleSheet,
   Dimensions,
   Animated,
-  PanResponder,
   Platform,
-  ActivityIndicator,
+  FlatList,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { Product } from '../../types';
@@ -89,81 +90,102 @@ export function getUltraHdImageUrl(productOrUrl: Product | string): string {
   return trimmed;
 }
 
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList) as React.ComponentType<any>;
+
 interface CarouselCardProps {
   item: Product;
-  idx: number;
+  index: number;
   isActive: boolean;
   cardWidth: number;
   cardHeight: number;
   cardGap: number;
+  scrollX: Animated.Value;
+  interval: number;
   onPress: () => void;
 }
 
 const CarouselCard: React.FC<CarouselCardProps> = React.memo(({
   item,
+  index,
   isActive,
   cardWidth,
   cardHeight,
   cardGap,
+  scrollX,
+  interval,
   onPress,
 }) => {
-  const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
-
   const hdUri = useMemo(() => getUltraHdImageUrl(item), [item]);
 
   const imageSource = useMemo(() => {
     const uriToLoad = hasError ? item.image : hdUri;
     return {
       uri: uriToLoad,
-      cache: 'force-cache' as const,
     };
   }, [hasError, item.image, hdUri]);
 
+  // Interpolate scale and opacity based on horizontal distance from center:
+  // Active center card is 1.0 (significantly larger), side preview cards are 0.88
+  const inputRange = [
+    (index - 1) * interval,
+    index * interval,
+    (index + 1) * interval,
+  ];
+
+  const scale = scrollX.interpolate({
+    inputRange,
+    outputRange: [0.88, 1.0, 0.88],
+    extrapolate: 'clamp',
+  });
+
+  const opacity = scrollX.interpolate({
+    inputRange,
+    outputRange: [0.65, 1.0, 0.65],
+    extrapolate: 'clamp',
+  });
+
   return (
-    <TouchableOpacity
-      activeOpacity={0.9}
-      onPress={onPress}
+    <Animated.View
       style={[
-        styles.card,
+        styles.cardWrapper,
         {
           width: cardWidth,
           height: cardHeight,
           marginRight: cardGap,
+          transform: [{ scale }],
+          opacity,
         },
-        isActive ? styles.activeCard : styles.inactiveCard,
       ]}
     >
-      {/* Ultra HD Quality Product Image */}
-      <Image
-        source={imageSource}
-        style={styles.cardImage}
-        resizeMode="cover"
-        onLoadStart={() => setIsLoading(true)}
-        onLoadEnd={() => setIsLoading(false)}
-        onError={() => {
-          if (!hasError) setHasError(true);
-          setIsLoading(false);
-        }}
-      />
+      <TouchableOpacity
+        activeOpacity={0.92}
+        onPress={onPress}
+        style={[
+          styles.card,
+          isActive ? styles.activeCard : styles.inactiveCard,
+        ]}
+      >
+        <Image
+          source={imageSource}
+          style={styles.cardImage}
+          resizeMode="cover"
+          onError={() => {
+            if (!hasError) setHasError(true);
+          }}
+        />
 
-      {/* Loading placeholder spinner */}
-      {isLoading && (
-        <View style={styles.imageLoadingOverlay} pointerEvents="none">
-          <ActivityIndicator size="small" color="#00e676" />
-        </View>
-      )}
+        {/* Subtle photo vignette */}
+        <View style={styles.vignetteOverlay} pointerEvents="none" />
 
-      {/* Subtle vignette filter */}
-      <View style={styles.vignetteOverlay} pointerEvents="none" />
-
-      {/* Active card neon sheen vs Inactive card soft light wash */}
-      {isActive ? (
-        <View style={styles.activeCardSheen} pointerEvents="none" />
-      ) : (
-        <View style={styles.inactiveCardOverlay} pointerEvents="none" />
-      )}
-    </TouchableOpacity>
+        {/* Active card neon sheen vs Inactive card soft wash */}
+        {isActive ? (
+          <View style={styles.activeCardSheen} pointerEvents="none" />
+        ) : (
+          <View style={styles.inactiveCardOverlay} pointerEvents="none" />
+        )}
+      </TouchableOpacity>
+    </Animated.View>
   );
 });
 
@@ -172,101 +194,59 @@ export const ProductImageCarousel: React.FC<ProductImageCarouselProps> = ({
   onSelectProduct,
 }) => {
   // Only include products that have a non-empty image
-  const validProducts = (products || []).filter(
-    (p) => Boolean(p.image && typeof p.image === 'string' && p.image.trim().length > 0)
+  const validProducts = useMemo(
+    () =>
+      (products || []).filter(
+        (p) => Boolean(p.image && typeof p.image === 'string' && p.image.trim().length > 0)
+      ),
+    [products]
   );
   const baseCount = validProducts.length;
 
   const windowWidth = Dimensions.get('window').width;
-  const [containerWidth, setContainerWidth] = useState<number>(windowWidth - 28);
+  const [containerWidth, setContainerWidth] = useState<number>(windowWidth - 24);
   const [isPaused, setIsPaused] = useState<boolean>(false);
 
-  // Responsive card dimensions based on container width
-  const cardWidth = Math.min(320, Math.max(220, Math.round(containerWidth * 0.65)));
-  const cardHeight = Math.round(cardWidth * 0.72);
-  const cardGap = 16;
-  const step = cardWidth + cardGap;
+  // Dynamic responsive dimensions:
+  // Active image is exactly 70% of the carousel's inner width (68-72% target),
+  // leaving equal portions (~15% each minus gap) on both sides for neighboring slides
+  const cardWidth = Math.min(380, Math.max(220, Math.round(containerWidth * 0.70)));
+  const cardHeight = Math.round(cardWidth * 0.64);
+  const cardGap = 12;
+  const interval = cardWidth + cardGap;
+  const sideSpacing = (containerWidth - cardWidth) / 2;
 
-  // Extended items for seamless infinite looping
-  const repeatCount = baseCount > 0 ? Math.max(3, Math.ceil(15 / baseCount)) : 0;
-  const extendedItems = baseCount > 0
-    ? Array.from({ length: repeatCount }, () => validProducts).flat()
-    : [];
+  // Extended items for seamless continuous looping (3 blocks: prev, current, next)
+  const repeatCount = baseCount > 1 ? 3 : 1;
+  const extendedItems = useMemo(() => {
+    if (baseCount === 0) return [];
+    if (baseCount === 1) return validProducts;
+    return Array.from({ length: repeatCount }, () => validProducts).flat();
+  }, [validProducts, baseCount, repeatCount]);
 
-  const initialIndex = baseCount > 0 ? baseCount * Math.floor(repeatCount / 2) : 0;
-  const [currentIndex, setCurrentIndex] = useState<number>(initialIndex);
+  // Start in the middle block so previous and next cards are simultaneously visible
+  const initialIndex = baseCount > 1 ? baseCount : 0;
+  const [activeIndex, setActiveIndex] = useState<number>(initialIndex);
 
-  const getTargetX = useCallback(
-    (index: number, cWidth: number) => {
-      return cWidth / 2 - (index * step + cardWidth / 2);
-    },
-    [step, cardWidth]
-  );
-
-  const animatedTranslateX = useRef(new Animated.Value(getTargetX(initialIndex, containerWidth))).current;
-  const isSwipingRef = useRef(false);
-  const dragStartTranslateXRef = useRef(0);
+  const flatListRef = useRef<any>(null);
+  const scrollX = useRef(new Animated.Value(initialIndex * interval)).current;
+  const isScrollingRef = useRef(false);
   const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync index if products change
+  // Keep scroll position centered at initial index
   useEffect(() => {
-    if (baseCount > 0) {
-      const mid = baseCount * Math.floor(repeatCount / 2);
-      setCurrentIndex((prev) => mid + (prev % baseCount));
+    if (baseCount > 1) {
+      scrollX.setValue(initialIndex * interval);
+      setActiveIndex(initialIndex);
+      const timer = setTimeout(() => {
+        flatListRef.current?.scrollToOffset({
+          offset: initialIndex * interval,
+          animated: false,
+        });
+      }, 60);
+      return () => clearTimeout(timer);
     }
-  }, [baseCount, repeatCount]);
-
-  // Animate translation whenever currentIndex or containerWidth changes
-  useEffect(() => {
-    if (baseCount === 0) return;
-    const targetX = getTargetX(currentIndex, containerWidth);
-
-    Animated.spring(animatedTranslateX, {
-      toValue: targetX,
-      friction: 8,
-      tension: 45,
-      useNativeDriver: Platform.OS !== 'web',
-    }).start(() => {
-      // Seamless normalization when reaching boundaries
-      if (baseCount > 1) {
-        const minThreshold = baseCount;
-        const maxThreshold = baseCount * (repeatCount - 1);
-
-        if (currentIndex >= maxThreshold) {
-          const normalized = minThreshold + (currentIndex % baseCount);
-          const normX = getTargetX(normalized, containerWidth);
-          animatedTranslateX.setValue(normX);
-          setCurrentIndex(normalized);
-        } else if (currentIndex < minThreshold) {
-          const normalized = maxThreshold - baseCount + (currentIndex % baseCount);
-          const normX = getTargetX(normalized, containerWidth);
-          animatedTranslateX.setValue(normX);
-          setCurrentIndex(normalized);
-        }
-      }
-    });
-  }, [currentIndex, containerWidth, getTargetX, baseCount, repeatCount, animatedTranslateX]);
-
-  const handleNext = useCallback(() => {
-    if (baseCount <= 1) return;
-    setCurrentIndex((prev) => prev + 1);
-  }, [baseCount]);
-
-  const handlePrev = useCallback(() => {
-    if (baseCount <= 1) return;
-    setCurrentIndex((prev) => prev - 1);
-  }, [baseCount]);
-
-  // Auto-rotation timer (3.8 seconds interval)
-  useEffect(() => {
-    if (isPaused || baseCount <= 1) return;
-
-    const timer = setInterval(() => {
-      handleNext();
-    }, 3800);
-
-    return () => clearInterval(timer);
-  }, [isPaused, baseCount, handleNext]);
+  }, [baseCount, initialIndex, interval, scrollX]);
 
   const pauseAutoRotation = useCallback(() => {
     setIsPaused(true);
@@ -284,71 +264,149 @@ export const ProductImageCarousel: React.FC<ProductImageCarouselProps> = ({
     }, 4500);
   }, []);
 
-  // PanResponder for smooth touch swipe gestures
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return (
-          Math.abs(gestureState.dx) > 12 &&
-          Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
-        );
-      },
-      onPanResponderGrant: () => {
-        pauseAutoRotation();
-        isSwipingRef.current = true;
-        dragStartTranslateXRef.current = getTargetX(currentIndex, containerWidth);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        animatedTranslateX.setValue(dragStartTranslateXRef.current + gestureState.dx);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        isSwipingRef.current = false;
-        if (gestureState.dx < -35) {
-          handleNext();
-        } else if (gestureState.dx > 35) {
-          handlePrev();
-        } else {
-          // Snap back
-          Animated.spring(animatedTranslateX, {
-            toValue: getTargetX(currentIndex, containerWidth),
-            friction: 8,
-            useNativeDriver: Platform.OS !== 'web',
-          }).start();
-        }
-        resumeAutoRotation();
-      },
-      onPanResponderTerminate: () => {
-        isSwipingRef.current = false;
-        Animated.spring(animatedTranslateX, {
-          toValue: getTargetX(currentIndex, containerWidth),
-          friction: 8,
-          useNativeDriver: Platform.OS !== 'web',
-        }).start();
-        resumeAutoRotation();
-      },
-    })
-  ).current;
-
-  const handleCardPress = (product: Product, idx: number) => {
-    if (isSwipingRef.current) return;
-    if (idx !== currentIndex) {
-      setCurrentIndex(idx);
-    }
-    // Open product details modal with actual product and genuine HD image
-    const hdImage = getUltraHdImageUrl(product);
-    onSelectProduct({
-      ...product,
-      image: hdImage || product.image,
+  const handleNext = useCallback(() => {
+    if (baseCount <= 1) return;
+    const target = activeIndex + 1;
+    flatListRef.current?.scrollToOffset({
+      offset: target * interval,
+      animated: true,
     });
-  };
+    setActiveIndex(target);
+  }, [baseCount, activeIndex, interval]);
+
+  const handlePrev = useCallback(() => {
+    if (baseCount <= 1) return;
+    const target = activeIndex - 1;
+    flatListRef.current?.scrollToOffset({
+      offset: target * interval,
+      animated: true,
+    });
+    setActiveIndex(target);
+  }, [baseCount, activeIndex, interval]);
+
+  // Auto-scroll through images like an album
+  useEffect(() => {
+    if (isPaused || baseCount <= 1) return;
+    const timer = setInterval(() => {
+      handleNext();
+    }, 3800);
+    return () => clearInterval(timer);
+  }, [isPaused, baseCount, handleNext]);
+
+  // Track active slide index from scroll offset
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetX = event.nativeEvent.contentOffset.x;
+      const index = Math.round(offsetX / interval);
+      if (index !== activeIndex && index >= 0 && index < extendedItems.length) {
+        setActiveIndex(index);
+      }
+    },
+    [interval, activeIndex, extendedItems.length]
+  );
+
+  // Seamless boundary wrap-around for infinite looping
+  const handleMomentumScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetX = e.nativeEvent.contentOffset.x;
+      const newIndex = Math.round(offsetX / interval);
+      setActiveIndex(newIndex);
+      isScrollingRef.current = false;
+      resumeAutoRotation();
+
+      // Normalize if scrolled into outer blocks for infinite looping
+      if (baseCount > 1) {
+        if (newIndex >= 2 * baseCount) {
+          const normalized = newIndex - baseCount;
+          flatListRef.current?.scrollToOffset({
+            offset: normalized * interval,
+            animated: false,
+          });
+          setActiveIndex(normalized);
+        } else if (newIndex < baseCount) {
+          const normalized = newIndex + baseCount;
+          flatListRef.current?.scrollToOffset({
+            offset: normalized * interval,
+            animated: false,
+          });
+          setActiveIndex(normalized);
+        }
+      }
+    },
+    [baseCount, interval, resumeAutoRotation]
+  );
+
+  const handleCardPress = useCallback(
+    (product: Product, index: number) => {
+      if (index !== activeIndex) {
+        pauseAutoRotation();
+        flatListRef.current?.scrollToOffset({
+          offset: index * interval,
+          animated: true,
+        });
+        setActiveIndex(index);
+        resumeAutoRotation();
+        return;
+      }
+      const hdImage = getUltraHdImageUrl(product);
+      onSelectProduct({
+        ...product,
+        image: hdImage || product.image,
+      });
+    },
+    [activeIndex, interval, onSelectProduct, pauseAutoRotation, resumeAutoRotation]
+  );
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: Product; index: number }) => {
+      const isActive = index === activeIndex;
+      return (
+        <CarouselCard
+          item={item}
+          index={index}
+          isActive={isActive}
+          cardWidth={cardWidth}
+          cardHeight={cardHeight}
+          cardGap={cardGap}
+          scrollX={scrollX}
+          interval={interval}
+          onPress={() => handleCardPress(item, index)}
+        />
+      );
+    },
+    [activeIndex, cardWidth, cardHeight, cardGap, scrollX, interval, handleCardPress]
+  );
+
+  const getItemLayout = useCallback(
+    (_: any, index: number) => ({
+      length: interval,
+      offset: interval * index,
+      index,
+    }),
+    [interval]
+  );
+
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number }) => {
+      setTimeout(() => {
+        flatListRef.current?.scrollToOffset({
+          offset: info.index * interval,
+          animated: false,
+        });
+      }, 50);
+    },
+    [interval]
+  );
 
   if (baseCount === 0) {
     return null;
   }
 
   // Active product index in original array (for pagination dots)
-  const activeProductIndex = currentIndex % baseCount;
+  const activeDotIndex = ((activeIndex % baseCount) + baseCount) % baseCount;
+
+  // Center vertical offset for arrow buttons relative to card track
+  const arrowTop = 14 + Math.round((cardHeight + 12) / 2) - 18;
 
   return (
     <View style={styles.carouselWrapper}>
@@ -366,45 +424,51 @@ export const ProductImageCarousel: React.FC<ProductImageCarouselProps> = ({
               onMouseLeave: resumeAutoRotation,
             }
           : {})}
-        {...panResponder.panHandlers}
       >
-        {/* Subtle ambient emerald backlight top */}
+        {/* Ambient emerald backlight */}
         <View style={styles.ambientBacklightTop} pointerEvents="none" />
-        {/* Subtle ambient emerald backlight bottom */}
         <View style={styles.ambientBacklightBottom} pointerEvents="none" />
 
-        {/* Sliding Card Track */}
-        <Animated.View
-          style={[
-            styles.track,
+        {/* Center-Focused Three-Slide Carousel FlatList */}
+        <AnimatedFlatList
+          ref={flatListRef}
+          data={extendedItems}
+          keyExtractor={(item: Product, idx: number) => `${item.id}-${idx}`}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          snapToInterval={interval}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          disableIntervalMomentum={true}
+          contentContainerStyle={{
+            paddingLeft: sideSpacing,
+            paddingRight: sideSpacing - cardGap,
+            alignItems: 'center',
+            height: cardHeight + 12,
+          }}
+          initialScrollIndex={initialIndex}
+          getItemLayout={getItemLayout}
+          onScrollToIndexFailed={onScrollToIndexFailed}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { x: scrollX } } }],
             {
-              transform: [{ translateX: animatedTranslateX }],
-              height: cardHeight + 20,
-            },
-          ]}
-        >
-          {extendedItems.map((item, idx) => {
-            const isActive = idx === currentIndex;
-
-            return (
-              <CarouselCard
-                key={`${item.id}-${idx}`}
-                item={item}
-                idx={idx}
-                isActive={isActive}
-                cardWidth={cardWidth}
-                cardHeight={cardHeight}
-                cardGap={cardGap}
-                onPress={() => handleCardPress(item, idx)}
-              />
-            );
-          })}
-        </Animated.View>
+              useNativeDriver: true,
+              listener: handleScroll,
+            }
+          )}
+          scrollEventThrottle={16}
+          onScrollBeginDrag={() => {
+            isScrollingRef.current = true;
+            pauseAutoRotation();
+          }}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
+          renderItem={renderItem}
+        />
 
         {/* Circular Left Navigation Arrow */}
         {baseCount > 1 && (
           <TouchableOpacity
-            style={[styles.arrowBtn, styles.arrowLeft]}
+            style={[styles.arrowBtn, styles.arrowLeft, { top: arrowTop }]}
             activeOpacity={0.7}
             onPress={() => {
               pauseAutoRotation();
@@ -421,7 +485,7 @@ export const ProductImageCarousel: React.FC<ProductImageCarouselProps> = ({
         {/* Circular Right Navigation Arrow */}
         {baseCount > 1 && (
           <TouchableOpacity
-            style={[styles.arrowBtn, styles.arrowRight]}
+            style={[styles.arrowBtn, styles.arrowRight, { top: arrowTop }]}
             activeOpacity={0.7}
             onPress={() => {
               pauseAutoRotation();
@@ -443,7 +507,7 @@ export const ProductImageCarousel: React.FC<ProductImageCarouselProps> = ({
                 key={`dot-${i}`}
                 style={[
                   styles.dot,
-                  i === activeProductIndex ? styles.activeDot : styles.inactiveDot,
+                  i === activeDotIndex ? styles.activeDot : styles.inactiveDot,
                 ]}
               />
             ))}
@@ -465,7 +529,8 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#eef2f6',
-    paddingVertical: 14,
+    paddingTop: 14,
+    paddingBottom: 12,
     overflow: 'hidden',
     position: 'relative',
     alignItems: 'center',
@@ -500,21 +565,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 230, 118, 0.04)',
     alignSelf: 'center',
   },
-  track: {
-    flexDirection: 'row',
+  cardWrapper: {
     alignItems: 'center',
+    justifyContent: 'center',
   },
   card: {
+    width: '100%',
+    height: '100%',
     borderRadius: 20,
     overflow: 'hidden',
     position: 'relative',
     backgroundColor: '#ffffff',
   },
   activeCard: {
-    transform: [{ scale: 1.05 }],
-    borderWidth: 3,
+    borderWidth: 2.5,
     borderColor: '#00e676',
-    backgroundColor: '#ffffff',
     zIndex: 20,
     ...(Platform.OS === 'web'
       ? {
@@ -523,41 +588,32 @@ const styles = StyleSheet.create({
         }
       : {
           shadowColor: '#00e676',
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.7,
-          shadowRadius: 16,
-          elevation: 10,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.45,
+          shadowRadius: 12,
+          elevation: 8,
         }),
   },
   inactiveCard: {
-    transform: [{ scale: 0.93 }],
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff',
-    opacity: 0.75,
     zIndex: 10,
     ...(Platform.OS === 'web'
       ? {
-          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.06)',
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.05)',
         }
       : {
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.08,
-          shadowRadius: 8,
-          elevation: 3,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 4,
+          elevation: 1,
         }),
   },
   cardImage: {
     width: '100%',
     height: '100%',
     backgroundColor: '#f8fafc',
-  },
-  imageLoadingOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: '#f8fafc',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   vignetteOverlay: {
     ...StyleSheet.absoluteFill,
@@ -569,12 +625,10 @@ const styles = StyleSheet.create({
   },
   inactiveCardOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(255, 255, 255, 0.28)',
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
   },
   arrowBtn: {
     position: 'absolute',
-    top: '50%',
-    marginTop: -22,
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -583,7 +637,7 @@ const styles = StyleSheet.create({
     borderColor: '#00e676',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 30,
+    zIndex: 50,
     ...(Platform.OS === 'web'
       ? {
           boxShadow: '0 2px 10px rgba(0, 0, 0, 0.08), 0 0 8px rgba(0, 230, 118, 0.35)',
@@ -594,7 +648,7 @@ const styles = StyleSheet.create({
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.1,
           shadowRadius: 6,
-          elevation: 4,
+          elevation: 5,
         }),
   },
   arrowLeft: {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, StatusBar as RNStatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ShoppingCart, LogOut, Server, Sparkles, ArrowLeft } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
@@ -30,8 +30,12 @@ export const Header: React.FC<HeaderProps> = ({
   const { itemCount } = useCart();
   const [showConfig, setShowConfig] = useState(false);
 
+  const topPadding = Platform.OS === 'android'
+    ? Math.max(insets.top, RNStatusBar.currentHeight || 0, 16)
+    : Math.max(insets.top, 12);
+
   return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 12) }]}>
+    <View style={[styles.container, { paddingTop: topPadding }]}>
       <View style={styles.content}>
         {/* Left Side: Back or Brand */}
         <View style={styles.left}>

@@ -599,7 +599,7 @@ export const EmployeeManagementSection: React.FC<EmployeeManagementSectionProps>
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
   },
   topHeader: {
     flexDirection: 'row',

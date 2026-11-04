@@ -38,9 +38,10 @@ import {
 } from 'lucide-react-native';
 import * as Speech from 'expo-speech';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
-import { assistantApi, AssistantChatResponse } from '../../services/apiClient';
+import { assistantApi, customerApi, AssistantChatResponse } from '../../services/apiClient';
 import { Product } from '../../types';
 
 interface AssistantModalProps {
@@ -48,6 +49,7 @@ interface AssistantModalProps {
   onClose: () => void;
   onNavigateToCart?: () => void;
   onSelectProduct?: (product: Product) => void;
+  catalogProducts?: Product[];
 }
 
 interface ChatMessage {
@@ -57,6 +59,7 @@ interface ChatMessage {
   timestamp: string;
   image?: string;
   products?: any[];
+  isImageRecognitionResult?: boolean;
   coupons?: any[];
   quickReplies?: string[];
   cartSummary?: {
@@ -87,11 +90,321 @@ export const PRODUCT_CATEGORIES = [
   'View Cart',
 ] as const;
 
+/**
+ * Converts common plural grocery names to singular form (e.g. Bananas -> Banana, Tomatoes -> Tomato)
+ */
+function toSingularItemName(name: string): string {
+  const irregulars: Record<string, string> = {
+    tomatoes: 'Tomato',
+    potatoes: 'Potato',
+    mangoes: 'Mango',
+    berries: 'Berry',
+    strawberries: 'Strawberry',
+    blueberries: 'Blueberry',
+    cherries: 'Cherry',
+    leaves: 'Leaf',
+  };
+  const lower = name.toLowerCase();
+  if (irregulars[lower]) return irregulars[lower];
+  if (lower.endsWith('ies') && lower.length > 4) {
+    return name.slice(0, -3) + 'y';
+  }
+  if (lower.endsWith('oes') && lower.length > 4) {
+    return name.slice(0, -2);
+  }
+  const nonPlurals = ['hummus', 'citrus', 'asparagus', 'couscous'];
+  if (nonPlurals.includes(lower)) return name;
+  if (lower.endsWith('s') && !lower.endsWith('ss') && lower.length > 3) {
+    return name.slice(0, -1);
+  }
+  return name;
+}
+
+/**
+ * Formats mobile AI Assistant image-analysis response to strictly return
+ * only the identified grocery item name or comma-separated item names.
+ * If unclear or non-grocery, returns "Unable to identify item".
+ */
+export function formatMobileImageAnalysisResponse(rawText?: string | null): string {
+  if (!rawText || !rawText.trim()) {
+    return 'Unable to identify item';
+  }
+
+  let text = rawText
+    .replace(/```[a-z]*\n?/gi, '')
+    .replace(/```/g, '')
+    .trim();
+
+  // If already "Unable to identify item" or indicates unclear
+  if (
+    /unable\s+to\s+identify/i.test(text) ||
+    /cannot\s+identify/i.test(text) ||
+    /not\s+(?:a\s+)?grocer(?:y|ies)/i.test(text) ||
+    /unclear/i.test(text) ||
+    /no\s+(?:grocery|food|items?)\s+(?:found|detected|visible)/i.test(text)
+  ) {
+    return 'Unable to identify item';
+  }
+
+  // Remove common LLM intro/outro boilerplate if present
+  text = text
+    .replace(/^(?:this\s+)?(?:the\s+)?(?:image\s+)?(?:shows?|contains?|features?|depicts?|has)\s*:\s*/i, '')
+    .replace(/^(?:i\s+can\s+see|i\s+see|this\s+is|these\s+are)\s*:\s*/i, '')
+    .replace(/^(?:identified\s+items?|items?)\s*:\s*/i, '')
+    .trim();
+
+  // Strip trailing period or punctuation
+  text = text.replace(/[.]+$/, '').trim();
+
+  // If JSON, parse
+  if (text.startsWith('{') && text.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.items && Array.isArray(parsed.items)) {
+        text = parsed.items.join(', ');
+      } else if (parsed.itemName) {
+        text = String(parsed.itemName);
+      } else if (parsed.name) {
+        text = String(parsed.name);
+      }
+    } catch {}
+  }
+
+  // Split by commas, newlines, or bullets
+  const parts = text
+    .split(/[\n,;•\-]+/)
+    .map((s) => s.trim().replace(/^[\d+.)\s]+/, '').trim())
+    .filter((s) => s.length > 0 && !/^(and|or|with|a|an|the)$/i.test(s));
+
+  if (parts.length === 0) {
+    return 'Unable to identify item';
+  }
+
+  // Clean each part into standard Title Case grocery name
+  const cleanedItems: string[] = [];
+  const seen = new Set<string>();
+
+  for (const part of parts) {
+    // If any part looks like a full descriptive sentence (more than 4 words), skip it
+    if (part.split(/\s+/).length > 4) {
+      continue;
+    }
+    // Clean to Title Case: "banana" -> "Banana", "green apple" -> "Green Apple"
+    let titleCased = part
+      .split(' ')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ')
+      .trim();
+
+    titleCased = toSingularItemName(titleCased);
+
+    const lower = titleCased.toLowerCase();
+    if (lower && !seen.has(lower) && lower !== 'unable to identify item') {
+      seen.add(lower);
+      cleanedItems.push(titleCased);
+    }
+  }
+
+  if (cleanedItems.length === 0) {
+    return 'Unable to identify item';
+  }
+
+  return `**${cleanedItems.join(', ')}**`;
+}
+
+/**
+ * Matches recognized grocery item names against the live FreshCart database products.
+ * Uses exact match, keyword containment, word matching, and grocery aliases.
+ */
+export function matchRecognizedItemsToProducts(
+  itemNamesStr: string,
+  catalog: Product[]
+): Product[] {
+  if (!itemNamesStr || !catalog || catalog.length === 0) return [];
+
+  // If unclear or error, no products matched
+  if (/unable\s+to\s+identify/i.test(itemNamesStr)) return [];
+
+  // Clean and split recognized item names (comma, newline, or semicolons)
+  const names = itemNamesStr
+    .replace(/\*\*/g, '')
+    .split(/[\n,;]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0 && !/^(and|or|with|a|an|the)$/i.test(s));
+
+  if (names.length === 0) return [];
+
+  const matchedMap = new Map<string, Product>();
+
+  // Multilingual & common grocery alias dictionary
+  const ALIAS_MAP: Record<string, string[]> = {
+    banana: ['banana', 'bananas', 'kela'],
+    egg: ['egg', 'eggs', 'anda'],
+    milk: ['milk', 'dairy', 'doodh', 'cow milk'],
+    apple: ['apple', 'apples', 'seb'],
+    tomato: ['tomato', 'tomatoes', 'tamatar'],
+    potato: ['potato', 'potatoes', 'aloo'],
+    carrot: ['carrot', 'carrots', 'gajar'],
+    spinach: ['spinach', 'palak'],
+    bread: ['bread', 'sourdough', 'loaf'],
+    rice: ['rice', 'basmati', 'chawal'],
+    juice: ['juice', 'orange juice', 'valencia'],
+    orange: ['orange', 'juice', 'valencia'],
+    oil: ['oil', 'cooking oil'],
+  };
+
+  for (const rawName of names) {
+    const clean = rawName.replace(/[^a-z0-9\s]/g, '').trim();
+    if (!clean) continue;
+
+    // 1. Exact match on title, name, or id
+    let match = catalog.find((p) => {
+      const pTitle = (p.title || '').toLowerCase().trim();
+      return pTitle === clean;
+    });
+
+    // 2. Keyword contains in title
+    if (!match) {
+      match = catalog.find((p) => {
+        const pTitle = (p.title || '').toLowerCase();
+        return pTitle.includes(clean) || clean.includes(pTitle);
+      });
+    }
+
+    // 3. Word match against title or category
+    if (!match) {
+      const words = clean.split(/\s+/).filter((w) => w.length > 2);
+      match = catalog.find((p) => {
+        const pTitle = (p.title || '').toLowerCase();
+        const pCat = (p.category || '').toLowerCase();
+        return words.some((w) => pTitle.includes(w) || pCat.includes(w));
+      });
+    }
+
+    // 4. Grocery alias mapping
+    if (!match) {
+      for (const [key, aliases] of Object.entries(ALIAS_MAP)) {
+        if (aliases.some((a) => clean.includes(a)) || clean.includes(key)) {
+          match = catalog.find((p) => {
+            const pTitle = (p.title || '').toLowerCase();
+            return aliases.some((a) => pTitle.includes(a)) || pTitle.includes(key);
+          });
+          if (match) break;
+        }
+      }
+    }
+
+    if (match && !matchedMap.has(match.id)) {
+      matchedMap.set(match.id, match);
+    }
+  }
+
+  return Array.from(matchedMap.values());
+}
+
+/**
+ * Helper to render bold markdown **text** cleanly in React Native Text.
+ */
+function renderFormattedText(text: string, baseStyle: any) {
+  if (!text) return null;
+  if (!text.includes('**')) {
+    return <Text style={baseStyle}>{text}</Text>;
+  }
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return (
+    <Text style={baseStyle}>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return (
+            <Text key={i} style={[baseStyle, { fontWeight: '800', color: '#f8fafc' }]}>
+              {part.slice(2, -2)}
+            </Text>
+          );
+        }
+        return part;
+      })}
+    </Text>
+  );
+}
+
+/**
+ * Compact product card inside AI chat for recognized items.
+ * Shows product image, title, price, unit, and direct Add to Cart button.
+ */
+const CompactProductCard: React.FC<{
+  item: any;
+  isSingle?: boolean;
+  onPress: () => void;
+  onAddToCart: () => void;
+}> = ({ item, isSingle, onPress, onAddToCart }) => {
+  const [imgError, setImgError] = useState(false);
+  const rawImage = typeof item.image === 'string' ? item.image.trim() : '';
+  const hasValidImage = Boolean(rawImage.length > 0 && !imgError);
+
+  return (
+    <TouchableOpacity
+      style={[styles.compactProductCard, isSingle && styles.singleProductCard]}
+      activeOpacity={0.88}
+      onPress={onPress}
+      accessibilityLabel={`View details for ${item.title || item.name}`}
+    >
+      {/* Product Image or Clean Placeholder */}
+      <View style={[styles.compactImgWrapper, isSingle && styles.singleImgWrapper]}>
+        {hasValidImage ? (
+          <Image
+            source={{ uri: rawImage }}
+            style={styles.compactProductImg}
+            resizeMode="cover"
+            onError={() => setImgError(true)}
+          />
+        ) : (
+          <View style={styles.compactImgPlaceholder}>
+            <ShoppingBag size={24} color="#64748b" />
+            <Text style={styles.noImgText}>No image</Text>
+          </View>
+        )}
+        {Boolean(item.badge || item.isOrganic) && (
+          <View style={styles.compactProductBadge}>
+            <Text style={styles.compactProductBadgeText}>
+              {item.badge || 'Organic'}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      {/* Product Info: Name, Unit, Price, and Add Button */}
+      <View style={styles.compactProductInfo}>
+        <Text style={styles.compactProductTitle} numberOfLines={2}>
+          {item.title || item.name}
+        </Text>
+        <Text style={styles.compactProductUnit}>{item.unit || '1 unit'}</Text>
+
+        <View style={styles.compactProductBottom}>
+          <Text style={styles.compactProductPrice}>₹{item.price}</Text>
+          <TouchableOpacity
+            style={styles.compactAddBtn}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onAddToCart();
+            }}
+            activeOpacity={0.8}
+            accessibilityLabel={`Add ${item.title || item.name} to cart`}
+          >
+            <Plus size={12} color="#000000" strokeWidth={3} />
+            <Text style={styles.compactAddBtnText}>Add</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
 export const AssistantModal: React.FC<AssistantModalProps> = ({
   visible,
   onClose,
   onNavigateToCart,
   onSelectProduct,
+  catalogProducts,
 }) => {
   const { currentCustomer, customerToken } = useAuth();
   const { cart, addToCart, syncCart, itemCount, subtotal } = useCart();
@@ -111,8 +424,25 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
   const [isVoiceActive, setIsVoiceActive] = useState(true);
   const [isListening, setIsListening] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [localCatalog, setLocalCatalog] = useState<Product[]>(catalogProducts || []);
   const scrollViewRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
+
+  // Keep local catalogue updated for instant matching of recognized items
+  useEffect(() => {
+    if (catalogProducts && catalogProducts.length > 0) {
+      setLocalCatalog(catalogProducts);
+    } else {
+      customerApi
+        .getProducts()
+        .then((data) => {
+          if (Array.isArray(data) && data.length > 0) {
+            setLocalCatalog(data);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [catalogProducts]);
 
   // Category click handler: opens cart or sends category query
   const handleCategoryClick = (category: string) => {
@@ -256,9 +586,19 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        const base64Data = asset.base64
+        let base64Data = asset.base64
           ? `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`
-          : asset.uri;
+          : null;
+        if (!base64Data && asset.uri) {
+          try {
+            const b64 = await FileSystem.readAsStringAsync(asset.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            base64Data = `data:${asset.mimeType || 'image/jpeg'};base64,${b64}`;
+          } catch {
+            base64Data = asset.uri;
+          }
+        }
         setSelectedImage(base64Data);
       }
     } catch (err) {
@@ -277,6 +617,8 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
       onNavigateToCart();
       return;
     }
+
+    const isImageQuery = Boolean(imageToSend);
 
     const customerMsg: ChatMessage = {
       id: `cust-${Date.now()}`,
@@ -303,7 +645,13 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
         message: messageText,
         customerId,
         token,
-        extraPayload: imageToSend ? { image: imageToSend } : undefined,
+        extraPayload: imageToSend
+          ? {
+              image: imageToSend,
+              isMobileImageAnalysis: true,
+              mode: 'mobile_image_analysis',
+            }
+          : undefined,
       });
 
       // Synchronize cart state if backend cart was updated
@@ -311,34 +659,57 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
         syncCart(res.cartItems);
       }
 
-      const replyText = res.message || 'Here is what I found for you:';
+      // If customer uploaded an image, identify item and respond with only its item name
+      const replyText = isImageQuery
+        ? formatMobileImageAnalysisResponse(res.message)
+        : (res.message || 'Here is what I found for you:');
+
+      // Resolve matching products from database for recognized grocery items
+      let matchedProducts: any[] = [];
+      if (isImageQuery) {
+        if (Array.isArray(res.products) && res.products.length > 0) {
+          matchedProducts = res.products;
+        } else if (replyText && !/unable\s+to\s+identify/i.test(replyText)) {
+          matchedProducts = matchRecognizedItemsToProducts(replyText, localCatalog);
+        }
+      } else if (Array.isArray(res.products) && res.products.length > 0) {
+        matchedProducts = res.products;
+      }
 
       const assistantMsg: ChatMessage = {
         id: `asst-${Date.now()}`,
         sender: 'assistant',
         text: replyText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        products: Array.isArray(res.products) ? res.products : undefined,
-        coupons: Array.isArray(res.coupons) ? res.coupons : undefined,
-        quickReplies:
-          Array.isArray(res.quickReplies) && res.quickReplies.length > 0
-            ? res.quickReplies
-            : [...PRODUCT_CATEGORIES],
+        products: matchedProducts.length > 0 ? matchedProducts : undefined,
+        isImageRecognitionResult: isImageQuery,
+        coupons: isImageQuery ? undefined : (Array.isArray(res.coupons) ? res.coupons : undefined),
+        groceryListReview: isImageQuery ? undefined : res.groceryListReview,
+        quickReplies: isImageQuery
+          ? []
+          : (Array.isArray(res.quickReplies) && res.quickReplies.length > 0
+              ? res.quickReplies
+              : [...PRODUCT_CATEGORIES]),
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Speak assistant response aloud
-      speakText(res.spokenMessage || replyText);
+      // Speak assistant response aloud (speaks only the item name for image query)
+      speakText(isImageQuery ? replyText.replace(/\*\*/g, '') : (res.spokenMessage || replyText));
     } catch (err: any) {
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         sender: 'assistant',
-        text: 'I could not connect to the FreshCart server right now. Please check that the server is running and try again.',
+        text: isImageQuery
+          ? 'Unable to identify item'
+          : 'I could not connect to the FreshCart server right now. Please check that the server is running and try again.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        quickReplies: [...PRODUCT_CATEGORIES],
+        quickReplies: isImageQuery ? [] : [...PRODUCT_CATEGORIES],
       };
       setMessages((prev) => [...prev, errorMsg]);
+      if (isImageQuery) {
+        speakText('Unable to identify item');
+      }
     } finally {
       setIsLoading(false);
       setTimeout(() => {
@@ -357,7 +728,7 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
       stock: Number(item.stock ?? 50),
       sku: item.sku || `SKU-${item.id || item.product_id || 'PROD'}`,
       badge: item.badge || '',
-      image: item.image || 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=400',
+      image: item.image || '',
       category: item.category || 'produce',
       supplier: item.supplier || 'FreshCart Farm Direct',
       isOrganic: Boolean(item.isOrganic),
@@ -379,12 +750,13 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
         stock: Number(item.stock ?? 50),
         sku: item.sku || `SKU-${item.id || item.product_id || 'PROD'}`,
         badge: item.badge || '',
-        image: item.image || 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=400',
+        image: item.image || '',
         category: item.category || 'produce',
         supplier: item.supplier || 'FreshCart Farm Direct',
         isOrganic: Boolean(item.isOrganic),
         packSizes: item.packSizes,
       };
+      onClose();
       onSelectProduct(product);
     }
   };
@@ -473,6 +845,8 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
                     style={[
                       styles.messageBubble,
                       isCust ? styles.custBubble : styles.asstBubble,
+                      Boolean(msg.products && msg.products.length > 0 && msg.isImageRecognitionResult) &&
+                        styles.messageBubbleWithProducts,
                     ]}
                   >
                     {/* User-attached image thumbnail */}
@@ -480,77 +854,95 @@ export const AssistantModal: React.FC<AssistantModalProps> = ({
                       <Image source={{ uri: msg.image }} style={styles.attachedImagePreview} />
                     )}
 
-                    <Text
-                      style={[
-                        styles.messageText,
-                        isCust ? styles.custText : styles.asstText,
-                      ]}
-                    >
-                      {msg.text}
-                    </Text>
+                    {renderFormattedText(
+                      msg.text,
+                      [styles.messageText, isCust ? styles.custText : styles.asstText]
+                    )}
 
                     {/* Real Recommended Products from MySQL Catalog */}
                     {msg.products && msg.products.length > 0 && (
                       <View style={styles.productsContainer}>
-                        <View style={styles.productsHeaderRow}>
-                          <ShoppingBag size={14} color="#00e676" />
-                          <Text style={styles.productSectionTitle}>
-                            Available in FreshCart ({msg.products.length}):
-                          </Text>
-                        </View>
-
-                        <ScrollView
-                          horizontal
-                          showsHorizontalScrollIndicator={false}
-                          contentContainerStyle={styles.productsScroll}
-                        >
-                          {msg.products.map((item, idx) => (
-                            <TouchableOpacity
-                              key={`${item.id || item.product_id || idx}`}
-                              style={styles.productCard}
-                              activeOpacity={0.88}
-                              onPress={() => handleProductPress(item)}
-                            >
-                              {item.image ? (
-                                <Image source={{ uri: item.image }} style={styles.productImg} />
-                              ) : (
-                                <View style={[styles.productImg, styles.productImgPlaceholder]}>
-                                  <ShoppingBag size={24} color="#64748b" />
+                        {msg.isImageRecognitionResult ? (
+                          msg.products.length > 1 ? (
+                            <View style={styles.productsGrid}>
+                              {msg.products.map((item, idx) => (
+                                <CompactProductCard
+                                  key={`${item.id || item.product_id || idx}`}
+                                  item={item}
+                                  onPress={() => handleProductPress(item)}
+                                  onAddToCart={() => handleAddProduct(item)}
+                                />
+                              ))}
+                            </View>
+                          ) : (
+                            (() => {
+                              const singleItem = msg.products[0];
+                              return (
+                                <View style={styles.singleProductWrapper}>
+                                  <CompactProductCard
+                                    item={singleItem}
+                                    isSingle
+                                    onPress={() => handleProductPress(singleItem)}
+                                    onAddToCart={() => handleAddProduct(singleItem)}
+                                  />
                                 </View>
-                              )}
+                              );
+                            })()
+                          )
+                        ) : (
+                          <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.productsScroll}
+                          >
+                            {msg.products.map((item, idx) => (
+                              <TouchableOpacity
+                                key={`${item.id || item.product_id || idx}`}
+                                style={styles.productCard}
+                                activeOpacity={0.88}
+                                onPress={() => handleProductPress(item)}
+                              >
+                                {item.image ? (
+                                  <Image source={{ uri: item.image }} style={styles.productImg} />
+                                ) : (
+                                  <View style={[styles.productImg, styles.productImgPlaceholder]}>
+                                    <ShoppingBag size={24} color="#64748b" />
+                                  </View>
+                                )}
 
-                              {Boolean(item.badge || item.isOrganic) && (
-                                <View style={styles.productBadge}>
-                                  <Text style={styles.productBadgeText}>
-                                    {item.badge || 'Organic'}
+                                {Boolean(item.badge || item.isOrganic) && (
+                                  <View style={styles.productBadge}>
+                                    <Text style={styles.productBadgeText}>
+                                      {item.badge || 'Organic'}
+                                    </Text>
+                                  </View>
+                                )}
+
+                                <View style={styles.productInfo}>
+                                  <Text style={styles.productTitle} numberOfLines={2}>
+                                    {item.title || item.name}
                                   </Text>
-                                </View>
-                              )}
+                                  <Text style={styles.productUnit}>{item.unit || '1 unit'}</Text>
 
-                              <View style={styles.productInfo}>
-                                <Text style={styles.productTitle} numberOfLines={2}>
-                                  {item.title || item.name}
-                                </Text>
-                                <Text style={styles.productUnit}>{item.unit || '1 unit'}</Text>
-
-                                <View style={styles.productBottom}>
-                                  <Text style={styles.productPrice}>₹{item.price}</Text>
-                                  <TouchableOpacity
-                                    style={styles.addCartBtn}
-                                    onPress={(e) => {
-                                      e.stopPropagation?.();
-                                      handleAddProduct(item);
-                                    }}
-                                    activeOpacity={0.8}
-                                  >
-                                    <Plus size={13} color="#000000" />
-                                    <Text style={styles.addCartBtnText}>Add</Text>
-                                  </TouchableOpacity>
+                                  <View style={styles.productBottom}>
+                                    <Text style={styles.productPrice}>₹{item.price}</Text>
+                                    <TouchableOpacity
+                                      style={styles.addCartBtn}
+                                      onPress={(e) => {
+                                        e.stopPropagation?.();
+                                        handleAddProduct(item);
+                                      }}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Plus size={13} color="#000000" />
+                                      <Text style={styles.addCartBtnText}>Add</Text>
+                                    </TouchableOpacity>
+                                  </View>
                                 </View>
-                              </View>
-                            </TouchableOpacity>
-                          ))}
-                        </ScrollView>
+                              </TouchableOpacity>
+                            ))}
+                          </ScrollView>
+                        )}
                       </View>
                     )}
 
@@ -936,6 +1328,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 4,
     maxWidth: '90%',
   },
+  messageBubbleWithProducts: {
+    maxWidth: '96%',
+    width: '96%',
+  },
   custBubble: {
     backgroundColor: '#047857',
     borderWidth: 1,
@@ -990,6 +1386,116 @@ const styles = StyleSheet.create({
   },
   replaySpeakerBtn: {
     padding: 2,
+  },
+  // Responsive two-column grid for recognized items
+  productsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  singleProductWrapper: {
+    width: '100%',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  compactProductCard: {
+    width: '48.5%',
+    backgroundColor: '#07121e',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 230, 118, 0.28)',
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  singleProductCard: {
+    width: '100%',
+    maxWidth: 240,
+    marginBottom: 4,
+  },
+  compactImgWrapper: {
+    width: '100%',
+    height: 96,
+    backgroundColor: '#0f1f33',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  singleImgWrapper: {
+    height: 110,
+  },
+  compactProductImg: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0f1f33',
+  },
+  compactImgPlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0f1f33',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  noImgText: {
+    fontSize: 9,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  compactProductBadge: {
+    position: 'absolute',
+    top: 5,
+    left: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    borderWidth: 1,
+    borderColor: '#00e676',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  compactProductBadgeText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#00e676',
+  },
+  compactProductInfo: {
+    padding: 7,
+  },
+  compactProductTitle: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: '#f8fafc',
+    minHeight: 28,
+    lineHeight: 14.5,
+  },
+  compactProductUnit: {
+    fontSize: 9.5,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  compactProductBottom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  compactProductPrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#00e676',
+  },
+  compactAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: '#00e676',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+  },
+  compactAddBtnText: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    color: '#000000',
   },
   // Products Container & Cards
   productsContainer: {

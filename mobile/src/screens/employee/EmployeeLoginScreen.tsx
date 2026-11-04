@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Truck, Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft, KeyRound } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+import { cleanErrorMessage } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 
 interface EmployeeLoginScreenProps {
@@ -42,7 +43,7 @@ export const EmployeeLoginScreen: React.FC<EmployeeLoginScreenProps> = ({ onBack
     const res = await loginEmployee(identifier.trim(), password);
     setIsLoading(false);
     if (!res.success) {
-      setErrorMessage(res.error || 'Access denied: Invalid employee credentials.');
+      setErrorMessage(cleanErrorMessage(res.error, 'Access denied: Invalid employee credentials.'));
     }
   };
 

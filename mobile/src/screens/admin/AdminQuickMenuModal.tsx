@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ScrollView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Package,
   History,
@@ -45,6 +46,7 @@ export const AdminQuickMenuModal: React.FC<AdminQuickMenuModalProps> = ({
   maxAdminsLimit = 5,
   customerAccountsCount = 0,
 }) => {
+  const insets = useSafeAreaInsets();
   const sections: Array<{
     id: AdminPortalSectionId;
     title: string;
@@ -200,7 +202,7 @@ export const AdminQuickMenuModal: React.FC<AdminQuickMenuModalProps> = ({
                 </TouchableOpacity>
               );
             })}
-            <View style={{ height: 20 }} />
+            <View style={{ height: Math.max(insets.bottom, 20) + 10 }} />
           </ScrollView>
         </View>
       </View>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -28,10 +28,12 @@ import {
   X,
   Package,
   Bot,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
-import { customerApi } from '../../services/apiClient';
+import { customerApi, cleanErrorMessage } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 import { Product } from '../../types';
 import { ProductDetailModal } from './ProductDetailModal';
@@ -48,6 +50,89 @@ const CATEGORIES = [
   { id: 'pantry', name: 'Pantry & Spices', slug: 'pantry' },
   { id: 'meat', name: 'Poultry & Meat', slug: 'meat' },
 ];
+
+/**
+ * Intelligent category matching ensuring every active product from MySQL is surfaced
+ * in its appropriate aisle without accidental omissions.
+ */
+function matchesCategory(
+  productCategory: string = '',
+  selectedSlug: string = '',
+  productTitle: string = ''
+): boolean {
+  if (!selectedSlug || selectedSlug === 'all') return true;
+  const cat = (productCategory || '').trim().toLowerCase();
+  const slug = selectedSlug.trim().toLowerCase();
+  const title = (productTitle || '').trim().toLowerCase();
+
+  if (cat === slug) return true;
+
+  switch (slug) {
+    case 'produce':
+      return (
+        cat === 'produce' ||
+        cat === 'fruits' ||
+        cat === 'vegetables' ||
+        cat === 'veg' ||
+        cat === 'greens'
+      );
+    case 'dairy':
+      return (
+        cat === 'dairy' ||
+        cat === 'eggs' ||
+        title.includes('milk') ||
+        title.includes('egg') ||
+        title.includes('yogurt') ||
+        title.includes('cheese') ||
+        title.includes('butter')
+      );
+    case 'bakery':
+      return (
+        cat === 'bakery' ||
+        cat === 'bread' ||
+        title.includes('bread') ||
+        title.includes('loaf') ||
+        title.includes('bakery') ||
+        title.includes('sourdough')
+      );
+    case 'beverages':
+      return (
+        cat === 'beverages' ||
+        cat === 'drinks' ||
+        cat === 'beverage' ||
+        title.includes('juice') ||
+        title.includes('drink') ||
+        title.includes('coffee') ||
+        title.includes('tea')
+      );
+    case 'pantry':
+      return (
+        cat === 'pantry' ||
+        cat === 'grains' ||
+        cat === 'grain' ||
+        cat === 'spices' ||
+        cat === 'staples' ||
+        cat === 'oil' ||
+        title.includes('rice') ||
+        title.includes('sugar') ||
+        title.includes('oil') ||
+        title.includes('turmeric') ||
+        title.includes('spice')
+      );
+    case 'meat':
+      return (
+        cat === 'meat' ||
+        cat === 'poultry' ||
+        cat === 'chicken' ||
+        cat === 'fish' ||
+        cat === 'mutton' ||
+        title.includes('meat') ||
+        title.includes('chicken')
+      );
+    default:
+      return cat === slug;
+  }
+}
 
 interface StorefrontScreenProps {
   onOpenCart: () => void;
@@ -66,6 +151,9 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isFetchingMore, setIsFetchingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -78,34 +166,72 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
     if (refresh) setIsRefreshing(true);
     else setIsLoading(true);
     try {
-      const data = await customerApi.getProducts();
+      // Retrieve the entire active product catalogue from MySQL via backend API
+      const data = await customerApi.getAllProducts();
       if (Array.isArray(data)) {
         setProducts(data);
+        setLoadError(null);
+        setHasMore(false);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed loading products:', err);
+      setLoadError(cleanErrorMessage(err));
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
   }, []);
 
+  const handleLoadMore = useCallback(async () => {
+    if (isFetchingMore || !hasMore || isLoading) return;
+    setIsFetchingMore(true);
+    try {
+      const more = await customerApi.getProducts({
+        offset: products.length,
+        limit: 50,
+      });
+      if (Array.isArray(more) && more.length > 0) {
+        setProducts((prev) => {
+          const seen = new Set(prev.map((p) => p.id));
+          const fresh = more.filter((p) => !seen.has(p.id));
+          return [...prev, ...fresh];
+        });
+        if (more.length < 50) setHasMore(false);
+      } else {
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.warn('Failed loading more products:', err);
+    } finally {
+      setIsFetchingMore(false);
+    }
+  }, [isFetchingMore, hasMore, isLoading, products.length]);
+
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
 
-  // Filter products
-  const filteredProducts = products.filter((p) => {
-    const matchesCat =
-      selectedCategory === 'all' ||
-      p.category?.toLowerCase() === selectedCategory.toLowerCase();
-    const matchesSearch =
-      !searchQuery ||
-      p.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.category?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.supplier?.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCat && matchesSearch;
-  });
+  // Filter products by category and search query across the complete catalogue
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return products.filter((p) => {
+      // Category match
+      const inCategory = matchesCategory(p.category, selectedCategory, p.title);
+      if (!inCategory) return false;
+
+      // Search match across name, category, aisle label, supplier, description, and badge
+      if (!q) return true;
+      const titleMatch = (p.title || '').toLowerCase().includes(q);
+      const catMatch = (p.category || '').toLowerCase().includes(q);
+      const catName = (CATEGORIES.find((c) => c.slug === p.category)?.name || '').toLowerCase();
+      const catNameMatch = catName.includes(q);
+      const supplierMatch = (p.supplier || '').toLowerCase().includes(q);
+      const descMatch = (p.description || '').toLowerCase().includes(q);
+      const badgeMatch = (p.badge || '').toLowerCase().includes(q);
+
+      return titleMatch || catMatch || catNameMatch || supplierMatch || descMatch || badgeMatch;
+    });
+  }, [products, selectedCategory, searchQuery]);
 
   const renderListHeader = () => (
     <View style={styles.headerComponentWrapper}>
@@ -154,7 +280,9 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
             : CATEGORIES.find((c) => c.slug === selectedCategory)?.name || 'Products'}
         </Text>
         <Text style={styles.sectionSubtitle}>
-          {filteredProducts.length} item{filteredProducts.length === 1 ? '' : 's'} available
+          {loadError
+            ? 'Connection unavailable'
+            : `${filteredProducts.length} item${filteredProducts.length === 1 ? '' : 's'} available`}
         </Text>
       </View>
     </View>
@@ -224,12 +352,59 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
           refreshControl={
             <RefreshControl refreshing={isRefreshing} onRefresh={() => loadProducts(true)} />
           }
+          ListFooterComponent={
+            isFetchingMore ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color="#006b2c" />
+                <Text style={styles.footerLoaderText}>Loading more farm-fresh products...</Text>
+              </View>
+            ) : (
+              <View style={{ height: 100 }} />
+            )
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
           ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <ShoppingBag size={48} color="#cbd5e1" />
-              <Text style={styles.emptyTitle}>No Products Found</Text>
-              <Text style={styles.emptySubtitle}>Try adjusting your search query or category filter.</Text>
-            </View>
+            loadError ? (
+              <View style={styles.errorContainer}>
+                <View style={styles.errorIconCircle}>
+                  <AlertCircle size={32} color="#ef4444" />
+                </View>
+                <Text style={styles.errorTitle}>Connection Unavailable</Text>
+                <Text style={styles.errorSubtitle}>
+                  {cleanErrorMessage(loadError, 'Unable to connect to FreshCart server. Please check your network connection and tap Retry.')}
+                </Text>
+                <TouchableOpacity
+                  style={styles.retryBtn}
+                  onPress={() => loadProducts()}
+                  activeOpacity={0.8}
+                >
+                  <RefreshCw size={14} color="#ffffff" />
+                  <Text style={styles.retryBtnText}>Retry Connection</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <ShoppingBag size={48} color="#cbd5e1" />
+                <Text style={styles.emptyTitle}>No Products Found</Text>
+                <Text style={styles.emptySubtitle}>
+                  {searchQuery
+                    ? `No products matching "${searchQuery}". Try a different keyword.`
+                    : 'No products available in this category yet.'}
+                </Text>
+                {(searchQuery || selectedCategory !== 'all') && (
+                  <TouchableOpacity
+                    style={styles.clearFiltersBtn}
+                    onPress={() => {
+                      setSearchQuery('');
+                      setSelectedCategory('all');
+                    }}
+                  >
+                    <Text style={styles.clearFiltersBtnText}>View All Aisles</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )
           }
           renderItem={({ item }) => {
             const hasMultiplePacks = Array.isArray(item.packSizes) && item.packSizes.length > 1;
@@ -382,6 +557,7 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
           setShowAssistantModal(false);
           setSelectedProduct(product);
         }}
+        catalogProducts={products}
       />
     </SafeAreaView>
   );
@@ -515,6 +691,78 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     marginTop: 4,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  clearFiltersBtn: {
+    marginTop: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  clearFiltersBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#006b2c',
+  },
+  footerLoader: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  footerLoaderText: {
+    fontSize: 13,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  errorContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 24,
+  },
+  errorIconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  errorTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 16,
+  },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#006b2c',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+  },
+  retryBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   productCard: {
     flex: 1,

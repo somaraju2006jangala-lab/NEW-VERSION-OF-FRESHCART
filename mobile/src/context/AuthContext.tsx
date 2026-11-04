@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Customer, AuthorizedAdmin, AuthorizedEmployee } from '../types';
-import { authApi } from '../services/apiClient';
+import { authApi, cleanErrorMessage } from '../services/apiClient';
 
 export type PortalType = 'selection' | 'admin' | 'employee' | 'customer';
 
@@ -88,8 +88,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loginAdmin = async (identifier: string, pass: string) => {
     try {
-      // Direct call to admin login endpoint
-      const res = await authApi.adminLogin(identifier, pass);
+      // First try dedicated admin login endpoint
+      let res = await authApi.adminLogin(identifier, pass);
+      if (!res.success) {
+        // Fallback to unified auth login endpoint
+        try {
+          const fallbackRes = await authApi.login(identifier, pass);
+          if (fallbackRes.success && (fallbackRes.role === 'admin' || fallbackRes.admin)) {
+            res = fallbackRes;
+          }
+        } catch {}
+      }
+
       if (res.success && res.admin && res.token) {
         // Enforce role
         if (res.admin.role !== 'owner' && res.admin.role !== 'admin') {
@@ -106,7 +116,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, error: res.error || 'Invalid administrator credentials.' };
     } catch (err: any) {
-      return { success: false, error: err.message || 'Login failed.' };
+      return { success: false, error: cleanErrorMessage(err, 'Login failed.') };
     }
   };
 
@@ -134,7 +144,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, error: res.error || 'Invalid employee credentials.' };
     } catch (err: any) {
-      return { success: false, error: err.message || 'Employee login failed.' };
+      return { success: false, error: cleanErrorMessage(err, 'Employee login failed.') };
     }
   };
 
@@ -155,7 +165,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, error: res.error || 'Invalid email or password.' };
     } catch (err: any) {
-      return { success: false, error: err.message || 'Customer login failed.' };
+      return { success: false, error: cleanErrorMessage(err, 'Customer login failed.') };
     }
   };
 
@@ -182,7 +192,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, error: res.error || 'Registration failed.' };
     } catch (err: any) {
-      return { success: false, error: err.message || 'Registration failed.' };
+      return { success: false, error: cleanErrorMessage(err, 'Registration failed.') };
     }
   };
 

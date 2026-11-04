@@ -134,6 +134,7 @@ export const AdminNavigationTabs: React.FC<AdminNavigationTabsProps> = ({
           ref={scrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.tabsScrollView}
           contentContainerStyle={styles.scrollContent}
         >
           {navItems.map((item) => {
@@ -148,7 +149,7 @@ export const AdminNavigationTabs: React.FC<AdminNavigationTabsProps> = ({
                 activeOpacity={0.8}
               >
                 <Icon
-                  size={16}
+                  size={15}
                   color={isActive ? '#10b981' : '#94a3b8'}
                 />
                 <Text
@@ -197,7 +198,7 @@ export const AdminNavigationTabs: React.FC<AdminNavigationTabsProps> = ({
           onPress={onOpenQuickMenu}
           accessibilityLabel="All Sections"
         >
-          <Grid size={16} color="#10b981" />
+          <Grid size={15} color="#10b981" />
         </TouchableOpacity>
       </View>
     </View>
@@ -213,24 +214,28 @@ const styles = StyleSheet.create({
   barWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
+    width: '100%',
+  },
+  tabsScrollView: {
+    flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 2,
   },
   tabButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     position: 'relative',
   },
   tabButtonActive: {},
   tabText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
     color: '#94a3b8',
     letterSpacing: 0.1,
@@ -242,8 +247,8 @@ const styles = StyleSheet.create({
   activeIndicator: {
     position: 'absolute',
     bottom: 0,
-    left: 8,
-    right: 8,
+    left: 6,
+    right: 6,
     height: 2.5,
     backgroundColor: '#10b981',
     borderRadius: 2,
@@ -252,9 +257,9 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   badgeBox: {
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 12,
+    borderRadius: 10,
     marginLeft: 2,
   },
   badgeOrange: {
@@ -269,7 +274,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1f5f9',
   },
   badgeText: {
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
   },
   badgeTextOrange: {
@@ -282,12 +287,13 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   quickMenuBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
     borderLeftWidth: 1,
     borderLeftColor: '#1e293b',
     backgroundColor: '#090d16',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
 });

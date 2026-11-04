@@ -915,7 +915,7 @@ export const CustomerOrdersSection: React.FC<CustomerOrdersSectionProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
     paddingBottom: 24,
   },
   topHeader: {
@@ -1021,7 +1021,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1e293b',
     borderRadius: 16,
-    padding: 16,
+    padding: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.35,

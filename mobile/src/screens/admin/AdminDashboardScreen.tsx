@@ -5,11 +5,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   ActivityIndicator,
   RefreshControl,
   Alert,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import {
   Package,
   AlertTriangle,
@@ -18,6 +21,7 @@ import {
   RefreshCw,
   CheckCircle2,
   Grid,
+  ArrowLeft,
 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { adminApi } from '../../services/apiClient';
@@ -40,7 +44,13 @@ import { CustomerAccountsSection } from './sections/CustomerAccountsSection';
 import { OrdersCalendarSection } from './sections/OrdersCalendarSection';
 
 export const AdminDashboardScreen: React.FC = () => {
-  const { currentAdmin, adminToken, logout } = useAuth();
+  const { currentAdmin, adminToken, logout, setActivePortal } = useAuth();
+  const insets = useSafeAreaInsets();
+  const topInset = Platform.OS === 'android'
+    ? Math.max(insets.top, RNStatusBar.currentHeight || 0, 24)
+    : insets.top;
+  const bottomInset = insets.bottom;
+
   const [activeSection, setActiveSection] = useState<AdminPortalSectionId>('inventory');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isQuickMenuOpen, setIsQuickMenuOpen] = useState(false);
@@ -108,6 +118,10 @@ export const AdminDashboardScreen: React.FC = () => {
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  useEffect(() => {
+    RNStatusBar.setBarStyle('light-content');
+  }, []);
 
   // Derived KPI Counts
   const totalSkus = products.length;
@@ -177,21 +191,24 @@ export const AdminDashboardScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeContainer}>
-      {/* Top Header Bar */}
-      <View style={styles.topHeader}>
+    <View style={styles.screenContainer}>
+      <StatusBar style="light" />
+
+      {/* Top Header Bar - Full Width, Positioned below Android Status Bar */}
+      <View style={[styles.topHeader, { paddingTop: topInset + 10 }]}>
         <View style={styles.topHeaderLeft}>
           <View style={styles.storeTitleRow}>
+            <Text style={styles.storeBrand}>FreshCart <Text style={styles.storeBrandSlash}>/</Text></Text>
             <Text style={styles.storeTitle} numberOfLines={1}>
-              Store #104 Central Fulfillment
+              Store #104
             </Text>
             <View style={styles.onlinePill}>
               <View style={styles.onlineDot} />
               <Text style={styles.onlineText}>Online</Text>
             </View>
           </View>
-          <Text style={styles.adminName}>
-            {currentAdmin?.fullName || 'Lead Fulfillment Mgr'} ·{' '}
+          <Text style={styles.adminName} numberOfLines={1}>
+            {currentAdmin?.fullName || 'FreshCart Project Owner'} ·{' '}
             <Text style={styles.adminRole}>
               {currentAdmin?.role === 'owner' ? 'Project Owner' : 'Operations Admin'}
             </Text>
@@ -222,7 +239,7 @@ export const AdminDashboardScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Complete 11-Section Navigation Bar matching Website Screenshots */}
+      {/* Complete 11-Section Navigation Bar - Full Width with Horizontal Scroll */}
       <AdminNavigationTabs
         activeSection={activeSection}
         onSelectSection={(id) => setActiveSection(id)}
@@ -233,10 +250,13 @@ export const AdminDashboardScreen: React.FC = () => {
         customerAccountsCount={customers.length}
       />
 
-      {/* Main Scroll Content */}
+      {/* Main Full-Width Vertically Scrollable Content */}
       <ScrollView
         style={styles.mainScrollView}
-        contentContainerStyle={styles.mainScrollContent}
+        contentContainerStyle={[
+          styles.mainScrollContent,
+          { paddingBottom: Math.max(bottomInset, 16) + 30 },
+        ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -246,171 +266,187 @@ export const AdminDashboardScreen: React.FC = () => {
             colors={['#10b981']}
           />
         }
-      >
-        {/* Pulse Toast Banner */}
-        {toastMessage && (
-          <View style={styles.toastBanner}>
-            <CheckCircle2 size={16} color="#34d399" />
-            <Text style={styles.toastText}>{toastMessage}</Text>
-          </View>
-        )}
-
-        {/* Top 3 KPI Metric Cards (Matching Website Admin Dashboard) */}
-        <View style={styles.kpiContainer}>
-          <TouchableOpacity
-            style={styles.kpiCard}
-            onPress={() => setActiveSection('inventory')}
-            activeOpacity={0.8}
           >
-            <View style={styles.kpiLeft}>
-              <Text style={styles.kpiTitle}>Total SKUs Monitored</Text>
-              <Text style={styles.kpiValue}>{totalSkus}</Text>
-            </View>
-            <View style={[styles.kpiIconBox, { backgroundColor: '#064e3b' }]}>
-              <Package size={20} color="#34d399" />
-            </View>
-          </TouchableOpacity>
+            {/* Pulse Toast Banner */}
+            {toastMessage && (
+              <View style={styles.toastBanner}>
+                <CheckCircle2 size={15} color="#34d399" />
+                <Text style={styles.toastText}>{toastMessage}</Text>
+              </View>
+            )}
 
-          <TouchableOpacity
-            style={styles.kpiCard}
-            onPress={() => setActiveSection('inventory')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.kpiLeft}>
-              <Text style={styles.kpiTitle}>Stock Warnings</Text>
-              <Text style={[styles.kpiValue, { color: '#f59e0b' }]}>
-                {totalStockWarnings}
+            {/* Top 3 KPI Metric Cards (Matching Website Admin Dashboard) */}
+            <View style={styles.kpiContainer}>
+              <TouchableOpacity
+                style={styles.kpiCard}
+                onPress={() => setActiveSection('inventory')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.kpiLeft}>
+                  <Text style={styles.kpiTitle} numberOfLines={2}>
+                    Total SKUs Monitored
+                  </Text>
+                  <Text style={styles.kpiValue}>{totalSkus}</Text>
+                </View>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#064e3b' }]}>
+                  <Package size={15} color="#34d399" />
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.kpiCard}
+                onPress={() => setActiveSection('inventory')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.kpiLeft}>
+                  <Text style={styles.kpiTitle} numberOfLines={2}>
+                    Stock Warnings
+                  </Text>
+                  <Text style={[styles.kpiValue, { color: '#f59e0b' }]}>
+                    {totalStockWarnings}
+                  </Text>
+                </View>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#78350f' }]}>
+                  <AlertTriangle size={15} color="#f59e0b" />
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.kpiCard}
+                onPress={() => setActiveSection('orders')}
+                activeOpacity={0.8}
+              >
+                <View style={styles.kpiLeft}>
+                  <Text style={styles.kpiTitle} numberOfLines={2}>
+                    Orders to Deliver
+                  </Text>
+                  <Text style={[styles.kpiValue, { color: '#38bdf8' }]}>
+                    {displayedOrdersToDeliver}
+                  </Text>
+                </View>
+                <View style={[styles.kpiIconBox, { backgroundColor: '#0c4a6e' }]}>
+                  <Truck size={15} color="#38bdf8" />
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Active Section Header Bar */}
+            <View style={styles.activeSectionHeader}>
+              <Text style={styles.activeSectionTitle}>
+                {activeSection === 'inventory' && 'Live Inventory Management'}
+                {activeSection === 'logs' && 'CDC Audit & Dispatch Logs'}
+                {activeSection === 'coupons' && 'Coupons Management'}
+                {activeSection === 'orders' && 'Customer Orders'}
+                {activeSection === 'delivery-charges' && 'Delivery Charges Configuration'}
+                {activeSection === 'upi-settings' && 'UPI Settings & Merchant Config'}
+                {activeSection === 'payment-verification' && 'Payment Verification Queue'}
+                {activeSection === 'admins' && 'Authorized Administrator Management'}
+                {activeSection === 'employees' && 'Employee & Staff Management'}
+                {activeSection === 'customers' && 'Customer Accounts Directory'}
+                {activeSection === 'calendar' && 'Orders & Transactions Calendar'}
               </Text>
+
+              <TouchableOpacity
+                style={styles.sectionMenuBtn}
+                onPress={() => setIsQuickMenuOpen(true)}
+              >
+                <Grid size={13} color="#10b981" />
+                <Text style={styles.sectionMenuBtnText}>All Sections</Text>
+              </TouchableOpacity>
             </View>
-            <View style={[styles.kpiIconBox, { backgroundColor: '#78350f' }]}>
-              <AlertTriangle size={20} color="#f59e0b" />
+
+            {/* Render 1 of 11 Fully Functional Sections */}
+            {activeSection === 'inventory' && (
+              <LiveInventorySection
+                products={products}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+              />
+            )}
+
+            {activeSection === 'logs' && (
+              <CdcLogsSection
+                logs={inventoryLogs}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+                onClearLogs={handleClearLogs}
+                onDeleteLog={handleDeleteLog}
+                onSimulatePulse={handleSimulateCdcPulse}
+              />
+            )}
+
+            {activeSection === 'coupons' && (
+              <CouponsSection
+                coupons={coupons}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+              />
+            )}
+
+            {activeSection === 'orders' && (
+              <CustomerOrdersSection
+                orders={orders}
+                employees={employees}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+              />
+            )}
+
+            {activeSection === 'delivery-charges' && (
+              <DeliveryChargesSection adminToken={adminToken} />
+            )}
+
+            {activeSection === 'upi-settings' && (
+              <UpiSettingsSection adminToken={adminToken} />
+            )}
+
+            {activeSection === 'payment-verification' && (
+              <PaymentVerificationSection
+                queue={verificationQueue}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+              />
+            )}
+
+            {activeSection === 'admins' && (
+              <AuthorizedAdminsSection
+                currentAdmin={currentAdmin}
+                adminToken={adminToken}
+              />
+            )}
+
+            {activeSection === 'employees' && (
+              <EmployeeManagementSection
+                employees={employees}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+              />
+            )}
+
+            {activeSection === 'customers' && (
+              <CustomerAccountsSection
+                customers={customers}
+                adminToken={adminToken}
+                onRefresh={loadAllData}
+              />
+            )}
+
+            {activeSection === 'calendar' && (
+              <OrdersCalendarSection adminToken={adminToken} />
+            )}
+
+            {/* Return to Portal Selection Link at the bottom of the dashboard */}
+            <View style={styles.bottomNavContainer}>
+              <TouchableOpacity
+                style={styles.backToPortalBtn}
+                onPress={() => setActivePortal('selection')}
+                activeOpacity={0.8}
+              >
+                <ArrowLeft size={16} color="#10b981" />
+                <Text style={styles.backToPortalText}>Back to Portal Selection</Text>
+              </TouchableOpacity>
             </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.kpiCard}
-            onPress={() => setActiveSection('orders')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.kpiLeft}>
-              <Text style={styles.kpiTitle}>Orders to Deliver</Text>
-              <Text style={[styles.kpiValue, { color: '#38bdf8' }]}>
-                {displayedOrdersToDeliver}
-              </Text>
-            </View>
-            <View style={[styles.kpiIconBox, { backgroundColor: '#0c4a6e' }]}>
-              <Truck size={20} color="#38bdf8" />
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* Active Section Header Bar */}
-        <View style={styles.activeSectionHeader}>
-          <Text style={styles.activeSectionTitle}>
-            {activeSection === 'inventory' && 'Live Inventory Management'}
-            {activeSection === 'logs' && 'CDC Audit & Dispatch Logs'}
-            {activeSection === 'coupons' && 'Coupons Management'}
-            {activeSection === 'orders' && 'Customer Orders'}
-            {activeSection === 'delivery-charges' && 'Delivery Charges Configuration'}
-            {activeSection === 'upi-settings' && 'UPI Settings & Merchant Config'}
-            {activeSection === 'payment-verification' && 'Payment Verification Queue'}
-            {activeSection === 'admins' && 'Authorized Administrator Management'}
-            {activeSection === 'employees' && 'Employee & Staff Management'}
-            {activeSection === 'customers' && 'Customer Accounts Directory'}
-            {activeSection === 'calendar' && 'Orders & Transactions Calendar'}
-          </Text>
-
-          <TouchableOpacity
-            style={styles.sectionMenuBtn}
-            onPress={() => setIsQuickMenuOpen(true)}
-          >
-            <Grid size={14} color="#10b981" />
-            <Text style={styles.sectionMenuBtnText}>All Sections</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Render 1 of 11 Fully Functional Sections */}
-        {activeSection === 'inventory' && (
-          <LiveInventorySection
-            products={products}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-          />
-        )}
-
-        {activeSection === 'logs' && (
-          <CdcLogsSection
-            logs={inventoryLogs}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-            onClearLogs={handleClearLogs}
-            onDeleteLog={handleDeleteLog}
-            onSimulatePulse={handleSimulateCdcPulse}
-          />
-        )}
-
-        {activeSection === 'coupons' && (
-          <CouponsSection
-            coupons={coupons}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-          />
-        )}
-
-        {activeSection === 'orders' && (
-          <CustomerOrdersSection
-            orders={orders}
-            employees={employees}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-          />
-        )}
-
-        {activeSection === 'delivery-charges' && (
-          <DeliveryChargesSection adminToken={adminToken} />
-        )}
-
-        {activeSection === 'upi-settings' && (
-          <UpiSettingsSection adminToken={adminToken} />
-        )}
-
-        {activeSection === 'payment-verification' && (
-          <PaymentVerificationSection
-            queue={verificationQueue}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-          />
-        )}
-
-        {activeSection === 'admins' && (
-          <AuthorizedAdminsSection
-            currentAdmin={currentAdmin}
-            adminToken={adminToken}
-          />
-        )}
-
-        {activeSection === 'employees' && (
-          <EmployeeManagementSection
-            employees={employees}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-          />
-        )}
-
-        {activeSection === 'customers' && (
-          <CustomerAccountsSection
-            customers={customers}
-            adminToken={adminToken}
-            onRefresh={loadAllData}
-          />
-        )}
-
-        {activeSection === 'calendar' && (
-          <OrdersCalendarSection adminToken={adminToken} />
-        )}
-
-        <View style={{ height: 40 }} />
-      </ScrollView>
+          </ScrollView>
 
       {/* Quick Menu Modal for Instant Jumping across 11 Sections */}
       <AdminQuickMenuModal
@@ -423,14 +459,15 @@ export const AdminDashboardScreen: React.FC = () => {
         maxAdminsLimit={adminsCount.max}
         customerAccountsCount={customers.length}
       />
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeContainer: {
+  screenContainer: {
     flex: 1,
-    backgroundColor: '#090d16',
+    backgroundColor: '#030712',
+    width: '100%',
   },
   topHeader: {
     flexDirection: 'row',
@@ -438,20 +475,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#0f172a',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#1e293b',
+    width: '100%',
   },
   topHeaderLeft: {
     flex: 1,
+    minWidth: 0,
+    marginRight: 12,
   },
   storeTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  storeBrand: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#10b981',
+    letterSpacing: 0.2,
+  },
+  storeBrandSlash: {
+    color: '#64748b',
+    fontWeight: '400',
   },
   storeTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#f8fafc',
     letterSpacing: 0.2,
@@ -462,8 +513,8 @@ const styles = StyleSheet.create({
     gap: 4,
     backgroundColor: '#064e3b',
     paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
+    paddingVertical: 2.5,
+    borderRadius: 8,
   },
   onlineDot: {
     width: 6,
@@ -479,7 +530,7 @@ const styles = StyleSheet.create({
   adminName: {
     fontSize: 11,
     color: '#94a3b8',
-    marginTop: 2,
+    marginTop: 3,
   },
   adminRole: {
     color: '#10b981',
@@ -489,6 +540,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexShrink: 0,
   },
   refreshIconBtn: {
     padding: 8,
@@ -502,9 +554,11 @@ const styles = StyleSheet.create({
   },
   mainScrollView: {
     flex: 1,
+    width: '100%',
   },
   mainScrollContent: {
     paddingTop: 12,
+    width: '100%',
   },
   toastBanner: {
     flexDirection: 'row',
@@ -529,6 +583,7 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     marginBottom: 12,
+    width: '100%',
   },
   kpiCard: {
     flex: 1,
@@ -536,63 +591,93 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#1e293b',
-    padding: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    minWidth: 0,
   },
   kpiLeft: {
     flex: 1,
+    minWidth: 0,
+    marginRight: 4,
   },
   kpiTitle: {
     fontSize: 9,
     color: '#94a3b8',
     fontWeight: '600',
     textTransform: 'uppercase',
+    lineHeight: 12,
   },
   kpiValue: {
     fontSize: 16,
     fontWeight: '800',
     color: '#f8fafc',
-    marginTop: 2,
+    marginTop: 3,
   },
   kpiIconBox: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 4,
+    flexShrink: 0,
   },
   activeSectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#1e293b',
-    marginBottom: 4,
+    marginBottom: 6,
+    width: '100%',
   },
   activeSectionTitle: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '800',
     color: '#34d399',
     letterSpacing: 0.2,
     flex: 1,
+    marginRight: 8,
   },
   sectionMenuBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
     backgroundColor: '#1e293b',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    flexShrink: 0,
   },
   sectionMenuBtnText: {
     color: '#10b981',
     fontSize: 11,
+    fontWeight: '700',
+  },
+  bottomNavContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    alignItems: 'center',
+  },
+  backToPortalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  backToPortalText: {
+    color: '#10b981',
+    fontSize: 12.5,
     fontWeight: '700',
   },
 });

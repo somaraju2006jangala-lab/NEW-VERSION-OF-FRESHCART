@@ -419,6 +419,206 @@ export function resolveGroceryListItemPack(
 }
 
 /**
+ * Converts common plural grocery names to singular form (e.g. Bananas -> Banana, Tomatoes -> Tomato)
+ */
+export function toSingularItemName(name: string): string {
+  const irregulars: Record<string, string> = {
+    tomatoes: 'Tomato',
+    potatoes: 'Potato',
+    mangoes: 'Mango',
+    berries: 'Berry',
+    strawberries: 'Strawberry',
+    blueberries: 'Blueberry',
+    cherries: 'Cherry',
+    leaves: 'Leaf',
+  };
+  const lower = name.toLowerCase();
+  if (irregulars[lower]) return irregulars[lower];
+  if (lower.endsWith('ies') && lower.length > 4) {
+    return name.slice(0, -3) + 'y';
+  }
+  if (lower.endsWith('oes') && lower.length > 4) {
+    return name.slice(0, -2);
+  }
+  const nonPlurals = ['hummus', 'citrus', 'asparagus', 'couscous'];
+  if (nonPlurals.includes(lower)) return name;
+  if (lower.endsWith('s') && !lower.endsWith('ss') && lower.length > 3) {
+    return name.slice(0, -1);
+  }
+  return name;
+}
+
+/**
+ * Formats mobile AI Assistant image-analysis response to strictly return
+ * only the identified grocery item name or comma-separated item names.
+ * If unclear or non-grocery, returns "Unable to identify item".
+ */
+export function formatMobileItemNamesResponse(rawText?: string | null): string {
+  if (!rawText || !rawText.trim()) {
+    return 'Unable to identify item';
+  }
+
+  let text = rawText
+    .replace(/```[a-z]*\n?/gi, '')
+    .replace(/```/g, '')
+    .trim();
+
+  // If already "Unable to identify item" or indicates unclear
+  if (
+    /unable\s+to\s+identify/i.test(text) ||
+    /cannot\s+identify/i.test(text) ||
+    /not\s+(?:a\s+)?grocer(?:y|ies)/i.test(text) ||
+    /unclear/i.test(text) ||
+    /no\s+(?:grocery|food|items?)\s+(?:found|detected|visible)/i.test(text)
+  ) {
+    return 'Unable to identify item';
+  }
+
+  // Remove common LLM intro/outro boilerplate if present
+  text = text
+    .replace(/^(?:this\s+)?(?:the\s+)?(?:image\s+)?(?:shows?|contains?|features?|depicts?|has)\s*:\s*/i, '')
+    .replace(/^(?:i\s+can\s+see|i\s+see|this\s+is|these\s+are)\s*:\s*/i, '')
+    .replace(/^(?:identified\s+items?|items?)\s*:\s*/i, '')
+    .trim();
+
+  // Strip trailing period or punctuation
+  text = text.replace(/[.]+$/, '').trim();
+
+  // If JSON, parse
+  if (text.startsWith('{') && text.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed.items && Array.isArray(parsed.items)) {
+        text = parsed.items.join(', ');
+      } else if (parsed.itemName) {
+        text = String(parsed.itemName);
+      } else if (parsed.name) {
+        text = String(parsed.name);
+      }
+    } catch {}
+  }
+
+  // Split by commas, newlines, or bullets
+  const parts = text
+    .split(/[\n,;•\-]+/)
+    .map((s) => s.trim().replace(/^[\d+.)\s]+/, '').trim())
+    .filter((s) => s.length > 0 && !/^(and|or|with|a|an|the)$/i.test(s));
+
+  if (parts.length === 0) {
+    return 'Unable to identify item';
+  }
+
+  // Clean each part into standard Title Case grocery name
+  const cleanedItems: string[] = [];
+  const seen = new Set<string>();
+
+  for (const part of parts) {
+    // If any part looks like a full descriptive sentence (more than 4 words), skip it
+    if (part.split(/\s+/).length > 4) {
+      continue;
+    }
+    // Clean to Title Case: "banana" -> "Banana", "green apple" -> "Green Apple"
+    let titleCased = part
+      .split(' ')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ')
+      .trim();
+
+    titleCased = toSingularItemName(titleCased);
+
+    const lower = titleCased.toLowerCase();
+    if (lower && !seen.has(lower) && lower !== 'unable to identify item') {
+      seen.add(lower);
+      cleanedItems.push(titleCased);
+    }
+  }
+
+  if (cleanedItems.length === 0) {
+    return 'Unable to identify item';
+  }
+
+  return cleanedItems.join(', ');
+}
+
+/**
+ * Mobile-specific multimodal image analysis using Gemini Vision.
+ * Returns only the identified grocery item name(s) or "Unable to identify item".
+ */
+export async function analyzeMobileGroceryImageWithGemini(
+  imageData: { mimeType: string; base64Data: string }
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !apiKey.trim()) {
+    return 'Unable to identify item';
+  }
+
+  const prompt = `
+You are an expert AI vision assistant for FreshCart grocery app.
+Your task is to identify the grocery items visible in the provided image.
+
+CRITICAL INSTRUCTIONS:
+1. Identify each grocery item visible in the image (fruits, vegetables, dairy, bakery, beverages, pantry items, packaged goods, etc.).
+2. Respond with ONLY the item name in English (e.g., "Banana", "Apple", "Milk", "Tomato").
+3. Return each item name in singular form (e.g., "Banana" instead of "Bananas", "Apple" instead of "Apples", "Tomato" instead of "Tomatoes").
+4. If multiple identifiable grocery items are present in the image, return them as a comma-separated list (e.g., "Banana, Apple, Milk").
+5. Capitalize each item name properly in Title Case.
+6. Do NOT provide any explanation, sentences, greetings, introductions, markdown, quotes, bullet points, recommendations, or conclusions.
+7. Do NOT include prices, quantities, nutritional information, recipes, or product details.
+8. If the image is unclear, blurry, or does not contain any identifiable grocery or food items, respond with EXACTLY:
+Unable to identify item
+9. Identify ONLY items actually visible in the uploaded image.
+
+Your entire response must be ONLY the item name(s) or "Unable to identify item".
+`.trim();
+
+  for (const model of GEMINI_VISION_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: imageData.mimeType,
+                    data: imageData.base64Data,
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 80,
+          },
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const data = await response.json();
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (rawText && rawText.trim()) {
+        const formatted = formatMobileItemNamesResponse(rawText);
+        return formatted;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return 'Unable to identify item';
+}
+
+/**
  * Multimodal image analysis using Gemini Vision models.
  * Reads handwritten and printed grocery lists, extracts items/quantities,
  * matches with live catalog, and crafts helpful responses in the customer's language.
@@ -1533,8 +1733,17 @@ export async function handleAssistantChat(
     intent: bodyIntent,
     category: bodyCategory,
     categoryLabel: bodyCategoryLabel,
+    isMobileImageAnalysis,
+    mode,
   } = req.body || {};
   const userText = (message || '').trim();
+
+  const isMobile = Boolean(
+    isMobileImageAnalysis ||
+    mode === 'mobile_image_analysis' ||
+    req.headers['x-client-platform'] === 'mobile' ||
+    req.headers['x-client'] === 'mobile'
+  );
 
   if (!userText && !pendingAction && !productId && !image) {
     res.status(400).json({
@@ -1623,11 +1832,58 @@ export async function handleAssistantChat(
   if (image) {
     const imageData = parseImageData(image);
     if (!imageData) {
+      if (isMobile) {
+        res.json({
+          success: true,
+          intent: 'IMAGE_ANALYSIS',
+          actionExecuted: false,
+          cartUpdated: false,
+          language: userLang,
+          message: 'Unable to identify item',
+          spokenMessage: 'Unable to identify item',
+        });
+        return;
+      }
       res.status(400).json({
         success: false,
         message: 'Unsupported or corrupted image format. Please capture a photo or upload a JPG, PNG, or WebP image.',
         intent: 'IMAGE_ERROR',
         error: 'UNSUPPORTED_IMAGE_FORMAT',
+      });
+      return;
+    }
+
+    // Dedicated handler for mobile AI Assistant image analysis (returns short item name only + matching DB products)
+    if (isMobile) {
+      const identifiedItemName = await analyzeMobileGroceryImageWithGemini(imageData);
+
+      // Search MySQL database products for each recognized item name
+      const matchedMap = new Map<string, any>();
+      if (identifiedItemName && identifiedItemName !== 'Unable to identify item') {
+        const itemNames = identifiedItemName
+          .replace(/\*\*/g, '')
+          .split(/[\n,;]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        for (const name of itemNames) {
+          const matches = matchProductInCatalog(name, allProducts);
+          if (matches.length > 0) {
+            const best = matches[0];
+            matchedMap.set(best.id, best);
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        intent: 'IMAGE_ANALYSIS',
+        actionExecuted: false,
+        cartUpdated: false,
+        language: userLang,
+        message: identifiedItemName,
+        spokenMessage: identifiedItemName.replace(/\*\*/g, ''),
+        products: Array.from(matchedMap.values()),
       });
       return;
     }

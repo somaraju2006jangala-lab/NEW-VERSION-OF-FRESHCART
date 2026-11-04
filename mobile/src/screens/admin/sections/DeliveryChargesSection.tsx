@@ -323,7 +323,7 @@ export const DeliveryChargesSection: React.FC<DeliveryChargesSectionProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
     paddingBottom: 24,
   },
   headerBox: {

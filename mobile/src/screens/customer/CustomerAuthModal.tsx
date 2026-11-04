@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { User, Mail, Lock, Phone, MapPin, X, ArrowRight, Eye, EyeOff, KeyRound } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
-import { authApi } from '../../services/apiClient';
+import { authApi, cleanErrorMessage } from '../../services/apiClient';
 
 interface CustomerAuthModalProps {
   visible: boolean;
@@ -68,7 +68,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       onClose();
       if (onSuccess) onSuccess();
     } else {
-      setErrorMessage(res.error || 'Invalid credentials.');
+      setErrorMessage(cleanErrorMessage(res.error, 'Invalid credentials.'));
     }
   };
 
@@ -97,7 +97,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       onClose();
       if (onSuccess) onSuccess();
     } else {
-      setErrorMessage(res.error || 'Registration failed.');
+      setErrorMessage(cleanErrorMessage(res.error, 'Registration failed.'));
     }
   };
 
@@ -118,11 +118,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
           res.message || 'Password reset link sent. Please check your email or proceed with token.'
         );
       } else {
-        setErrorMessage(res.error || 'Failed requesting password reset.');
+        setErrorMessage(cleanErrorMessage(res.error, 'Failed requesting password reset.'));
       }
     } catch (err: any) {
       setIsLoading(false);
-      setErrorMessage(err.message || 'Error sending reset request.');
+      setErrorMessage(cleanErrorMessage(err, 'Error sending reset request.'));
     }
   };
 

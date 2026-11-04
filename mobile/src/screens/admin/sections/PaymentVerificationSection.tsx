@@ -377,7 +377,7 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
   },
   headerCard: {
     backgroundColor: '#0f172a',

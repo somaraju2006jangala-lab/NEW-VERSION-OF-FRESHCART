@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { ShieldCheck, Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft, KeyRound } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+import { cleanErrorMessage } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 
 interface AdminLoginScreenProps {
@@ -42,7 +43,7 @@ export const AdminLoginScreen: React.FC<AdminLoginScreenProps> = ({ onBackToSele
     const res = await loginAdmin(identifier.trim(), password);
     setIsLoading(false);
     if (!res.success) {
-      setErrorMessage(res.error || 'Access denied: Invalid administrator credentials.');
+      setErrorMessage(cleanErrorMessage(res.error, 'Access denied: Invalid administrator credentials.'));
     }
   };
 

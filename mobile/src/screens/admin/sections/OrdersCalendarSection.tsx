@@ -528,7 +528,7 @@ export const OrdersCalendarSection: React.FC<OrdersCalendarSectionProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
     paddingBottom: 30,
   },
   headerCard: {

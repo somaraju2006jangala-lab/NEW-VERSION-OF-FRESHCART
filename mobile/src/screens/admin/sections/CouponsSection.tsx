@@ -340,7 +340,7 @@ export const CouponsSection: React.FC<CouponsSectionProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 10,
   },
   headerRow: {
     flexDirection: 'row',
