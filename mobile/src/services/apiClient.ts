@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApiBaseUrl } from '../config/api';
 import {
   Product,
@@ -37,10 +38,28 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
     ...(options.headers || {}),
   };
 
-  if (options.token) {
-    headers['Authorization'] = `Bearer ${options.token}`;
-    headers['x-admin-token'] = options.token;
-    headers['x-staff-token'] = options.token;
+  let effectiveToken = options.token;
+  if (!effectiveToken) {
+    try {
+      const isStaffOrAdmin =
+        cleanEndpoint.startsWith('/api/admin') ||
+        cleanEndpoint === '/api/payment-settings/upi' ||
+        cleanEndpoint === '/api/settings';
+      if (isStaffOrAdmin) {
+        const raw = await AsyncStorage.getItem('freshcart_mobile_admin_session');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.token) effectiveToken = parsed.token;
+        }
+      }
+    } catch {}
+  }
+
+  if (effectiveToken) {
+    headers['Authorization'] = `Bearer ${effectiveToken}`;
+    headers['x-admin-token'] = effectiveToken;
+    headers['x-staff-token'] = effectiveToken;
+    headers['x-admin-role'] = 'admin';
   }
 
   const maxAttempts = typeof options.retries === 'number' ? options.retries + 1 : (options.method === 'GET' || !options.method ? 2 : 1);
@@ -167,6 +186,10 @@ export const authApi = {
     mobile: string;
     password: string;
     address?: string;
+    transactionRef?: string;
+    paymentProof?: string;
+    mimeType?: string;
+    fileName?: string;
   }) {
     return request('/api/auth/register', {
       method: 'POST',
@@ -178,6 +201,10 @@ export const authApi = {
         mobile: data.mobile,
         password: data.password,
         address: data.address,
+        transactionRef: data.transactionRef,
+        paymentProof: data.paymentProof,
+        mimeType: data.mimeType,
+        fileName: data.fileName,
       },
     });
   },
@@ -721,13 +748,29 @@ export const customerApi = {
     });
   },
 
-  async uploadScreenshotProof(orderId: string, base64Image: string, token?: string) {
+  async uploadScreenshotProof(
+    orderId: string,
+    fileData: string,
+    token?: string,
+    mimeType?: string,
+    fileName?: string
+  ) {
+    const mime =
+      mimeType ||
+      (fileData.startsWith('data:application/pdf')
+        ? 'application/pdf'
+        : fileData.startsWith('data:image/png')
+        ? 'image/png'
+        : 'image/jpeg');
+    const screenshot = fileData.startsWith('data:') ? fileData : `data:${mime};base64,${fileData}`;
     return request('/api/payments/screenshot/upload', {
       method: 'POST',
       token,
       body: {
         orderId,
-        screenshot: base64Image.startsWith('data:') ? base64Image : `data:image/jpeg;base64,${base64Image}`,
+        screenshot,
+        mimeType: mime,
+        fileName: fileName || (mime === 'application/pdf' ? 'proof.pdf' : 'proof.jpg'),
       },
     });
   },

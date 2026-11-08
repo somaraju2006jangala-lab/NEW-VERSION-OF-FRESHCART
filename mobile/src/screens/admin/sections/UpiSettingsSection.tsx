@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  Image,
 } from 'react-native';
 import {
   CreditCard,
@@ -18,7 +19,10 @@ import {
   AlertTriangle,
   Copy,
   ExternalLink,
+  Check,
 } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
+import QRCode from 'qrcode';
 import { adminApi } from '../../../services/apiClient';
 
 interface UpiSettingsSectionProps {
@@ -38,6 +42,8 @@ export const UpiSettingsSection: React.FC<UpiSettingsSectionProps> = ({
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null
   );
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [isCopied, setIsCopied] = useState(false);
 
   const loadSettings = async () => {
     setIsLoading(true);
@@ -70,6 +76,33 @@ export const UpiSettingsSection: React.FC<UpiSettingsSectionProps> = ({
         merchantName.trim() || 'FreshCart'
       )}&cu=INR`
     : '';
+
+  useEffect(() => {
+    if (!generatedUri) {
+      setQrCodeDataUrl('');
+      return;
+    }
+    QRCode.toDataURL(generatedUri, {
+      width: 200,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#022c22', light: '#ffffff' },
+    })
+      .then((url) => setQrCodeDataUrl(url))
+      .catch(() => setQrCodeDataUrl(''));
+  }, [generatedUri]);
+
+  const handleCopyUpiId = async () => {
+    if (!upiId.trim()) return;
+    try {
+      await Clipboard.setStringAsync(upiId.trim());
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2500);
+      Alert.alert('Copied', 'UPI ID copied to clipboard: ' + upiId.trim());
+    } catch {
+      Alert.alert('Copy failed', 'UPI ID: ' + upiId.trim());
+    }
+  };
 
   const handleSave = async () => {
     if (!adminToken) {
@@ -248,13 +281,36 @@ export const UpiSettingsSection: React.FC<UpiSettingsSectionProps> = ({
         </Text>
 
         <View style={styles.qrMockBox}>
-          <QrCode size={64} color="#10b981" />
+          {qrCodeDataUrl ? (
+            <View style={styles.qrFrame}>
+              <Image
+                source={{ uri: qrCodeDataUrl }}
+                style={{ width: 160, height: 160 }}
+                resizeMode="contain"
+              />
+            </View>
+          ) : (
+            <QrCode size={64} color="#10b981" />
+          )}
+
           <Text style={styles.qrMockText}>
             {upiId || 'No UPI ID configured'}
           </Text>
           <Text style={styles.qrMockMerchant}>
             {merchantName || 'FreshCart Store'}
           </Text>
+
+          {upiId ? (
+            <TouchableOpacity
+              style={[styles.copyUpiBtn, isCopied && styles.copyUpiBtnSuccess]}
+              onPress={handleCopyUpiId}
+            >
+              {isCopied ? <Check size={14} color="#10b981" /> : <Copy size={14} color="#94a3b8" />}
+              <Text style={[styles.copyUpiBtnText, isCopied && styles.copyUpiBtnTextSuccess]}>
+                {isCopied ? 'UPI ID Copied!' : 'Copy UPI ID'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </ScrollView>
@@ -443,5 +499,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94a3b8',
     marginTop: 2,
+  },
+  qrFrame: {
+    backgroundColor: '#ffffff',
+    padding: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    marginBottom: 8,
+  },
+  copyUpiBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  copyUpiBtnSuccess: {
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderColor: '#10b981',
+  },
+  copyUpiBtnText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    fontWeight: '600',
+  },
+  copyUpiBtnTextSuccess: {
+    color: '#10b981',
+    fontWeight: '700',
   },
 });

@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import {
   Package,
@@ -20,7 +21,11 @@ import {
   Truck,
   ArrowLeft,
   Sparkles,
+  UploadCloud,
+  CreditCard,
 } from 'lucide-react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { useAuth } from '../../context/AuthContext';
 import { customerApi } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
@@ -41,6 +46,57 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [otpCodes, setOtpCodes] = useState<Record<string, string>>({});
+  const [uploadingOrderId, setUploadingOrderId] = useState<string | null>(null);
+
+  const handleUploadProofForOrder = async (orderId: string) => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        const fileSize = file.size || 0;
+        const MAX_SIZE = 10 * 1024 * 1024;
+        if (fileSize > MAX_SIZE) {
+          Alert.alert('File Too Large', 'Please select a file smaller than 10 MB.');
+          return;
+        }
+
+        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+        const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+        if (!validExts.includes(ext)) {
+          Alert.alert('Invalid Format', 'Accepted formats are JPG, JPEG, PNG, and PDF.');
+          return;
+        }
+
+        const mime = file.mimeType || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg');
+        const base64 = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        setUploadingOrderId(orderId);
+        const uploadRes = await customerApi.uploadScreenshotProof(
+          orderId,
+          base64,
+          mime,
+          file.name
+        );
+        setUploadingOrderId(null);
+
+        if (uploadRes.success) {
+          Alert.alert('Proof Submitted', 'Payment proof submitted successfully! Awaiting admin verification.');
+          loadOrders(true);
+        } else {
+          Alert.alert('Upload Failed', uploadRes.error || 'Failed to upload payment proof.');
+        }
+      }
+    } catch (err: any) {
+      setUploadingOrderId(null);
+      Alert.alert('Error', err?.message || 'Could not upload payment proof.');
+    }
+  };
 
   const loadOrders = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
@@ -129,6 +185,9 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
             const currentStep = getStatusStep(ord.status);
             const isDelivered = currentStep === 4;
             const otpCode = otpCodes[ord.id];
+            const isUpi = ord.paymentMethod?.toLowerCase().includes('upi');
+            const isPaid = ord.paymentStatus === 'PAID' || ord.paymentStatus === 'COMPLETED';
+            const isRejected = ord.paymentStatus === 'REJECTED';
 
             return (
               <View key={ord.id} style={styles.orderCard}>
@@ -147,6 +206,31 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
                   <View style={styles.amountBox}>
                     <Text style={styles.totalPrice}>₹{ord.total}</Text>
                     <Text style={styles.paymentMethod}>{ord.paymentMethod || 'COD'}</Text>
+                    {isUpi && (
+                      <View
+                        style={[
+                          styles.upiStatusBadge,
+                          isPaid
+                            ? styles.upiStatusPaid
+                            : isRejected
+                            ? styles.upiStatusRejected
+                            : styles.upiStatusPending,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.upiStatusText,
+                            isPaid
+                              ? styles.upiStatusTextPaid
+                              : isRejected
+                              ? styles.upiStatusTextRejected
+                              : styles.upiStatusTextPending,
+                          ]}
+                        >
+                          {isPaid ? 'Verified' : isRejected ? 'Rejected' : 'Pending Verification'}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 </View>
 
@@ -226,6 +310,28 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
                     <Text style={styles.infoText}>Slot: {ord.deliveryTimeSlot}</Text>
                   </View>
                 ) : null}
+
+                {/* Upload Payment Proof for UPI Orders if not yet verified */}
+                {isUpi && !isPaid && (
+                  <TouchableOpacity
+                    style={styles.uploadProofBtn}
+                    onPress={() => handleUploadProofForOrder(ord.id)}
+                    disabled={uploadingOrderId === ord.id}
+                  >
+                    {uploadingOrderId === ord.id ? (
+                      <ActivityIndicator size="small" color="#006b2c" />
+                    ) : (
+                      <>
+                        <UploadCloud size={14} color="#006b2c" />
+                        <Text style={styles.uploadProofBtnText}>
+                          {ord.screenshotUrl
+                            ? 'Re-upload Payment Proof (JPG, PNG, PDF)'
+                            : 'Upload Payment Receipt Proof (JPG, PNG, PDF)'}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
 
                 {/* Expand Items Toggle */}
                 <TouchableOpacity
@@ -510,5 +616,52 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94a3b8',
     fontStyle: 'italic',
+  },
+  upiStatusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
+  upiStatusPaid: {
+    backgroundColor: '#dcfce7',
+  },
+  upiStatusRejected: {
+    backgroundColor: '#fee2e2',
+  },
+  upiStatusPending: {
+    backgroundColor: '#fef3c7',
+  },
+  upiStatusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  upiStatusTextPaid: {
+    color: '#15803d',
+  },
+  upiStatusTextRejected: {
+    color: '#b91c1c',
+  },
+  upiStatusTextPending: {
+    color: '#b45309',
+  },
+  uploadProofBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  uploadProofBtnText: {
+    color: '#006b2c',
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

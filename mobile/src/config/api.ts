@@ -9,7 +9,7 @@ const ENV_LAN_IP = process.env.EXPO_PUBLIC_LAN_IP;
 const ENV_PORT = process.env.EXPO_PUBLIC_PORT;
 
 // Default LAN IP detected from dev server for physical phones on WiFi
-export const DEFAULT_LAN_IP = ENV_LAN_IP || '10.211.209.237';
+export const DEFAULT_LAN_IP = ENV_LAN_IP || '10.240.114.237';
 export const DEFAULT_PORT = ENV_PORT || '3000';
 
 /**
@@ -68,13 +68,21 @@ let cachedBaseUrl: string | null = null;
 
 export async function getApiBaseUrl(): Promise<string> {
   if (cachedBaseUrl) return cachedBaseUrl;
+  const defaultUrl = getDefaultApiUrl();
   try {
     const saved = await AsyncStorage.getItem(STORAGE_API_URL_KEY);
     if (saved && saved.trim()) {
       const clean = saved.trim().replace(/\/+$/, '');
-      // Sanity check: on physical Android/iOS, if the saved URL was localhost or 127.0.0.1, auto-correct it to LAN IP
-      if ((Platform.OS === 'android' || Platform.OS === 'ios') && (clean.includes('localhost') || clean.includes('127.0.0.1'))) {
-        cachedBaseUrl = getDefaultApiUrl();
+      // Auto-correct stale or localhost URLs on mobile
+      const dynamicHost = getDevServerHost();
+      const isStale =
+        clean.includes('localhost') ||
+        clean.includes('127.0.0.1') ||
+        clean.includes('10.211.209.237') ||
+        (dynamicHost && !clean.includes(dynamicHost));
+
+      if ((Platform.OS === 'android' || Platform.OS === 'ios') && isStale) {
+        cachedBaseUrl = defaultUrl;
         await AsyncStorage.setItem(STORAGE_API_URL_KEY, cachedBaseUrl);
         return cachedBaseUrl;
       }
@@ -84,7 +92,7 @@ export async function getApiBaseUrl(): Promise<string> {
   } catch {
     // ignore
   }
-  cachedBaseUrl = getDefaultApiUrl();
+  cachedBaseUrl = defaultUrl;
   return cachedBaseUrl;
 }
 

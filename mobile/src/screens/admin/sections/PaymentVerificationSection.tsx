@@ -10,6 +10,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import {
   CheckCircle,
@@ -23,8 +24,11 @@ import {
   Trash2,
   AlertTriangle,
   Phone,
+  FileText,
+  ExternalLink,
 } from 'lucide-react-native';
 import { adminApi } from '../../../services/apiClient';
+import { getApiBaseUrl } from '../../../config/api';
 
 interface PaymentVerificationSectionProps {
   queue: any[];
@@ -74,13 +78,30 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
       const res = await adminApi.verifyPayment(adminToken, orderId, 'APPROVE');
       Alert.alert(
         'Payment Approved',
-        res.message || 'Payment marked as PAID. Delivery OTP has been dispatched to customer.'
+        orderId.startsWith('REG-')
+          ? 'Customer registration payment verified. Account is now Active!'
+          : (res.message || 'Payment marked as PAID. Delivery OTP has been dispatched to customer.')
       );
       onRefresh();
     } catch (err: any) {
       Alert.alert('Approval Failed', err.message || 'Could not approve payment.');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleViewScreenshot = async (rawProof: string) => {
+    if (!rawProof) return;
+    if (rawProof.startsWith('data:') || rawProof.startsWith('http://') || rawProof.startsWith('https://')) {
+      setSelectedScreenshot(rawProof);
+      return;
+    }
+    try {
+      const base = await getApiBaseUrl();
+      const resolved = `${base}${rawProof.startsWith('/') ? '' : '/'}${rawProof}`;
+      setSelectedScreenshot(resolved);
+    } catch {
+      setSelectedScreenshot(rawProof);
     }
   };
 
@@ -210,13 +231,24 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
             const isPaid = item.paymentStatus === 'PAID' || item.paymentStatus === 'COMPLETED';
             const isRejected = item.paymentStatus === 'REJECTED';
             const isPending = !isPaid && !isRejected;
+            const isReg = Boolean(item.orderId && item.orderId.startsWith('REG-'));
+            const proofTarget = item.screenshotUrl || item.screenshotPath;
 
             return (
               <View key={item.id || item.orderId} style={styles.itemCard}>
                 <View style={styles.itemHeader}>
-                  <View>
-                    <Text style={styles.itemOrderId}>Order #{item.orderId}</Text>
-                    <Text style={styles.itemCustomer}>{item.customerName || 'Customer'}</Text>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Text style={styles.itemOrderId}>
+                        {isReg ? `Registration #${item.orderId.replace(/^REG-/, '')}` : `Order #${item.orderId}`}
+                      </Text>
+                      {isReg ? (
+                        <View style={styles.regBadge}>
+                          <Text style={styles.regBadgeText}>Registration Fee</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.itemCustomer}>{item.customerName || (isReg ? 'New Member' : 'Customer')}</Text>
                     {item.customerMobile ? (
                       <View style={styles.phoneRow}>
                         <Phone size={11} color="#94a3b8" />
@@ -254,13 +286,15 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
                 </View>
 
                 {/* Screenshot preview button if available */}
-                {(item.screenshotUrl || item.screenshotPath) && (
+                {proofTarget && (
                   <TouchableOpacity
                     style={styles.screenshotBtn}
-                    onPress={() => setSelectedScreenshot(item.screenshotUrl || item.screenshotPath)}
+                    onPress={() => handleViewScreenshot(proofTarget)}
                   >
                     <Eye size={14} color="#10b981" />
-                    <Text style={styles.screenshotBtnText}>View Uploaded Payment Proof</Text>
+                    <Text style={styles.screenshotBtnText}>
+                      {proofTarget.toLowerCase().includes('.pdf') ? 'View Uploaded PDF Proof' : 'View Uploaded Payment Proof'}
+                    </Text>
                   </TouchableOpacity>
                 )}
 
@@ -274,7 +308,9 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
                         disabled={isProcessing}
                       >
                         <Check size={14} color="#fff" />
-                        <Text style={styles.approveBtnText}>Approve (Send OTP)</Text>
+                        <Text style={styles.approveBtnText}>
+                          {isReg ? 'Approve & Activate' : 'Approve (Send OTP)'}
+                        </Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -301,7 +337,7 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
         </View>
       )}
 
-      {/* Screenshot Viewer Modal */}
+      {/* Screenshot / Proof Viewer Modal */}
       <Modal visible={!!selectedScreenshot} animationType="fade" transparent>
         <View style={styles.imageModalOverlay}>
           <View style={styles.imageModalBox}>
@@ -313,11 +349,35 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
             </View>
 
             {selectedScreenshot ? (
-              <Image
-                source={{ uri: selectedScreenshot }}
-                style={styles.screenshotImage}
-                resizeMode="contain"
-              />
+              selectedScreenshot.toLowerCase().includes('.pdf') ||
+              selectedScreenshot.includes('application/pdf') ? (
+                <View style={styles.pdfProofBox}>
+                  <FileText size={48} color="#dc2626" />
+                  <Text style={styles.pdfProofTitle}>PDF Payment Receipt</Text>
+                  <Text style={styles.pdfProofSub}>
+                    This customer uploaded their payment receipt as a PDF document.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.openPdfBtn}
+                    onPress={() => {
+                      if (selectedScreenshot) {
+                        Linking.openURL(selectedScreenshot).catch(() => {
+                          Alert.alert('Cannot Open PDF', 'Unable to open PDF viewer on this device.');
+                        });
+                      }
+                    }}
+                  >
+                    <ExternalLink size={16} color="#ffffff" />
+                    <Text style={styles.openPdfBtnText}>Open PDF Document</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Image
+                  source={{ uri: selectedScreenshot }}
+                  style={styles.screenshotImage}
+                  resizeMode="contain"
+                />
+              )
             ) : null}
           </View>
         </View>
@@ -703,6 +763,56 @@ const styles = StyleSheet.create({
   },
   confirmRejectText: {
     color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  regBadge: {
+    backgroundColor: '#064e3b',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#059669',
+  },
+  regBadgeText: {
+    color: '#6ee7b7',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  pdfProofBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    marginVertical: 12,
+  },
+  pdfProofTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#f8fafc',
+    marginTop: 12,
+  },
+  pdfProofSub: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 20,
+    lineHeight: 18,
+  },
+  openPdfBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  openPdfBtnText: {
+    color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
   },

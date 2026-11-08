@@ -15,6 +15,7 @@ import { signCustomerToken, verifyCustomerToken, signAdminToken, verifyAdminToke
 import {
   connectMySql,
   isMySqlConnected,
+  getPool,
   checkDatabaseAvailability,
   getSafeMySqlDiagnosticInfo,
   findCustomerInDb,
@@ -365,6 +366,17 @@ apiRouter.use(async (_req, _res, next) => {
   next();
 });
 
+// Private directory for storing payment screenshots and registration proofs
+export const SCREENSHOTS_DIR = process.env.VERCEL
+  ? path.join('/tmp', 'freshcart_screenshots')
+  : path.resolve(process.cwd(), '.data', 'payment_screenshots');
+
+if (!fs.existsSync(SCREENSHOTS_DIR)) {
+  try {
+    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+  } catch {}
+}
+
 // =============================================================================
 // AUTHENTICATION ENDPOINTS
 // =============================================================================
@@ -394,7 +406,21 @@ apiRouter.get(['/api/auth/check-phone', '/auth/check-phone'], async (req: Reques
  */
 apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, res: Response) => {
   try {
-    const { name, fullName, email, phone, mobile, password, address } = req.body || {};
+    const {
+      name,
+      fullName,
+      email,
+      phone,
+      mobile,
+      password,
+      address,
+      transactionRef,
+      paymentProof,
+      paymentScreenshot,
+      screenshot,
+      mimeType,
+      fileName,
+    } = req.body || {};
     const resolvedName = (name || fullName || '').trim();
 
     if (!resolvedName) {
@@ -421,7 +447,7 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       }
     }
 
-    // Check duplicate email in shared database
+    // Check duplicate email in shared database (prevent duplicate registrations)
     const existingByEmail = await findCustomerInDb(cleanEmail);
     if (existingByEmail) {
       sendJson(res, 409, {
@@ -447,6 +473,56 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
     const passwordHash = await bcrypt.hash(password, 10);
     const customerId = `cust-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
+    const rawProof = paymentProof || paymentScreenshot || screenshot;
+    let savedProofPath: string | null = null;
+    let savedProofMime: string | null = null;
+    let savedProofSize: number = 0;
+    let proofDataUri: string | null = null;
+
+    if (rawProof && typeof rawProof === 'string' && rawProof.trim()) {
+      let base64Payload = rawProof.trim();
+      const match = base64Payload.match(/^data:([a-zA-Z0-9\/+-]+);base64,(.+)$/);
+      if (match) {
+        base64Payload = match[2];
+      }
+
+      const fileBuffer = Buffer.from(base64Payload, 'base64');
+      if (fileBuffer.length > 0) {
+        const MAX_SIZE = 10 * 1024 * 1024;
+        if (fileBuffer.length > MAX_SIZE) {
+          sendJson(res, 400, { success: false, error: 'Payment proof file exceeds 10 MB limit. Please select a smaller file.' });
+          return;
+        }
+
+        // Validate magic bytes: JPEG (0xFF 0xD8 0xFF), PNG (0x89 0x50 0x4E 0x47), PDF (0x25 0x50 0x44 0x46)
+        const isJpeg = fileBuffer.length >= 3 && fileBuffer[0] === 0xFF && fileBuffer[1] === 0xD8 && fileBuffer[2] === 0xFF;
+        const isPng = fileBuffer.length >= 8 && fileBuffer[0] === 0x89 && fileBuffer[1] === 0x50 && fileBuffer[2] === 0x4E && fileBuffer[3] === 0x47;
+        const isPdf = fileBuffer.length >= 4 && fileBuffer[0] === 0x25 && fileBuffer[1] === 0x50 && fileBuffer[2] === 0x44 && fileBuffer[3] === 0x46;
+
+        if (!isJpeg && !isPng && !isPdf) {
+          sendJson(res, 400, {
+            success: false,
+            error: 'Invalid file format. Only JPG, JPEG, PNG, and PDF files are accepted.',
+          });
+          return;
+        }
+
+        savedProofMime = isPdf ? 'application/pdf' : isPng ? 'image/png' : 'image/jpeg';
+        const ext = isPdf ? '.pdf' : isPng ? '.png' : '.jpg';
+        const safeCustId = customerId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const generatedFilename = `proof_REG_${safeCustId}_${Date.now()}${ext}`;
+        savedProofPath = path.join(SCREENSHOTS_DIR, generatedFilename);
+        try {
+          fs.writeFileSync(savedProofPath, fileBuffer);
+        } catch (writeErr) {
+          console.warn('[Storage] Could not write registration proof to disk:', writeErr);
+        }
+        savedProofSize = fileBuffer.length;
+        proofDataUri = rawProof.startsWith('data:') ? rawProof : `data:${savedProofMime};base64,${base64Payload}`;
+      }
+    }
+
+    const hasProof = Boolean(savedProofPath || proofDataUri);
     const newCustomer = {
       id: customerId,
       customer_id: customerId,
@@ -455,7 +531,10 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       phone: cleanPhone,
       address: address || '',
       passwordHash,
-      loyaltyTier: 'Fresh Member (Welcome 10% Off Next Order)',
+      loyaltyTier: hasProof
+        ? 'Pending Verification (Registration Fee: ₹199)'
+        : 'Fresh Member (Welcome 10% Off Next Order)',
+      status: hasProof ? 'Pending Verification' : 'Active',
       savedAddresses: [
         {
           id: `addr-${Date.now()}`,
@@ -477,6 +556,62 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
         error: 'Database error: Failed to save customer account to shared database.',
       });
       return;
+    }
+
+    // Save payment record if proof was uploaded or registration fee was initiated
+    const upiSettings = await getUpiPaymentSettingsFromDb();
+    const effectiveUpiId = upiSettings?.upiId || 'freshcart@okicici';
+    const effectiveMerchant = upiSettings?.merchantName || 'FreshCart Store';
+    const regOrderId = `REG-${customerId}`;
+    const paymentId = `pay-reg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    if (hasProof) {
+      try {
+        // First create order record for REG-... so foreign key constraint fk_payments_order is satisfied
+        const regOrder = {
+          orderId: regOrderId,
+          id: regOrderId,
+          customerId,
+          customerName: resolvedName,
+          customerEmail: cleanEmail,
+          customerPhone: cleanPhone,
+          deliveryAddress: address || 'Membership Registration',
+          subtotal: 199.00,
+          discount: 0,
+          total: 199.00,
+          status: 'Registration',
+          paymentMethod: 'UPI',
+          paymentStatus: 'PENDING_VERIFICATION',
+          screenshotUrl: savedProofPath ? `/api/payments/screenshot/${regOrderId}` : null,
+          screenshotData: proofDataUri,
+          items: [],
+        };
+        await upsertOrderInDb(regOrder);
+
+        const pool = getPool();
+        await pool.query(
+          `INSERT INTO payments (
+            payment_id, order_id, customer_id, payment_method, payment_status,
+            amount, currency, transaction_ref, upi_id, upi_merchant_name,
+            screenshot_path, screenshot_mime, screenshot_size, screenshot_data,
+            screenshot_uploaded_at
+          ) VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', 199.00, 'INR', ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            paymentId,
+            regOrderId,
+            customerId,
+            transactionRef ? String(transactionRef).trim() : null,
+            effectiveUpiId,
+            effectiveMerchant,
+            savedProofPath,
+            savedProofMime,
+            savedProofSize,
+            proofDataUri,
+          ]
+        );
+      } catch (payErr: any) {
+        console.error('[MySQL] Error creating registration payment record:', payErr?.message);
+      }
     }
 
     // Confirm database insert succeeded before reporting success
@@ -504,11 +639,15 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       phone: cleanPhone,
       address: address || '',
       loyaltyTier: newCustomer.loyaltyTier,
+      status: newCustomer.status,
       savedAddresses: newCustomer.savedAddresses,
       createdAt: verified.createdAt || new Date().toISOString(),
       role: 'customer',
       userRole: 'CUSTOMER',
       token,
+      paymentStatus: hasProof ? 'PENDING_VERIFICATION' : 'PENDING',
+      registrationFee: 199,
+      orderId: regOrderId,
     };
 
     sendJson(res, 201, {
@@ -517,6 +656,11 @@ apiRouter.post(['/api/auth/register', '/auth/register'], async (req: Request, re
       userRole: 'CUSTOMER',
       customer: sessionUser,
       token,
+      paymentStatus: sessionUser.paymentStatus,
+      orderId: regOrderId,
+      message: hasProof
+        ? 'Registration and payment proof submitted successfully. Your payment is pending admin verification.'
+        : 'Registration completed successfully.',
     });
   } catch (err: any) {
     sendJson(res, 500, {
@@ -4075,17 +4219,6 @@ apiRouter.post(['/api/payments/initiate-upi', '/payments/initiate-upi'], async (
   }
 });
 
-// Private directory for storing payment screenshots
-const SCREENSHOTS_DIR = process.env.VERCEL
-  ? path.join('/tmp', 'freshcart_screenshots')
-  : path.resolve(process.cwd(), '.data', 'payment_screenshots');
-
-if (!fs.existsSync(SCREENSHOTS_DIR)) {
-  try {
-    fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
-  } catch {}
-}
-
 const activeUploadsByOrder = new Set<string>();
 
 /**
@@ -4159,6 +4292,7 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
     // Magic bytes verification
     // JPEG/JPG: 0xFF, 0xD8, 0xFF
     // PNG: 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+    // PDF: %PDF (0x25, 0x50, 0x44, 0x46)
     const isJpeg = fileBuffer.length >= 3 && fileBuffer[0] === 0xFF && fileBuffer[1] === 0xD8 && fileBuffer[2] === 0xFF;
     const isPng =
       fileBuffer.length >= 8 &&
@@ -4170,21 +4304,47 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
       fileBuffer[5] === 0x0A &&
       fileBuffer[6] === 0x1A &&
       fileBuffer[7] === 0x0A;
+    const isPdf =
+      fileBuffer.length >= 4 &&
+      fileBuffer[0] === 0x25 &&
+      fileBuffer[1] === 0x50 &&
+      fileBuffer[2] === 0x44 &&
+      fileBuffer[3] === 0x46;
 
-    if (!isJpeg && !isPng) {
+    if (!isJpeg && !isPng && !isPdf) {
       sendJson(res, 400, {
         success: false,
-        error: 'Invalid file format. Only JPG, JPEG, and PNG images are accepted.',
+        error: 'Invalid file format. Only JPG, JPEG, PNG, and PDF files are accepted.',
       });
       return;
     }
 
-    const finalMime = isJpeg ? 'image/jpeg' : 'image/png';
-    const ext = isJpeg ? '.jpg' : '.png';
+    const finalMime = isPdf ? 'application/pdf' : isJpeg ? 'image/jpeg' : 'image/png';
+    const ext = isPdf ? '.pdf' : isJpeg ? '.jpg' : '.png';
 
     // Verify order or payment attempt in database
-    const order = await findOrderInDb(trimmedOrderId);
-    const payment = await getPaymentRecordByOrderId(trimmedOrderId);
+    const isRegOrder = trimmedOrderId.startsWith('REG-');
+    let order = await findOrderInDb(trimmedOrderId);
+    let payment = await getPaymentRecordByOrderId(trimmedOrderId);
+
+    if (isRegOrder && !payment) {
+      const custId = trimmedOrderId.replace(/^REG-/, '');
+      const cust = (await findCustomerInDb(custId)) || (auth.customerId ? await findCustomerInDb(auth.customerId) : null);
+      if (cust) {
+        const upiSettings = await getUpiPaymentSettingsFromDb();
+        const payId = `pay-reg-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const pool = getPool();
+        await pool.query(
+          `INSERT INTO payments (
+            payment_id, order_id, customer_id, payment_method, payment_status,
+            amount, currency, upi_id, upi_merchant_name, created_at
+          ) VALUES (?, ?, ?, 'UPI', 'PENDING_VERIFICATION', 199.00, 'INR', ?, ?, NOW())`,
+          [payId, trimmedOrderId, cust.id || custId, upiSettings?.upiId || 'freshcart@okicici', upiSettings?.merchantName || 'FreshCart Store']
+        );
+        payment = await getPaymentRecordByOrderId(trimmedOrderId);
+      }
+    }
+
     if (!order && !payment) {
       sendJson(res, 404, { success: false, error: `Order ${trimmedOrderId} not found.` });
       return;
@@ -4407,7 +4567,8 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
     if (filePath && fs.existsSync(filePath)) {
       try {
         fileBuffer = fs.readFileSync(filePath);
-        if (filePath.endsWith('.png')) mime = 'image/png';
+        if (filePath.endsWith('.pdf')) mime = 'application/pdf';
+        else if (filePath.endsWith('.png')) mime = 'image/png';
         else if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) mime = 'image/jpeg';
       } catch {}
     }
@@ -4423,7 +4584,8 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
             const fallbackPath = path.join(SCREENSHOTS_DIR, match);
             if (fs.existsSync(fallbackPath)) {
               fileBuffer = fs.readFileSync(fallbackPath);
-              if (fallbackPath.endsWith('.png')) mime = 'image/png';
+              if (fallbackPath.endsWith('.pdf')) mime = 'application/pdf';
+              else if (fallbackPath.endsWith('.png')) mime = 'image/png';
               else if (fallbackPath.endsWith('.jpg') || fallbackPath.endsWith('.jpeg')) mime = 'image/jpeg';
             }
           }
@@ -4455,7 +4617,7 @@ apiRouter.get(['/api/payments/screenshot/:orderId', '/payments/screenshot/:order
                 fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
               }
               const cleanId = rawOrderId.replace(/^#/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-              const restoredName = `proof_${cleanId}_restored${mime === 'image/png' ? '.png' : '.jpg'}`;
+              const restoredName = `proof_${cleanId}_restored${mime === 'application/pdf' ? '.pdf' : mime === 'image/png' ? '.png' : '.jpg'}`;
               fs.writeFileSync(path.join(SCREENSHOTS_DIR, restoredName), fileBuffer);
             } catch {}
           }
@@ -4591,7 +4753,7 @@ apiRouter.post(['/api/admin/payments/verify', '/admin/payments/verify'], async (
       // 3. Send existing OTP to customer associated with the order (prevent duplicate OTP sending)
       let otpSent = false;
       let generatedOtpCode = '';
-      if (!currentPayment.otpSent) {
+      if (!currentPayment.otpSent && !trimmedOrderId.startsWith('REG-')) {
         const order = await findOrderInDb(trimmedOrderId);
         const targetPhone = order?.customerPhone || currentPayment.customerPhone || '';
         const targetCustId = order?.customerId || currentPayment.customerId || 'guest';

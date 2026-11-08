@@ -18,7 +18,17 @@ interface AuthContextType {
   loginAdmin: (identifier: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   loginEmployee: (identifier: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   loginCustomer: (identifier: string, pass: string) => Promise<{ success: boolean; error?: string }>;
-  registerCustomer: (data: { fullName: string; email: string; mobile: string; password: string; address?: string }) => Promise<{ success: boolean; error?: string }>;
+  registerCustomer: (data: {
+    fullName: string;
+    email: string;
+    mobile: string;
+    password: string;
+    address?: string;
+    transactionRef?: string;
+    paymentProof?: string;
+    mimeType?: string;
+    fileName?: string;
+  }) => Promise<{ success: boolean; error?: string; message?: string }>;
   logout: (portal?: PortalType) => Promise<void>;
   updateCustomerProfile: (updates: { name?: string; phone?: string; address?: string }) => Promise<void>;
 }
@@ -175,6 +185,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     mobile: string;
     password: string;
     address?: string;
+    transactionRef?: string;
+    paymentProof?: string;
+    mimeType?: string;
+    fileName?: string;
   }) => {
     try {
       const res = await authApi.register(data);
@@ -188,7 +202,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           JSON.stringify({ customer: cust, token })
         );
         await setActivePortal('customer');
-        return { success: true };
+        return { success: true, message: res.message };
       }
       return { success: false, error: res.error || 'Registration failed.' };
     } catch (err: any) {

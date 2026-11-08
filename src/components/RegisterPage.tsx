@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import QRCode from 'qrcode';
 import { useAuth } from '../context/AuthContext';
 import { validateIndianMobileNumber } from '../services/registrationOtpService';
+import { fetchUpiSettings, isValidUpiId } from '../services/paymentService';
 import { BRAND_LOGO_URL } from '../data/products';
 import {
   User,
@@ -15,6 +17,13 @@ import {
   CheckCircle2,
   ArrowLeft,
   Sparkles,
+  QrCode,
+  Copy,
+  Check,
+  UploadCloud,
+  FileText,
+  CreditCard,
+  ExternalLink,
 } from 'lucide-react';
 
 interface RegisterPageProps {
@@ -43,6 +52,110 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // UPI Payment State for Registration Fee (₹199)
+  const [upiId, setUpiId] = useState('somaraju2006jangala-3@okicici');
+  const [merchantName, setMerchantName] = useState('FreshCart Store');
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [isCopied, setIsCopied] = useState(false);
+  const [transactionRef, setTransactionRef] = useState('');
+  const [paymentProofBase64, setPaymentProofBase64] = useState<string | null>(null);
+  const [paymentProofMime, setPaymentProofMime] = useState<string | null>(null);
+  const [paymentProofName, setPaymentProofName] = useState<string | null>(null);
+  const [paymentProofSize, setPaymentProofSize] = useState<number>(0);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  // Fetch shared backend UPI settings on mount
+  useEffect(() => {
+    let isMounted = true;
+    fetchUpiSettings()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res && res.upiId) {
+          setUpiId(res.upiId);
+          if (res.merchantName) setMerchantName(res.merchantName);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Standard UPI URI format: upi://pay?pa=UPI_ID&pn=MERCHANT_NAME&am=199&cu=INR
+  const standardUpiUri = useMemo(() => {
+    const cleanId = (upiId || '').trim();
+    if (!cleanId) return '';
+    const pa = encodeURIComponent(cleanId).replace(/%40/g, '@');
+    const pn = encodeURIComponent(merchantName.trim() || 'FreshCart Store');
+    return `upi://pay?pa=${pa}&pn=${pn}&am=199&cu=INR`;
+  }, [upiId, merchantName]);
+
+  // Generate scannable QR Code
+  useEffect(() => {
+    if (!standardUpiUri) return;
+    QRCode.toDataURL(standardUpiUri, {
+      width: 200,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#050c18', light: '#ffffff' },
+    })
+      .then((url) => setQrCodeDataUrl(url))
+      .catch(() => setQrCodeDataUrl(''));
+  }, [standardUpiUri]);
+
+  // Copy UPI ID to clipboard
+  const handleCopyUpiId = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(upiId);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = upiId;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2500);
+    } catch {}
+  };
+
+  // Payment proof file selection (JPG, JPEG, PNG, PDF up to 10MB)
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setProofError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+    const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+
+    if (!validTypes.includes(file.type.toLowerCase()) && !validExts.includes(ext)) {
+      setProofError('Please upload a valid JPG, JPEG, PNG, or PDF file.');
+      return;
+    }
+
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      setProofError('File size exceeds 10 MB limit. Please select a smaller file.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setPaymentProofBase64(result);
+      setPaymentProofMime(file.type || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg'));
+      setPaymentProofName(file.name);
+      setPaymentProofSize(file.size);
+    };
+    reader.onerror = () => {
+      setProofError('Failed to read the file from your device. Please try again.');
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Simple password strength calculation
   const hasMinLength = password.length >= 8;
@@ -115,13 +228,21 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
         phone: validation.normalized, // E.164: +91XXXXXXXXXX
         password,
         address: address.trim(),
+        transactionRef: transactionRef.trim() || undefined,
+        paymentProof: paymentProofBase64 || undefined,
+        mimeType: paymentProofMime || undefined,
+        fileName: paymentProofName || undefined,
       });
 
       if (res.success) {
-        setSuccessMessage('Registration Completed! Opening Customer Portal...');
+        setSuccessMessage(
+          paymentProofBase64
+            ? 'Registration and payment proof submitted successfully! Your payment is pending admin verification.'
+            : 'Registration Completed! Opening Customer Portal...'
+        );
         setTimeout(() => {
           onRegisterSuccess();
-        }, 800);
+        }, 1500);
       } else {
         const errorText = res.error || 'Failed to create customer account. Please try again.';
         setErrorMessage(errorText);
@@ -424,6 +545,169 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
             </span>
           </div>
 
+          {/* Customer Registration & Payment Details Section */}
+          <div className="rounded-2xl bg-white/40 backdrop-blur-xs border border-white/60 p-4 sm:p-5 space-y-4 shadow-sm">
+            <div className="flex items-center justify-between pb-2 border-b border-white/60">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-[#006b2c]" />
+                <h3 className="text-[14px] font-bold text-[#0b1c30]">Payment Details</h3>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#006b2c]/10 text-[#006b2c] border border-[#006b2c]/20">
+                Registration Fee: ₹199
+              </span>
+            </div>
+
+            {/* Merchant Info & UPI ID Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[12px]">
+              <div className="p-2.5 rounded-xl bg-white/50 border border-white/60">
+                <div className="text-[#565e74] text-[11px]">Payee / Merchant Name</div>
+                <div className="font-bold text-[#0b1c30] truncate">{merchantName || 'FreshCart Store'}</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/50 border border-white/60">
+                <div className="text-[#565e74] text-[11px]">Official UPI ID</div>
+                <div className="flex items-center justify-between gap-1 font-mono font-semibold text-[#006b2c] text-[12px]">
+                  <span className="truncate">{upiId}</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyUpiId}
+                    className="p-1 rounded-md hover:bg-emerald-100 text-[#006b2c] transition-colors cursor-pointer shrink-0"
+                    title="Copy UPI ID"
+                  >
+                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Pay Now Button & QR Code Row */}
+            <div className="flex flex-col sm:flex-row items-center gap-4 p-3 rounded-xl bg-white/35 border border-white/50">
+              {/* QR Code Container */}
+              <div className="flex flex-col items-center shrink-0">
+                {qrCodeDataUrl ? (
+                  <div className="p-2 bg-white rounded-xl shadow-xs border border-slate-200">
+                    <img
+                      src={qrCodeDataUrl}
+                      alt="UPI Registration QR Code"
+                      className="w-32 h-32 object-contain"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-32 h-32 rounded-xl bg-slate-100 flex flex-col items-center justify-center p-2 text-center text-slate-400 border border-slate-200">
+                    <QrCode className="w-8 h-8 mb-1" />
+                    <span className="text-[10px]">Generating QR...</span>
+                  </div>
+                )}
+                <span className="text-[10px] text-[#565e74] mt-1 text-center font-medium">
+                  Scan with GPay, PhonePe, Paytm, BHIM
+                </span>
+              </div>
+
+              {/* Pay Now Direct Action */}
+              <div className="flex-1 space-y-2.5 w-full text-center sm:text-left">
+                <div className="text-[12px] text-[#0b1c30]">
+                  <p className="font-semibold">Quick Mobile Payment</p>
+                  <p className="text-[11px] text-[#565e74] mt-0.5">
+                    Tap Pay Now to trigger installed UPI applications, or scan the QR code to complete the ₹199 one-time registration fee.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={standardUpiUri}
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#006b2c] hover:bg-[#00873a] text-white font-semibold text-[12px] shadow-sm transition-all cursor-pointer"
+                  >
+                    <span>Pay Now (₹199)</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyUpiId}
+                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white/70 hover:bg-white text-[#0b1c30] border border-slate-300 font-semibold text-[12px] transition-all cursor-pointer"
+                  >
+                    {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{isCopied ? 'UPI ID Copied' : 'Copy UPI ID'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Transaction Reference (Optional) */}
+            <div className="space-y-1">
+              <label htmlFor="reg-txn-ref" className="block text-[11px] font-semibold text-[#0b1c30]">
+                UPI Transaction Reference / UTR Number <span className="text-slate-400 font-normal">(Optional)</span>
+              </label>
+              <input
+                id="reg-txn-ref"
+                type="text"
+                value={transactionRef}
+                onChange={(e) => setTransactionRef(e.target.value)}
+                placeholder="e.g. 12-digit UTR from GPay / PhonePe / Paytm"
+                className="w-full px-3 py-2 rounded-xl bg-white/50 border border-white/60 text-[12px] text-[#0b1c30] placeholder:text-[#565e74]/70 focus:outline-hidden focus:ring-2 focus:ring-[#006b2c]"
+              />
+            </div>
+
+            {/* Payment Proof Upload (JPG, JPEG, PNG, PDF up to 10MB) */}
+            <div className="space-y-1">
+              <label className="block text-[11px] font-semibold text-[#0b1c30]">
+                Payment Proof Upload <span className="text-slate-400 font-normal">(JPG, JPEG, PNG, PDF — Max 10MB)</span>
+              </label>
+
+              <div className="relative border-2 border-dashed border-white/70 rounded-xl p-3 bg-white/30 text-center hover:bg-white/40 transition-all">
+                <input
+                  type="file"
+                  id="reg-proof-input"
+                  accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                  onChange={handleFileChange}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                {paymentProofName ? (
+                  <div className="flex items-center justify-center gap-2 text-[12px] font-medium text-[#006b2c]">
+                    {paymentProofMime === 'application/pdf' ? (
+                      <FileText className="w-4 h-4 text-rose-600" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    )}
+                    <span className="truncate max-w-[200px]">{paymentProofName}</span>
+                    <span className="text-[10px] text-slate-500">
+                      ({(paymentProofSize / 1024).toFixed(0)} KB)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPaymentProofBase64(null);
+                        setPaymentProofName(null);
+                        setPaymentProofSize(0);
+                        setPaymentProofMime(null);
+                      }}
+                      className="ml-2 text-xs text-red-500 hover:underline z-10 cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-1 pointer-events-none">
+                    <UploadCloud className="w-5 h-5 text-[#006b2c]" />
+                    <span className="text-[12px] font-semibold text-[#0b1c30]">
+                      Click to browse or drop payment receipt screenshot / PDF
+                    </span>
+                    <span className="text-[10px] text-[#565e74]">
+                      Accepted formats: JPG, PNG, PDF (Up to 10 MB)
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {proofError && (
+                <div className="text-[11px] font-medium text-red-600 flex items-center gap-1 mt-1">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                  <span>{proofError}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Submit Button */}
           <button
             type="submit"
@@ -438,7 +722,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
               </div>
             ) : (
               <>
-                <span>Complete Registration &amp; Start Shopping</span>
+                <span>Register Now</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}

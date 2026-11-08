@@ -9,6 +9,7 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  TextInput,
 } from 'react-native';
 import {
   User,
@@ -20,7 +21,12 @@ import {
   CheckCircle2,
   ShieldCheck,
   Package,
+  UploadCloud,
+  FileText,
+  X,
 } from 'lucide-react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { customerApi } from '../../services/apiClient';
@@ -56,6 +62,55 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
   const { currentCustomer, customerToken } = useAuth();
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
 
+  // UPI Payment Proof States
+  const [transactionRef, setTransactionRef] = useState('');
+  const [paymentProofBase64, setPaymentProofBase64] = useState<string | null>(null);
+  const [paymentProofName, setPaymentProofName] = useState<string | null>(null);
+  const [paymentProofSize, setPaymentProofSize] = useState<number>(0);
+  const [paymentProofMime, setPaymentProofMime] = useState<string | null>(null);
+  const [isPickingProof, setIsPickingProof] = useState(false);
+
+  const handlePickProof = async () => {
+    try {
+      setIsPickingProof(true);
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        const fileSize = file.size || 0;
+        const MAX_SIZE = 10 * 1024 * 1024;
+        if (fileSize > MAX_SIZE) {
+          Alert.alert('File Too Large', 'Please select a file smaller than 10 MB.');
+          return;
+        }
+
+        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+        const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+        if (!validExts.includes(ext)) {
+          Alert.alert('Invalid Format', 'Accepted formats are JPG, JPEG, PNG, and PDF.');
+          return;
+        }
+
+        const mime = file.mimeType || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg');
+        const base64 = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        setPaymentProofBase64(base64);
+        setPaymentProofMime(mime);
+        setPaymentProofName(file.name);
+        setPaymentProofSize(fileSize);
+      }
+    } catch (err: any) {
+      Alert.alert('File Selection Error', err?.message || 'Could not access file.');
+    } finally {
+      setIsPickingProof(false);
+    }
+  };
+
   const discountAmount = appliedCoupon?.discount || 0;
   const finalPayableAmount = Math.max(0, subtotal - discountAmount + deliveryCharge);
 
@@ -87,7 +142,7 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
     try {
       const generatedOrderId = `#FC-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      const orderPayload = {
+      const orderPayload: any = {
         id: generatedOrderId,
         orderId: generatedOrderId,
         customerName: recipient.fullName.trim(),
@@ -114,7 +169,13 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
         couponCode: appliedCoupon?.code || '',
         status: paymentMethod === 'COD' ? 'CONFIRMED' : 'Pending',
         paymentMethod: paymentMethod === 'COD' ? 'Cash on Delivery' : 'UPI',
-        paymentStatus: paymentMethod === 'COD' ? 'PENDING_COLLECTION' : 'PENDING',
+        paymentStatus: paymentMethod === 'COD'
+          ? 'PENDING_COLLECTION'
+          : paymentProofBase64
+          ? 'PENDING_VERIFICATION'
+          : 'PENDING',
+        transactionRef: transactionRef.trim() || undefined,
+        imageBase64: paymentProofBase64 || undefined,
         createdAt: new Date().toISOString(),
       };
 
@@ -122,6 +183,21 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
 
       if (res.success || res.order || res.orderId) {
         const confirmedOrder = res.order || orderPayload;
+
+        // If payment proof was selected, also upload it to the backend screenshot store
+        if (paymentProofBase64) {
+          try {
+            await customerApi.uploadScreenshotProof(
+              generatedOrderId,
+              paymentProofBase64,
+              paymentProofMime || undefined,
+              paymentProofName || undefined
+            );
+          } catch (uploadErr) {
+            console.warn('Screenshot upload background warning:', uploadErr);
+          }
+        }
+
         clearCart();
         onOrderSuccess(confirmedOrder);
       } else {
@@ -245,6 +321,75 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
                 ? 'Pay upon doorstep grocery handover via cash or UPI scan.'
                 : 'Payment initiated via UPI apps.'}
             </Text>
+
+            {paymentMethod === 'UPI' && (
+              <View style={styles.upiProofSection}>
+                <Text style={styles.proofSectionTitle}>Payment Verification Proof (Recommended)</Text>
+                <Text style={styles.proofSectionSubtitle}>
+                  Provide your UPI transaction reference and upload payment receipt for immediate admin verification.
+                </Text>
+
+                {/* Transaction Reference Input */}
+                <Text style={styles.proofFieldLabel}>Transaction Reference / UTR (Optional)</Text>
+                <TextInput
+                  style={styles.proofInput}
+                  placeholder="e.g. 12-digit UTR or transaction ID"
+                  placeholderTextColor="#94a3b8"
+                  value={transactionRef}
+                  onChangeText={setTransactionRef}
+                />
+
+                {/* Proof Document / Screenshot */}
+                <Text style={styles.proofFieldLabel}>Payment Screenshot / Receipt (JPG, PNG, PDF up to 10MB)</Text>
+                {paymentProofName ? (
+                  <View style={styles.proofFileBadge}>
+                    {paymentProofMime?.includes('pdf') ? (
+                      <FileText size={20} color="#dc2626" />
+                    ) : paymentProofBase64 ? (
+                      <Image
+                        source={{ uri: `data:${paymentProofMime || 'image/jpeg'};base64,${paymentProofBase64}` }}
+                        style={styles.proofThumb}
+                      />
+                    ) : (
+                      <FileText size={20} color="#006b2c" />
+                    )}
+                    <View style={{ flex: 1, marginHorizontal: 8 }}>
+                      <Text style={styles.proofFileName} numberOfLines={1}>
+                        {paymentProofName}
+                      </Text>
+                      <Text style={styles.proofFileSize}>
+                        {paymentProofSize ? `${(paymentProofSize / 1024).toFixed(1)} KB` : 'Ready to submit'}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setPaymentProofBase64(null);
+                        setPaymentProofName(null);
+                        setPaymentProofMime(null);
+                        setPaymentProofSize(0);
+                      }}
+                    >
+                      <X size={18} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.uploadProofBtn}
+                    onPress={handlePickProof}
+                    disabled={isPickingProof}
+                  >
+                    {isPickingProof ? (
+                      <ActivityIndicator size="small" color="#006b2c" />
+                    ) : (
+                      <>
+                        <UploadCloud size={18} color="#006b2c" />
+                        <Text style={styles.uploadProofBtnText}>Upload Payment Receipt / Proof</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
         </View>
 
@@ -648,5 +793,85 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: '#ffffff',
+  },
+  upiProofSection: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    marginTop: 12,
+  },
+  proofSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  proofSectionSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+    marginBottom: 10,
+    lineHeight: 15,
+  },
+  proofFieldLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#334155',
+    marginBottom: 4,
+    marginTop: 6,
+  },
+  proofInput: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 12,
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  uploadProofBtn: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#86efac',
+    borderRadius: 8,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  uploadProofBtnText: {
+    color: '#006b2c',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  proofFileBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    marginTop: 4,
+  },
+  proofThumb: {
+    width: 32,
+    height: 32,
+    borderRadius: 4,
+  },
+  proofFileName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  proofFileSize: {
+    fontSize: 10,
+    color: '#64748b',
   },
 });

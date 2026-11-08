@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
+import os from 'os';
 import express, { Request, Response } from 'express';
 
 // Load .env and .env.local from project root
@@ -9,6 +10,18 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 import { apiApp } from './apiRouter.ts';
 import { connectMySql, isMySqlConnected, getProductsCountFromDb } from './db.ts';
+
+function detectLanIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '10.240.114.237';
+}
 
 const app = express();
 
@@ -52,6 +65,8 @@ app.get(['/', '/health', '/api/health'], async (_req: Request, res: Response) =>
     // ignore
   }
 
+  const currentLanIp = detectLanIp();
+
   res.json({
     status: 'ok',
     service: 'FreshCart Backend API',
@@ -59,7 +74,7 @@ app.get(['/', '/health', '/api/health'], async (_req: Request, res: Response) =>
     time: new Date().toISOString(),
     database: isMySqlConnected() ? 'connected' : 'disconnected',
     productCount,
-    lanIp: '10.211.209.237',
+    lanIp: currentLanIp,
     port: PORT,
   });
 });
@@ -90,10 +105,11 @@ async function startServer() {
   const server = http.createServer(app);
 
   server.listen(PORT, HOST, () => {
+    const currentLanIp = detectLanIp();
     console.log('====================================================================');
     console.log('🚀 FreshCart Backend API Server running successfully');
     console.log(`📍 Listening on: [::]:${PORT} (Dual-Stack IPv4 & IPv6 enabled)`);
-    console.log(`🌐 Local LAN Access: http://10.211.209.237:${PORT}`);
+    console.log(`🌐 Local LAN Access: http://${currentLanIp}:${PORT}`);
     console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
     console.log('====================================================================');
   });

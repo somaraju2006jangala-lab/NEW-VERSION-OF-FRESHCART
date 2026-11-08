@@ -4840,14 +4840,14 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
       SELECT
         CASE WHEN p2.order_id LIKE '#%' THEN SUBSTRING(p2.order_id, 2) ELSE p2.order_id END as orderId,
         p2.customer_id as customerId,
-        'Customer' as customerName,
-        NULL as customerEmail,
-        NULL as customerPhone,
+        COALESCE(c.full_name, 'Customer') as customerName,
+        c.email as customerEmail,
+        c.mobile as customerPhone,
         CAST(p2.amount AS DECIMAL(10,2)) as amount,
         p2.amount as orderTotal,
         p2.amount as subtotal,
         0.00 as discount,
-        'Pending' as orderStatus,
+        CASE WHEN p2.order_id LIKE 'REG-%' THEN 'Registration' ELSE 'Pending' END as orderStatus,
         p2.payment_method as paymentMethod,
         p2.payment_status as paymentStatus,
         NULL as screenshotUrl,
@@ -4863,6 +4863,7 @@ export async function getAllUpiPaymentsForVerification(): Promise<any[]> {
         COALESCE(p2.verification_notes, '') as verificationNotes,
         COALESCE(p2.otp_sent, 0) as otpSent
       FROM ranked_payments p2
+      LEFT JOIN customers c ON c.customer_id = p2.customer_id
       WHERE rn = 1 AND NOT EXISTS (
         SELECT 1 FROM orders o2 WHERE
         (CASE WHEN p2.order_id LIKE '#%' THEN SUBSTRING(p2.order_id, 2) ELSE p2.order_id END) =
@@ -4969,6 +4970,18 @@ export async function verifyUpiPaymentInDb(params: {
          WHERE order_id IN (?, ?)`,
         [params.adminUsername, params.orderId, altId]
       );
+
+      // If registration fee payment, activate customer account
+      if (params.orderId.startsWith('REG-')) {
+        const custId = params.orderId.replace(/^REG-/, '');
+        await connection.query(
+          `UPDATE customers
+           SET status = 'Active',
+               loyalty_tier = 'Fresh Member (Registration Verified)'
+           WHERE customer_id = ?`,
+          [custId]
+        );
+      }
     } else {
       // Mark as REJECTED, retain screenshot for admin review and customer retry
       const notes = params.notes || 'Payment proof rejected by admin';
@@ -4990,6 +5003,17 @@ export async function verifyUpiPaymentInDb(params: {
          WHERE order_id IN (?, ?)`,
         [params.adminUsername, params.orderId, altId]
       );
+
+      // If registration fee payment rejected
+      if (params.orderId.startsWith('REG-')) {
+        const custId = params.orderId.replace(/^REG-/, '');
+        await connection.query(
+          `UPDATE customers
+           SET status = 'Rejected'
+           WHERE customer_id = ?`,
+          [custId]
+        );
+      }
     }
 
     await connection.commit();

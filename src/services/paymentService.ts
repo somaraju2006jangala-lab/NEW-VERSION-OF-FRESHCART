@@ -109,16 +109,30 @@ export async function fetchUpiSettings(): Promise<UpiPaymentSettings | null> {
 /**
  * Saves updated UPI configuration to backend (Admin).
  */
-export async function saveUpiSettings(settings: {
-  upiId: string;
-  merchantName: string;
-  enabled?: boolean;
-  qrCodeUrl?: string;
-}): Promise<{ success: boolean; settings?: UpiPaymentSettings; error?: string }> {
+export async function saveUpiSettings(
+  settings: {
+    upiId: string;
+    merchantName: string;
+    enabled?: boolean;
+    qrCodeUrl?: string;
+  },
+  token?: string
+): Promise<{ success: boolean; settings?: UpiPaymentSettings; error?: string }> {
   try {
+    const adminToken = token || getStoredAdminToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-admin-role': 'admin',
+    };
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
+      headers['x-admin-token'] = adminToken;
+      headers['x-staff-token'] = adminToken;
+    }
+
     const res = await fetch('/api/payment-settings/upi', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(settings),
     });
     let data: any = null;
@@ -193,15 +207,15 @@ export async function uploadPaymentScreenshot(
   alreadyPaid?: boolean;
   error?: string;
 }> {
-  // Validate file type: JPG, JPEG, PNG
-  const validTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+  // Validate file type: JPG, JPEG, PNG, PDF
+  const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
   const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-  const validExts = ['.jpg', '.jpeg', '.png'];
+  const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
 
   if (!validTypes.includes(file.type.toLowerCase()) && !validExts.includes(ext)) {
     return {
       success: false,
-      error: 'Please select a valid JPG, JPEG, or PNG image file.',
+      error: 'Please select a valid JPG, JPEG, PNG, or PDF file.',
     };
   }
 
@@ -236,7 +250,7 @@ export async function uploadPaymentScreenshot(
       body: JSON.stringify({
         orderId,
         screenshot: base64Data,
-        mimeType: file.type || (ext === '.png' ? 'image/png' : 'image/jpeg'),
+        mimeType: file.type || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg'),
         fileName: file.name,
       }),
     });

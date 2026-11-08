@@ -629,6 +629,10 @@ export interface RegisterPayload {
   phone: string;
   password: string;
   address: string;
+  transactionRef?: string;
+  paymentProof?: string;
+  mimeType?: string;
+  fileName?: string;
 }
 
 /**
@@ -689,6 +693,10 @@ export async function registerCustomer(
         phone: normalizedPhone,
         password: payload.password,
         address: payload.address || '',
+        transactionRef: payload.transactionRef,
+        paymentProof: payload.paymentProof,
+        mimeType: payload.mimeType,
+        fileName: payload.fileName,
       }),
     });
 

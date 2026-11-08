@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   SafeAreaView,
   Alert,
   Linking,
+  Image,
+  Platform,
 } from 'react-native';
 import {
   Banknote,
@@ -15,7 +17,12 @@ import {
   ArrowRight,
   CheckCircle2,
   ShieldCheck,
+  Copy,
+  Check,
+  ExternalLink,
 } from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
+import QRCode from 'qrcode';
 import { customerApi } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 import { UpiPaymentSettings } from '../../types';
@@ -61,6 +68,31 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
 
   const discountAmount = appliedCoupon?.discount || 0;
   const grandTotal = Math.max(0, subtotal - discountAmount + deliveryCharge);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [isCopied, setIsCopied] = useState(false);
+
+  const rawUpiId = (upiSettings?.upiId || 'somaraju2006jangala-3@okicici').trim();
+  const rawMerchantName = (upiSettings?.merchantName || 'FreshCart Store').trim();
+
+  // Standard UPI URI format
+  const standardUpiUri = useMemo(() => {
+    if (!rawUpiId) return '';
+    const pa = encodeURIComponent(rawUpiId).replace(/%40/g, '@');
+    const pn = encodeURIComponent(rawMerchantName);
+    return `upi://pay?pa=${pa}&pn=${pn}&am=${grandTotal.toFixed(2)}&cu=INR`;
+  }, [rawUpiId, rawMerchantName, grandTotal]);
+
+  useEffect(() => {
+    if (!standardUpiUri) return;
+    QRCode.toDataURL(standardUpiUri, {
+      width: 180,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#022c22', light: '#ffffff' },
+    })
+      .then((url) => setQrCodeDataUrl(url))
+      .catch(() => setQrCodeDataUrl(''));
+  }, [standardUpiUri]);
 
   const handleNext = () => {
     if (!paymentMethod) {
@@ -72,13 +104,24 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
   };
 
   const handleOpenUpiApp = () => {
-    const vpa = upiSettings?.upiId || 'freshcart@upi';
-    const name = encodeURIComponent(upiSettings?.merchantName || 'FreshCart Grocery');
-    const note = encodeURIComponent('FreshCart Grocery Order');
-    const uri = `upi://pay?pa=${vpa}&pn=${name}&am=${grandTotal.toFixed(2)}&cu=INR&tn=${note}`;
-    Linking.openURL(uri).catch(() => {
-      Alert.alert('UPI App Not Found', `UPI VPA: ${vpa}\nPlease use Google Pay or PhonePe directly.`);
+    if (!standardUpiUri) return;
+    Linking.openURL(standardUpiUri).catch(() => {
+      Alert.alert(
+        'UPI App Not Found',
+        `Unable to launch UPI app directly.\n\nOfficial UPI ID: ${rawUpiId}\nPayable Amount: ₹${grandTotal.toFixed(2)}\n\nPlease use your UPI app (Google Pay, PhonePe, Paytm) to pay.`
+      );
     });
+  };
+
+  const handleCopyUpiId = async () => {
+    try {
+      await Clipboard.setStringAsync(rawUpiId);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2500);
+      Alert.alert('Copied', 'UPI ID copied to clipboard: ' + rawUpiId);
+    } catch {
+      Alert.alert('Copy failed', 'UPI ID: ' + rawUpiId);
+    }
   };
 
   return (
@@ -181,15 +224,51 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
 
           {paymentMethod === 'UPI' && (
             <View style={styles.upiDetailsBox}>
-              <Text style={styles.upiInstruction}>
-                Pay ₹{grandTotal} using your preferred UPI app:
-              </Text>
-              <View style={styles.vpaRow}>
-                <Text style={styles.vpaText}>UPI ID: {upiSettings?.upiId || 'freshcart@upi'}</Text>
+              <View style={styles.merchantRow}>
+                <Text style={styles.merchantLabel}>Merchant:</Text>
+                <Text style={styles.merchantValue}>{rawMerchantName}</Text>
               </View>
-              <TouchableOpacity style={styles.openUpiBtn} onPress={handleOpenUpiApp}>
-                <Text style={styles.openUpiBtnText}>Launch UPI Payment App</Text>
-              </TouchableOpacity>
+              <View style={styles.merchantRow}>
+                <Text style={styles.merchantLabel}>Amount to Pay:</Text>
+                <Text style={[styles.merchantValue, { color: '#006b2c', fontWeight: '800' }]}>
+                  ₹{grandTotal.toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.vpaRow}>
+                <Text style={styles.vpaText}>UPI ID: {rawUpiId}</Text>
+              </View>
+
+              {/* Action buttons: Pay Now & Copy UPI ID */}
+              <View style={styles.upiActionRow}>
+                <TouchableOpacity style={styles.openUpiBtn} onPress={handleOpenUpiApp}>
+                  <ExternalLink size={16} color="#ffffff" />
+                  <Text style={styles.openUpiBtnText}>Pay Now</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.copyUpiBtn, isCopied && styles.copyUpiBtnSuccess]}
+                  onPress={handleCopyUpiId}
+                >
+                  {isCopied ? <Check size={16} color="#15803d" /> : <Copy size={16} color="#334155" />}
+                  <Text style={[styles.copyUpiBtnText, isCopied && styles.copyUpiBtnTextSuccess]}>
+                    {isCopied ? 'Copied' : 'Copy UPI ID'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Scannable QR Code */}
+              {qrCodeDataUrl ? (
+                <View style={styles.qrContainer}>
+                  <View style={styles.qrFrame}>
+                    <Image
+                      source={{ uri: qrCodeDataUrl }}
+                      style={{ width: 160, height: 160 }}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <Text style={styles.qrCaption}>Scan with Google Pay, PhonePe, Paytm, or BHIM</Text>
+                </View>
+              ) : null}
             </View>
           )}
         </TouchableOpacity>
@@ -439,35 +518,107 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 12,
   },
-  upiInstruction: {
-    fontSize: 12,
-    color: '#475569',
+  merchantRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 6,
+  },
+  merchantLabel: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  merchantValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
   },
   vpaRow: {
     backgroundColor: '#f8fafc',
-    padding: 8,
+    padding: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    marginBottom: 8,
+    marginBottom: 10,
+    marginTop: 4,
   },
   vpaText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#0f172a',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  upiActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
   },
   openUpiBtn: {
-    backgroundColor: '#0284c7',
-    paddingVertical: 8,
+    flex: 1,
+    backgroundColor: '#006b2c',
+    paddingVertical: 10,
     borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
   },
   openUpiBtnText: {
     color: '#ffffff',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
+  },
+  copyUpiBtn: {
+    flex: 1,
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  copyUpiBtnSuccess: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  copyUpiBtnText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  copyUpiBtnTextSuccess: {
+    color: '#15803d',
+    fontWeight: '700',
+  },
+  qrContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    marginTop: 6,
+  },
+  qrFrame: {
+    backgroundColor: '#ffffff',
+    padding: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  qrCaption: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 6,
+    textAlign: 'center',
   },
   billCard: {
     backgroundColor: '#ffffff',

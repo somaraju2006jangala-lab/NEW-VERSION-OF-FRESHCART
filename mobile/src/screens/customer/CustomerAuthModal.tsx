@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -11,10 +11,35 @@ import {
   Platform,
   ScrollView,
   SafeAreaView,
+  Linking,
+  Image,
+  Alert,
 } from 'react-native';
-import { User, Mail, Lock, Phone, MapPin, X, ArrowRight, Eye, EyeOff, KeyRound } from 'lucide-react-native';
+import {
+  User,
+  Mail,
+  Lock,
+  Phone,
+  MapPin,
+  X,
+  ArrowRight,
+  Eye,
+  EyeOff,
+  KeyRound,
+  CreditCard,
+  QrCode,
+  Copy,
+  Check,
+  UploadCloud,
+  FileText,
+  ExternalLink,
+} from 'lucide-react-native';
+import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import QRCode from 'qrcode';
 import { useAuth } from '../../context/AuthContext';
-import { authApi, cleanErrorMessage } from '../../services/apiClient';
+import { authApi, customerApi, cleanErrorMessage } from '../../services/apiClient';
 
 interface CustomerAuthModalProps {
   visible: boolean;
@@ -43,12 +68,132 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Registration UPI Payment Details
+  const [upiId, setUpiId] = useState('somaraju2006jangala-3@okicici');
+  const [merchantName, setMerchantName] = useState('FreshCart Store');
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
+  const [isCopied, setIsCopied] = useState(false);
+  const [transactionRef, setTransactionRef] = useState('');
+  const [paymentProofBase64, setPaymentProofBase64] = useState<string | null>(null);
+  const [paymentProofMime, setPaymentProofMime] = useState<string | null>(null);
+  const [paymentProofName, setPaymentProofName] = useState<string | null>(null);
+  const [paymentProofSize, setPaymentProofSize] = useState<number>(0);
+  const [isPickingProof, setIsPickingProof] = useState(false);
+
+  // Fetch shared UPI settings
+  useEffect(() => {
+    customerApi
+      .getUpiSettings()
+      .then((res) => {
+        if (res.success && res.settings?.upiId) {
+          setUpiId(res.settings.upiId);
+          if (res.settings.merchantName) setMerchantName(res.settings.merchantName);
+        } else if (res.upiId) {
+          setUpiId(res.upiId);
+          if (res.merchantName) setMerchantName(res.merchantName);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Standard UPI URI format
+  const standardUpiUri = useMemo(() => {
+    const cleanId = (upiId || '').trim();
+    if (!cleanId) return '';
+    const pa = encodeURIComponent(cleanId).replace(/%40/g, '@');
+    const pn = encodeURIComponent(merchantName.trim() || 'FreshCart Store');
+    return `upi://pay?pa=${pa}&pn=${pn}&am=199&cu=INR`;
+  }, [upiId, merchantName]);
+
+  // Generate QR Code
+  useEffect(() => {
+    if (!standardUpiUri) return;
+    QRCode.toDataURL(standardUpiUri, {
+      width: 180,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#050c18', light: '#ffffff' },
+    })
+      .then((url) => setQrCodeDataUrl(url))
+      .catch(() => setQrCodeDataUrl(''));
+  }, [standardUpiUri]);
+
+  // Handle Pay Now
+  const handlePayNow = () => {
+    if (!standardUpiUri) return;
+    Linking.openURL(standardUpiUri).catch(() => {
+      Alert.alert(
+        'UPI App Not Found',
+        `Unable to launch UPI app directly.\n\nOfficial UPI ID: ${upiId}\nPayable Amount: ₹199\n\nPlease use your UPI app (Google Pay, PhonePe, Paytm) to pay.`
+      );
+    });
+  };
+
+  // Handle Copy UPI ID
+  const handleCopyUpiId = async () => {
+    try {
+      await Clipboard.setStringAsync(upiId);
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2500);
+      Alert.alert('Copied', 'UPI ID copied to clipboard: ' + upiId);
+    } catch {
+      Alert.alert('Copy failed', 'UPI ID: ' + upiId);
+    }
+  };
+
+  // Handle Pick Proof
+  const handlePickProof = async () => {
+    try {
+      setIsPickingProof(true);
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!res.canceled && res.assets && res.assets.length > 0) {
+        const file = res.assets[0];
+        const fileSize = file.size || 0;
+        const MAX_SIZE = 10 * 1024 * 1024;
+        if (fileSize > MAX_SIZE) {
+          Alert.alert('File Too Large', 'Please select a file smaller than 10 MB.');
+          return;
+        }
+
+        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+        const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+        if (!validExts.includes(ext)) {
+          Alert.alert('Invalid Format', 'Accepted formats are JPG, JPEG, PNG, and PDF.');
+          return;
+        }
+
+        const mime = file.mimeType || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg');
+        const base64 = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        setPaymentProofBase64(base64);
+        setPaymentProofMime(mime);
+        setPaymentProofName(file.name);
+        setPaymentProofSize(fileSize);
+      }
+    } catch (err: any) {
+      Alert.alert('File Selection Error', err?.message || 'Could not access file.');
+    } finally {
+      setIsPickingProof(false);
+    }
+  };
+
   const resetForm = () => {
     setEmail('');
     setPassword('');
     setFullName('');
     setMobile('');
     setAddress('');
+    setTransactionRef('');
+    setPaymentProofBase64(null);
+    setPaymentProofName(null);
+    setPaymentProofSize(0);
+    setPaymentProofMime(null);
     setErrorMessage(null);
     setSuccessMessage(null);
   };
@@ -90,9 +235,19 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       mobile: mobile.trim(),
       password,
       address: address.trim(),
+      transactionRef: transactionRef.trim() || undefined,
+      paymentProof: paymentProofBase64 || undefined,
+      mimeType: paymentProofMime || undefined,
+      fileName: paymentProofName || undefined,
     });
     setIsLoading(false);
     if (res.success) {
+      Alert.alert(
+        'Registration Submitted',
+        paymentProofBase64
+          ? 'Your registration and ₹199 payment proof have been submitted. Payment is pending admin verification.'
+          : 'Account created successfully. Welcome to FreshCart!'
+      );
       resetForm();
       onClose();
       if (onSuccess) onSuccess();
@@ -336,6 +491,129 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                     />
                   </View>
 
+                  {/* REGISTRATION PAYMENT DETAILS */}
+                  <View style={styles.paymentCard}>
+                    <View style={styles.paymentCardHeader}>
+                      <CreditCard size={18} color="#006b2c" />
+                      <Text style={styles.paymentCardTitle}>Registration Fee: ₹199</Text>
+                    </View>
+                    <Text style={styles.paymentCardSubtitle}>
+                      Complete your one-time ₹199 membership registration via UPI.
+                    </Text>
+
+                    {/* Merchant & UPI details */}
+                    <View style={styles.paymentDetailsBox}>
+                      <View style={styles.paymentDetailRow}>
+                        <Text style={styles.paymentDetailLabel}>Merchant:</Text>
+                        <Text style={styles.paymentDetailValue}>{merchantName}</Text>
+                      </View>
+                      <View style={styles.paymentDetailRow}>
+                        <Text style={styles.paymentDetailLabel}>Payable Amount:</Text>
+                        <Text style={[styles.paymentDetailValue, { color: '#006b2c', fontWeight: '800' }]}>₹199.00</Text>
+                      </View>
+                      <View style={styles.paymentDetailRow}>
+                        <Text style={styles.paymentDetailLabel}>Official UPI ID:</Text>
+                        <Text style={[styles.paymentDetailValue, { fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 12 }]}>
+                          {upiId}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Actions: Pay Now & Copy UPI ID */}
+                    <View style={styles.paymentActionRow}>
+                      <TouchableOpacity style={styles.payNowBtn} onPress={handlePayNow}>
+                        <ExternalLink size={16} color="#ffffff" />
+                        <Text style={styles.payNowBtnText}>Pay Now</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.copyBtn, isCopied && styles.copyBtnSuccess]}
+                        onPress={handleCopyUpiId}
+                      >
+                        {isCopied ? <Check size={16} color="#15803d" /> : <Copy size={16} color="#334155" />}
+                        <Text style={[styles.copyBtnText, isCopied && styles.copyBtnTextSuccess]}>
+                          {isCopied ? 'Copied' : 'Copy UPI ID'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* Scannable QR Code */}
+                    {qrCodeDataUrl ? (
+                      <View style={styles.qrContainer}>
+                        <View style={styles.qrFrame}>
+                          <Image
+                            source={{ uri: qrCodeDataUrl }}
+                            style={{ width: 160, height: 160 }}
+                            resizeMode="contain"
+                          />
+                        </View>
+                        <Text style={styles.qrCaption}>Scan with Google Pay, PhonePe, Paytm, or BHIM</Text>
+                      </View>
+                    ) : null}
+
+                    {/* Transaction Reference Input */}
+                    <Text style={[styles.inputLabel, { marginTop: 12 }]}>Transaction Reference / UTR (Optional)</Text>
+                    <View style={styles.inputWrap}>
+                      <TextInput
+                        style={styles.textInput}
+                        placeholder="e.g. 12-digit UPI reference ID"
+                        placeholderTextColor="#94a3b8"
+                        value={transactionRef}
+                        onChangeText={setTransactionRef}
+                      />
+                    </View>
+
+                    {/* Payment Proof Upload */}
+                    <Text style={styles.inputLabel}>Payment Proof (JPG, PNG, or PDF up to 10MB)</Text>
+                    {paymentProofName ? (
+                      <View style={styles.proofFileBadge}>
+                        {paymentProofMime?.includes('pdf') ? (
+                          <FileText size={20} color="#dc2626" />
+                        ) : paymentProofBase64 ? (
+                          <Image
+                            source={{ uri: `data:${paymentProofMime || 'image/jpeg'};base64,${paymentProofBase64}` }}
+                            style={styles.proofThumb}
+                          />
+                        ) : (
+                          <FileText size={20} color="#006b2c" />
+                        )}
+                        <View style={{ flex: 1, marginHorizontal: 8 }}>
+                          <Text style={styles.proofFileName} numberOfLines={1}>
+                            {paymentProofName}
+                          </Text>
+                          <Text style={styles.proofFileSize}>
+                            {paymentProofSize ? `${(paymentProofSize / 1024).toFixed(1)} KB` : 'Ready to submit'}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setPaymentProofBase64(null);
+                            setPaymentProofName(null);
+                            setPaymentProofMime(null);
+                            setPaymentProofSize(0);
+                          }}
+                        >
+                          <X size={18} color="#64748b" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.uploadProofBtn}
+                        onPress={handlePickProof}
+                        disabled={isPickingProof}
+                      >
+                        {isPickingProof ? (
+                          <ActivityIndicator size="small" color="#006b2c" />
+                        ) : (
+                          <>
+                            <UploadCloud size={18} color="#006b2c" />
+                            <Text style={styles.uploadProofBtnText}>Upload Payment Receipt / Proof</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
                   <TouchableOpacity
                     style={styles.primaryBtn}
                     onPress={handleRegister}
@@ -345,7 +623,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                       <ActivityIndicator color="#fff" />
                     ) : (
                       <>
-                        <Text style={styles.primaryBtnText}>Create Account</Text>
+                        <Text style={styles.primaryBtnText}>Complete Registration</Text>
                         <ArrowRight size={18} color="#fff" />
                       </>
                     )}
@@ -542,5 +820,159 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#006b2c',
     fontWeight: '600',
+  },
+  paymentCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 14,
+    marginVertical: 12,
+  },
+  paymentCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  paymentCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  paymentCardSubtitle: {
+    fontSize: 12,
+    color: '#64748b',
+    marginBottom: 10,
+  },
+  paymentDetailsBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 10,
+    marginBottom: 10,
+    gap: 6,
+  },
+  paymentDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  paymentDetailLabel: {
+    fontSize: 12,
+    color: '#64748b',
+  },
+  paymentDetailValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  paymentActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  payNowBtn: {
+    flex: 1,
+    backgroundColor: '#006b2c',
+    borderRadius: 8,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  payNowBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  copyBtn: {
+    flex: 1,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  copyBtnSuccess: {
+    backgroundColor: '#dcfce7',
+    borderColor: '#86efac',
+  },
+  copyBtnText: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  copyBtnTextSuccess: {
+    color: '#15803d',
+    fontWeight: '700',
+  },
+  qrContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+  },
+  qrFrame: {
+    backgroundColor: '#ffffff',
+    padding: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  qrCaption: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  uploadProofBtn: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#86efac',
+    borderRadius: 8,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  uploadProofBtnText: {
+    color: '#006b2c',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  proofFileBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  proofThumb: {
+    width: 32,
+    height: 32,
+    borderRadius: 4,
+  },
+  proofFileName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  proofFileSize: {
+    fontSize: 10,
+    color: '#64748b',
   },
 });
