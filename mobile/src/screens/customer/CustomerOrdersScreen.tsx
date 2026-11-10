@@ -23,11 +23,12 @@ import {
   Sparkles,
   UploadCloud,
   CreditCard,
+  AlertCircle,
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { useAuth } from '../../context/AuthContext';
-import { customerApi } from '../../services/apiClient';
+import { customerApi, cleanErrorMessage } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 import { Order } from '../../types';
 
@@ -44,6 +45,7 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [otpCodes, setOtpCodes] = useState<Record<string, string>>({});
   const [uploadingOrderId, setUploadingOrderId] = useState<string | null>(null);
@@ -101,6 +103,7 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
   const loadOrders = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
     else setIsLoading(true);
+    setLoadError(null);
 
     try {
       const data = await customerApi.getCustomerOrders(
@@ -109,6 +112,7 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
       );
       if (Array.isArray(data)) {
         setOrders(data);
+        setLoadError(null);
         // Pre-expand target order if provided
         if (targetOrderId) {
           setExpandedOrders({ [targetOrderId]: true });
@@ -129,6 +133,7 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
       }
     } catch (err) {
       console.warn('Failed loading customer orders:', err);
+      setLoadError(cleanErrorMessage(err));
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -167,6 +172,15 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#006b2c" />
             <Text style={styles.loadingText}>Fetching orders from FreshCart MySQL...</Text>
+          </View>
+        ) : loadError && orders.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <AlertCircle size={48} color="#ef4444" />
+            <Text style={styles.emptyTitle}>Connection Unavailable</Text>
+            <Text style={styles.emptySubtitle}>{loadError}</Text>
+            <TouchableOpacity style={styles.shopBtn} onPress={() => loadOrders(true)}>
+              <Text style={styles.shopBtnText}>Retry Connection</Text>
+            </TouchableOpacity>
           </View>
         ) : orders.length === 0 ? (
           <View style={styles.emptyCard}>

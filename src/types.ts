@@ -166,6 +166,8 @@ export interface UpiPaymentSettings {
   updated_at?: string;
   qrCodeUrl?: string;
   qr_code_url?: string;
+  qrCodeDataUrl?: string;
+  upiUri?: string;
 }
 
 export interface UpiPaymentRecord {

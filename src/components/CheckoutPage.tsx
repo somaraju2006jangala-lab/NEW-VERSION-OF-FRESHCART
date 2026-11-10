@@ -31,6 +31,7 @@ import {
   Upload,
   X,
   Check,
+  Copy,
   AlertTriangle,
   Image as ImageIcon,
   ChevronRight,
@@ -82,7 +83,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   );
   const [addressError, setAddressError] = useState<string | null>(null);
   const [deliveryNote, setDeliveryNote] = useState('Leave with doorman in thermal tote');
-  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'direct' | 'cash'>('upi');
+  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'cash'>('upi');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = React.useRef(false);
   const [showItemsList, setShowItemsList] = useState(false);
@@ -104,16 +105,10 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [isQrGenerating, setIsQrGenerating] = useState(false);
 
-  // 3. Mobile & Transaction Attempt State
-  const [isInitiatingMobileUpi, setIsInitiatingMobileUpi] = useState(false);
+  // 3. UPI Transaction Attempt State
   const [paymentAttemptCreated, setPaymentAttemptCreated] = useState(false);
   const [upiActionTriggered, setUpiActionTriggered] = useState(false);
   const [upiError, setUpiError] = useState<string | null>(null);
-
-  // 3b. Direct Payment Deep Link & Chooser State
-  const [isOpeningDirectUpi, setIsOpeningDirectUpi] = useState(false);
-  const [directUpiFallbackMessage, setDirectUpiFallbackMessage] = useState<string | null>(null);
-  const [directUpiTriggered, setDirectUpiTriggered] = useState(false);
 
   // 4. UPI Payment Screenshot Upload State
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
@@ -254,8 +249,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       setIsQrGenerating(false);
     }
 
-    // Automatically register draft order and payment attempt in database when customer selects online payment
-    if ((paymentMethod === 'upi' || paymentMethod === 'direct') && !paymentAttemptCreated && rawUpiId) {
+    // Automatically register draft order and payment attempt in database when customer selects online payment with valid total
+    if (paymentMethod === 'upi' && !paymentAttemptCreated && rawUpiId && total > 0 && items.length > 0 && checkoutStep === 'payment') {
       const customerPhone = currentUser?.phone?.trim() || '';
       const draftOrder: CustomerOrder = {
         id: formattedOrderId,
@@ -273,7 +268,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         couponCode: appliedCoupon || undefined,
         status: 'Pending',
         createdAt: new Date().toISOString(),
-        paymentMethod: paymentMethod === 'direct' ? 'Direct Payment' : 'UPI',
+        paymentMethod: 'UPI',
         paymentStatus: 'INITIATED',
       };
 
@@ -322,183 +317,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     effectiveMerchantName,
     transactionRef,
     paymentAttemptCreated,
+    checkoutStep,
   ]);
-
-  // Mobile UPI Payment action
-  const handleMobilePayViaUpi = async () => {
-    if (!isUpiValid || !upiSettings?.upiId || !upiUri) {
-      setUpiError('UPI payment is currently unavailable. Please try another payment method.');
-      return;
-    }
-
-    setUpiError(null);
-    setIsInitiatingMobileUpi(true);
-
-    try {
-      const customerPhone = currentUser?.phone?.trim() || '';
-      const draftOrder: CustomerOrder = {
-        id: formattedOrderId,
-        customerId: currentUser?.id || 'guest_user',
-        customerName: currentUser?.name || 'Guest Customer',
-        customerEmail: currentUser?.email,
-        customerPhone: customerPhone || undefined,
-        deliveryAddress: address,
-        deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
-        estimatedDeliveryTime: 'Express Cold-Chain Delivery',
-        items: [...items],
-        subtotal,
-        discount,
-        total,
-        couponCode: appliedCoupon || undefined,
-        status: 'Pending',
-        createdAt: new Date().toISOString(),
-        paymentMethod: 'UPI',
-        paymentStatus: 'INITIATED',
-      };
-
-      // 1. Create and save order in orders table FIRST
-      await fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-        },
-        body: JSON.stringify(draftOrder),
-      }).catch(() => {});
-
-      // 2. Create/store payment attempt in backend BEFORE opening UPI intent, using formattedOrderId
-      const res = await initiateUpiPayment({
-        orderId: formattedOrderId,
-        customerId: currentUser?.id || 'guest_user',
-        amount: total,
-        upiId: upiSettings.upiId,
-        merchantName: upiSettings.merchantName || 'FreshCart Store',
-        transactionRef: transactionRef,
-      });
-
-      if (!res.success) {
-        setUpiError(res.error || 'Failed to initialize payment record. Please try again.');
-        setIsInitiatingMobileUpi(false);
-        return;
-      }
-
-      setPaymentAttemptCreated(true);
-      setUpiActionTriggered(true);
-
-      // 3. Normal user-triggered navigation to standard upi://pay scheme
-      window.location.href = upiUri;
-    } catch (err: any) {
-      setUpiError('Payment connection error. Please try again or use Cash on Delivery.');
-    } finally {
-      setIsInitiatingMobileUpi(false);
-    }
-  };
-
-  // Direct Payment UPI deep link handler (opens app chooser on mobile and supported devices with actual order details)
-  const handleDirectPaymentDeepLink = (e?: React.MouseEvent) => {
-    if (!isUpiValid || !rawUpiId || total <= 0 || !upiUri) {
-      if (e) {
-        e.preventDefault();
-      }
-      setDirectUpiFallbackMessage(
-        'Direct UPI payment is currently unavailable. Please check the payable amount or choose another payment method.'
-      );
-      return;
-    }
-
-    setDirectUpiFallbackMessage(null);
-    setIsOpeningDirectUpi(true);
-
-    // If triggered from an anchor link with valid upi:// href, let native browser navigation handle it directly from user gesture.
-    // If triggered from another element (e.g. payment method card) or e is undefined, use window.location.href synchronously.
-    const isAnchorWithHref = Boolean(
-      e &&
-        (e.currentTarget as HTMLElement)?.tagName?.toLowerCase() === 'a' &&
-        (e.currentTarget as HTMLAnchorElement)?.getAttribute('href')?.startsWith('upi://')
-    );
-
-    if (!isAnchorWithHref) {
-      try {
-        window.location.href = upiUri;
-      } catch (err) {
-        console.warn('[Direct Payment] window.location.href navigation failed:', err);
-      }
-    }
-
-    // Background persistence: register draft order and payment attempt asynchronously without blocking UI/gesture
-    const customerPhone = currentUser?.phone?.trim() || '';
-    const draftOrder: CustomerOrder = {
-      id: formattedOrderId,
-      customerId: currentUser?.id || 'guest_user',
-      customerName: currentUser?.name || 'Guest Customer',
-      customerEmail: currentUser?.email,
-      customerPhone: customerPhone || undefined,
-      deliveryAddress: address,
-      deliveryTimeSlot: 'Express Cold-Chain Delivery, 24–30 Minutes',
-      estimatedDeliveryTime: 'Express Cold-Chain Delivery',
-      items: [...items],
-      subtotal,
-      discount,
-      total,
-      couponCode: appliedCoupon || undefined,
-      status: 'Pending',
-      createdAt: new Date().toISOString(),
-      paymentMethod: 'Direct Payment',
-      paymentStatus: 'INITIATED',
-    };
-
-    if (!paymentAttemptCreated) {
-      fetch('/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {}),
-        },
-        body: JSON.stringify(draftOrder),
-        keepalive: true,
-      }).catch(() => {});
-
-      initiateUpiPayment({
-        orderId: formattedOrderId,
-        customerId: currentUser?.id || 'guest_user',
-        amount: total,
-        upiId: rawUpiId,
-        merchantName: effectiveMerchantName,
-        transactionRef: transactionRef,
-      })
-        .then((res) => {
-          if (res.success) {
-            setPaymentAttemptCreated(true);
-          }
-        })
-        .catch(() => {});
-    }
-
-    // Fallback detection: if page is still focused after 2.5s and app didn't open, show graceful fallback
-    let appOpened = false;
-    const onBlurOrHidden = () => {
-      appOpened = true;
-      setDirectUpiTriggered(true);
-      setIsOpeningDirectUpi(false);
-    };
-
-    window.addEventListener('visibilitychange', onBlurOrHidden, { once: true });
-    window.addEventListener('blur', onBlurOrHidden, { once: true });
-    window.addEventListener('pagehide', onBlurOrHidden, { once: true });
-
-    setTimeout(() => {
-      window.removeEventListener('visibilitychange', onBlurOrHidden);
-      window.removeEventListener('blur', onBlurOrHidden);
-      window.removeEventListener('pagehide', onBlurOrHidden);
-      setIsOpeningDirectUpi(false);
-
-      if (!appOpened && !document.hidden) {
-        setDirectUpiFallbackMessage(
-          'Unable to open a compatible UPI app on this device. Please ensure a UPI app is installed or choose another payment method.'
-        );
-      }
-    }, 2500);
-  };
 
   // Handlers for payment screenshot proof
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -581,7 +401,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         couponCode: appliedCoupon || undefined,
         status: 'Pending',
         createdAt: new Date().toISOString(),
-        paymentMethod: paymentMethod === 'direct' ? 'Direct Payment' : 'UPI',
+        paymentMethod: 'UPI',
         paymentStatus: 'INITIATED',
       };
 
@@ -685,7 +505,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     if (items.length === 0) return;
     if (isSubmitting || isSubmittingRef.current) return;
 
-    const isOnlineProof = paymentMethod === 'upi' || paymentMethod === 'direct';
+    const isOnlineProof = paymentMethod === 'upi';
 
     if (isOnlineProof) {
       if (!isUpiValid) {
@@ -704,13 +524,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setTimeout(async () => {
       try {
         const customerPhone = currentUser?.phone?.trim() || '';
-        const isOnline = paymentMethod === 'upi' || paymentMethod === 'direct';
-        const orderPaymentMethod =
-          paymentMethod === 'direct'
-            ? 'Direct Payment'
-            : paymentMethod === 'upi'
-            ? 'UPI'
-            : 'Cash on Delivery';
+        const isOnline = paymentMethod === 'upi';
+        const orderPaymentMethod = paymentMethod === 'upi' ? 'UPI' : 'Cash on Delivery';
 
         // Online order with proof stays PENDING_VERIFICATION until admin approval
         // COD order stays PENDING_COLLECTION until cash collection is confirmed
@@ -801,9 +616,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               </span>
             </h4>
             <p className="text-xs text-slate-400">
-              {paymentMethod === 'direct'
-                ? 'Upload a screenshot of your direct transfer after completing payment in your UPI app.'
-                : 'Upload a screenshot of your successful UPI transfer after completing payment.'}
+              Upload a screenshot of your successful UPI transfer after completing payment.
             </p>
           </div>
         </div>
@@ -1018,13 +831,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 <CreditCard className="w-4 h-4 text-cyan-400 shrink-0" />
                 <span>Payment Details</span>
               </div>
-              {paymentMethod === 'upi' || paymentMethod === 'direct' ? (
+              {paymentMethod === 'upi' ? (
                 <div className="pl-6 space-y-3">
                   {uploadedScreenshotUrl ? (
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between flex-wrap gap-1">
                         <p className="text-amber-400 font-semibold text-xs sm:text-sm">
-                          {paymentMethod === 'direct' ? 'Direct Payment' : 'UPI Payment'} (Status: PENDING_VERIFICATION)
+                          UPI Payment (Status: PENDING_VERIFICATION)
                         </p>
                         <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-950/60 border border-amber-500/30 px-2 py-0.5 rounded-full">
                           Pending Admin Approval
@@ -1616,8 +1429,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     </span>
                   </div>
 
-                  {/* Payment Method Cards in Exact Required Order: 1. Pay via UPI, 2. Direct Payment, 3. Cash on Delivery (COD) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full max-w-4xl">
+                  {/* Payment Method Cards: 1. Pay via UPI (QR Code), 2. Cash on Delivery (COD) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 w-full max-w-2xl">
                     {/* 1. Pay via UPI Option */}
                     <div
                       id="checkout-payment-upi-opt"
@@ -1656,74 +1469,19 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                             )}
                           </div>
                           <span className="text-sm sm:text-base font-bold text-white">
-                            Pay via UPI
+                            Pay via UPI (QR Code)
                           </span>
                         </div>
                         <QrCode className="w-5 h-5 text-cyan-400 shrink-0" />
                       </div>
                       <div className="mt-2.5">
                         <p className="text-xs text-slate-400">
-                          Instant direct UPI & Desktop QR Code
+                          Scan QR code using Google Pay, PhonePe, Paytm, or BHIM
                         </p>
                       </div>
                     </div>
 
-                    {/* 2. Direct Payment Option */}
-                    <div
-                      id="checkout-payment-direct-opt"
-                      data-testid="checkout-payment-direct-opt"
-                      data-action="direct-payment"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => {
-                        setPaymentMethod('direct');
-                        if (!upiSettings) {
-                          setIsLoadingUpiSettings(true);
-                          fetchUpiSettings()
-                            .then((s) => setUpiSettings(s))
-                            .catch((err) => console.error('[Checkout Direct] Fetch error:', err))
-                            .finally(() => setIsLoadingUpiSettings(false));
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setPaymentMethod('direct');
-                        }
-                      }}
-                      className={`p-4 rounded-xl text-left transition-all cursor-pointer flex flex-col justify-between ${
-                        paymentMethod === 'direct'
-                          ? 'checkout-card-selected'
-                          : 'checkout-subpanel hover:border-cyan-500/30'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
-                              paymentMethod === 'direct'
-                                ? 'bg-[#00d2aa] text-[#030d1a]'
-                                : 'border border-slate-600'
-                            }`}
-                          >
-                            {paymentMethod === 'direct' && (
-                              <div className="w-2 h-2 rounded-full bg-[#030d1a]" />
-                            )}
-                          </div>
-                          <span className="text-sm sm:text-base font-bold text-white">
-                            Direct Payment
-                          </span>
-                        </div>
-                        <Smartphone className="w-5 h-5 text-cyan-400 shrink-0" />
-                      </div>
-                      <div className="mt-2.5">
-                        <p className="text-xs text-slate-400">
-                          Open installed UPI apps (GPay, PhonePe...)
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* 3. Cash on Delivery (COD) Option */}
+                    {/* 2. Cash on Delivery (COD) Option */}
                     <div
                       id="checkout-payment-cash-opt"
                       data-testid="checkout-payment-cash-opt"
@@ -1772,139 +1530,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     </div>
                   )}
 
-                  {/* Direct Payment Details Panel */}
-                  {paymentMethod === 'direct' && (
-                    <div
-                      id="checkout-direct-details-panel"
-                      className="checkout-subpanel rounded-xl sm:rounded-2xl p-4 sm:p-6 space-y-5 max-w-xl"
-                    >
-                      {!isLoadingUpiSettings && !isUpiValid ? (
-                        <div
-                          id="checkout-direct-unavailable-msg"
-                          className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs sm:text-sm flex items-center gap-2.5"
-                        >
-                          <AlertCircle className="w-5 h-5 shrink-0 text-amber-400" />
-                          <span>
-                            Direct UPI payment is currently unavailable. Please choose another payment method.
-                          </span>
-                        </div>
-                      ) : (
-                        <>
-                          {/* Step 1: Direct Payment Instruction Screen Header */}
-                          <div className="p-4 bg-slate-900/60 rounded-xl border border-white/10 space-y-3">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-white/10 gap-2">
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
-                                    Payee Merchant
-                                  </p>
-                                  <span className="text-[10px] font-semibold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-2 py-0.5 rounded-full">
-                                    Direct Payment
-                                  </span>
-                                </div>
-                                <p className="text-sm font-bold text-white">
-                                  {effectiveMerchantName}
-                                </p>
-                                <p className="text-xs text-slate-400 tabular-nums font-mono">
-                                  {rawUpiId}
-                                </p>
-                              </div>
-                              <div className="sm:text-right">
-                                <p className="text-[11px] uppercase tracking-wider text-slate-400 font-bold">
-                                  Payable Amount
-                                </p>
-                                <p className="text-xl font-extrabold text-[#00e699] tabular-nums font-display">
-                                  {formatINR(total)}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Order Reference */}
-                            <div className="flex items-center justify-between text-xs pt-0.5">
-                              <span className="text-slate-400 font-medium">Order Reference:</span>
-                              <span className="font-mono text-cyan-300 font-semibold">{transactionRef}</span>
-                            </div>
-                          </div>
-
-                          {/* Step 2 Action: Button Labeled 'Open UPI Payment App' */}
-                          <div className="flex flex-col items-center space-y-2">
-                            <a
-                              href={isUpiValid && upiUri && total > 0 ? upiUri : '#'}
-                              id="checkout-direct-open-apps-btn"
-                              data-testid="checkout-direct-open-apps-btn"
-                              data-action="direct-payment"
-                              aria-disabled={isOpeningDirectUpi}
-                              onClick={handleDirectPaymentDeepLink}
-                              className={`w-full py-3.5 px-6 rounded-xl checkout-neon-btn text-white text-sm font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 text-center ${
-                                isOpeningDirectUpi ? 'pointer-events-none opacity-60' : ''
-                              }`}
-                            >
-                              {isOpeningDirectUpi ? (
-                                <>
-                                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                  <span>Opening UPI Apps Chooser...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Smartphone className="w-4 h-4" />
-                                  <span>Open UPI Payment App</span>
-                                  <ExternalLink className="w-3.5 h-3.5 ml-1" />
-                                </>
-                              )}
-                            </a>
-                            <p className="text-[11px] text-slate-400 text-center">
-                              Opens installed UPI apps (Google Pay, PhonePe, Paytm, BHIM) on supported devices.
-                            </p>
-                          </div>
-
-                          {/* Fallback notice if device cannot open chooser or desktop */}
-                          {directUpiFallbackMessage && (
-                            <div
-                              id="checkout-direct-fallback-msg"
-                              className="p-3.5 bg-sky-950/50 rounded-xl border border-sky-500/30 text-sky-200 text-xs space-y-2.5 animate-fadeIn"
-                            >
-                              <div className="flex items-start gap-2.5">
-                                <AlertCircle className="w-4 h-4 shrink-0 text-sky-400 mt-0.5" />
-                                <div>
-                                  <p className="font-semibold text-white">UPI App Not Detected</p>
-                                  <p className="mt-0.5 text-slate-300">{directUpiFallbackMessage}</p>
-                                </div>
-                              </div>
-                              <div className="pt-2 border-t border-sky-500/20 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setPaymentMethod('upi')}
-                                  className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-semibold border border-cyan-500/40 transition-colors flex items-center gap-1.5 cursor-pointer"
-                                >
-                                  <QrCode className="w-3.5 h-3.5" />
-                                  <span>Pay via UPI (QR Code)</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setPaymentMethod('cash')}
-                                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-white/10 transition-colors flex items-center gap-1.5 cursor-pointer"
-                                >
-                                  <Banknote className="w-3.5 h-3.5" />
-                                  <span>Cash on Delivery (COD)</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* UPLOAD PAYMENT SCREENSHOT SECTION */}
-                          {renderScreenshotUploadSection()}
-
-                          {/* Transaction Reference Footer */}
-                          <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
-                            <span>Transaction Ref:</span>
-                            <span className="font-mono text-slate-300">{transactionRef}</span>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-
-                  {/* UPI Details & QR/Mobile Payment Panel */}
+                  {/* UPI Details & QR Payment Panel */}
                   {paymentMethod === 'upi' && (
                     <div
                       id="checkout-upi-details-panel"
@@ -1946,7 +1572,25 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                             </div>
                           </div>
 
-                          {/* Clean Non-Interactive QR Code */}
+                          {/* Official UPI ID & Copy button */}
+                          <div className="flex items-center justify-between p-3 rounded-xl bg-black/40 border border-white/10 text-xs">
+                            <div>
+                              <span className="text-slate-400 text-[11px] block">Official Merchant UPI ID</span>
+                              <span className="font-mono text-cyan-300 font-bold text-xs">{rawUpiId}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard?.writeText(rawUpiId);
+                              }}
+                              className="px-2.5 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-semibold border border-cyan-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                              <span>Copy UPI ID</span>
+                            </button>
+                          </div>
+
+                          {/* Clean Scannable QR Code */}
                           <div className="flex flex-col items-center justify-center space-y-3 py-2">
                             <div className="p-3 bg-white rounded-2xl shadow-xl border border-white/20">
                               {isQrGenerating || !qrCodeDataUrl ? (
@@ -1969,53 +1613,10 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                                 Scan this QR code with your UPI app
                               </p>
                               <p className="text-xs text-slate-400 max-w-sm">
-                                Scan using Google Pay, PhonePe, Paytm, BHIM, or another compatible UPI app.
+                                Scan using Google Pay, PhonePe, Paytm, BHIM, or another compatible UPI app to pay {formatINR(total)}.
                               </p>
                             </div>
                           </div>
-
-                          {/* MOBILE VIEW: "Pay via UPI" Button */}
-                          <div className="sm:hidden flex flex-col items-center space-y-3">
-                            <button
-                              type="button"
-                              id="checkout-mobile-upi-pay-btn"
-                              disabled={isInitiatingMobileUpi || !upiUri}
-                              onClick={handleMobilePayViaUpi}
-                              className="w-full py-3.5 px-6 rounded-xl checkout-neon-btn text-white text-sm font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
-                            >
-                              {isInitiatingMobileUpi ? (
-                                <>
-                                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                  <span>Opening UPI App...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Smartphone className="w-4 h-4" />
-                                  <span>Pay via UPI ({formatINR(total)})</span>
-                                  <ExternalLink className="w-3.5 h-3.5 ml-1" />
-                                </>
-                              )}
-                            </button>
-                            <p className="text-[11px] text-slate-400 text-center">
-                              Tap to open your installed UPI app (Google Pay, PhonePe, Paytm, BHIM).
-                            </p>
-                          </div>
-
-                          {/* Return State / Informative Notice */}
-                          {upiActionTriggered && (
-                            <div
-                              id="checkout-upi-return-notice"
-                              className="p-3.5 bg-sky-950/40 rounded-xl border border-sky-500/30 text-sky-200 text-xs space-y-1 animate-fadeIn"
-                            >
-                              <p className="font-semibold text-white flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5 text-sky-400" />
-                                <span>Payment In Progress</span>
-                              </p>
-                              <p className="text-slate-300">
-                                Complete the payment in your UPI app. Payment confirmation is not available automatically.
-                              </p>
-                            </div>
-                          )}
 
                           {/* Error Message if payment initiation fails */}
                           {upiError && (
@@ -2095,13 +1696,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                     disabled={
                       items.length === 0 ||
                       isSubmitting ||
-                      ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
+                      (paymentMethod === 'upi' && (!isUpiValid || !uploadedScreenshotUrl))
                     }
                     onClick={handlePlaceOrder}
                     className={`w-full sm:w-auto py-3.5 px-8 rounded-xl text-sm sm:text-base font-bold transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer ${
                       items.length === 0 ||
                       isSubmitting ||
-                      ((paymentMethod === 'upi' || paymentMethod === 'direct') && (!isUpiValid || !uploadedScreenshotUrl))
+                      (paymentMethod === 'upi' && (!isUpiValid || !uploadedScreenshotUrl))
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5 opacity-60'
                         : 'checkout-neon-btn text-white active:scale-[0.99]'
                     }`}

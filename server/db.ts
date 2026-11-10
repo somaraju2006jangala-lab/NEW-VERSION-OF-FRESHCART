@@ -17,6 +17,9 @@ let pool: Pool | null = null;
 let isConnected = false;
 let connectionPromise: Promise<boolean> | null = null;
 let schemaInitialized = false;
+let lastPingAt = 0;
+const PING_TTL_MS = 5000;
+const CURRENT_SCHEMA_VERSION = '2026_11_v1';
 let lastMySqlError: {
   name: string;
   message: string;
@@ -333,6 +336,7 @@ export function getPool(): Pool {
       console.error('[MySQL Pool Error]', err?.code || err?.message);
       if (err?.code === 'PROTOCOL_CONNECTION_LOST' || err?.code === 'ECONNRESET') {
         isConnected = false;
+        lastPingAt = 0;
       }
     });
   }
@@ -352,6 +356,7 @@ export async function resetPool(): Promise<void> {
     pool = null;
     isConnected = false;
     schemaInitialized = false;
+    lastPingAt = 0;
   }
 }
 
@@ -377,16 +382,21 @@ export async function connectMySql(): Promise<boolean> {
         timestamp: new Date().toISOString(),
       };
       isConnected = false;
+      lastPingAt = 0;
       return false;
     }
   }
 
-  // If already connected in a warm container, perform a quick ping to ensure socket wasn't closed during idle pause
+  // If already connected in a warm container, avoid excessive WAN pings within PING_TTL_MS
   if (isConnected && pool) {
+    if (Date.now() - lastPingAt < PING_TTL_MS) {
+      return true;
+    }
     try {
       const testConn = await pool.getConnection();
       try {
         await testConn.ping();
+        lastPingAt = Date.now();
       } finally {
         testConn.release();
       }
@@ -394,6 +404,7 @@ export async function connectMySql(): Promise<boolean> {
     } catch {
       // Idle socket timed out or connection lost - re-establish
       isConnected = false;
+      lastPingAt = 0;
     }
   }
 
@@ -426,6 +437,7 @@ export async function connectMySql(): Promise<boolean> {
 
       try {
         await connection.ping();
+        lastPingAt = Date.now();
       } finally {
         connection.release();
       }
@@ -436,15 +448,18 @@ export async function connectMySql(): Promise<boolean> {
 
       // Automatically initialize schema and seed initial data once per container lifetime
       if (!schemaInitialized) {
-        await initializeDatabase().catch((err) => {
+        try {
+          await initializeDatabase();
+          schemaInitialized = true;
+        } catch (err: any) {
           console.warn('[MySQL Init] Notice during schema verification:', err?.message);
-        });
-        schemaInitialized = true;
+        }
       }
 
       return true;
     } catch (err: any) {
       isConnected = false;
+      lastPingAt = 0;
       const safe = sanitizeMySqlError(err);
       const category = classifyMySqlFailure(safe.name, safe.message, safe.code);
       lastMySqlError = {
@@ -515,9 +530,69 @@ export function checkDatabaseAvailability(): {
 export async function initializeDatabase(): Promise<void> {
   const currentPool = getPool();
 
+  // Fast-path schema check: avoid ~60 sequential DDL round-trips on warm/already-migrated DBs
+  try {
+    const [tableRowsRes, schemaVerRes, prodRowsRes] = await Promise.allSettled([
+      currentPool.query<RowDataPacket[]>(
+        'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()'
+      ),
+      currentPool.query<RowDataPacket[]>(
+        "SELECT setting_value FROM app_settings WHERE setting_key = 'schema_version' LIMIT 1"
+      ),
+      currentPool.query<RowDataPacket[]>('SELECT COUNT(*) as count FROM products'),
+    ]);
+
+    const existingTables = new Set<string>(
+      tableRowsRes.status === 'fulfilled'
+        ? tableRowsRes.value[0].map((r: any) => String(r.TABLE_NAME || r.table_name || '').toLowerCase())
+        : []
+    );
+
+    let storedVersion: string | null = null;
+    if (schemaVerRes.status === 'fulfilled' && schemaVerRes.value[0].length > 0) {
+      const rawVal = schemaVerRes.value[0][0].setting_value;
+      if (typeof rawVal === 'string') {
+        try {
+          storedVersion = JSON.parse(rawVal);
+        } catch {
+          storedVersion = rawVal;
+        }
+      } else {
+        storedVersion = String(rawVal || '');
+      }
+    }
+
+    const prodCount =
+      prodRowsRes.status === 'fulfilled' ? Number(prodRowsRes.value[0]?.[0]?.count || 0) : 0;
+
+    if (
+      existingTables.size >= 17 &&
+      storedVersion === CURRENT_SCHEMA_VERSION &&
+      prodCount > 0
+    ) {
+      console.log(
+        `[MySQL] Schema v${CURRENT_SCHEMA_VERSION} verified via fast-path (${existingTables.size} tables, ${prodCount} products).`
+      );
+      return;
+    }
+  } catch {
+    // Fall through to full schema initialization
+  }
+
+  // Query existing tables so we skip redundant CREATE TABLE round-trips for existing tables
+  let existingTablesSet = new Set<string>();
+  try {
+    const [tblRows] = await currentPool.query<RowDataPacket[]>(
+      'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()'
+    );
+    existingTablesSet = new Set(
+      tblRows.map((r: any) => String(r.TABLE_NAME || r.table_name || '').toLowerCase())
+    );
+  } catch {}
+
   // Create tables using safe CREATE TABLE IF NOT EXISTS
-  const tableStatements = [
-    `CREATE TABLE IF NOT EXISTS customers (
+  const namedTableStatements: Array<[string, string]> = [
+    ['customers', `CREATE TABLE IF NOT EXISTS customers (
       id INT AUTO_INCREMENT PRIMARY KEY,
       customer_id VARCHAR(64) NOT NULL UNIQUE,
       full_name VARCHAR(255) NOT NULL,
@@ -532,9 +607,9 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_customers_customer_id (customer_id),
       INDEX idx_customers_email (email),
       INDEX idx_customers_mobile (mobile)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS addresses (
+    ['addresses', `CREATE TABLE IF NOT EXISTS addresses (
       id INT AUTO_INCREMENT PRIMARY KEY,
       customer_id VARCHAR(64) NOT NULL,
       address_id VARCHAR(64) NOT NULL UNIQUE,
@@ -552,9 +627,9 @@ export async function initializeDatabase(): Promise<void> {
         FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
         ON DELETE CASCADE
         ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS products (
+    ['products', `CREATE TABLE IF NOT EXISTS products (
       id INT AUTO_INCREMENT PRIMARY KEY,
       product_id VARCHAR(64) NOT NULL UNIQUE,
       name VARCHAR(255) NOT NULL,
@@ -574,9 +649,9 @@ export async function initializeDatabase(): Promise<void> {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_products_product_id (product_id),
       INDEX idx_products_category (category)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS carts (
+    ['carts', `CREATE TABLE IF NOT EXISTS carts (
       id INT AUTO_INCREMENT PRIMARY KEY,
       customer_id VARCHAR(64) NOT NULL UNIQUE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -586,9 +661,9 @@ export async function initializeDatabase(): Promise<void> {
         FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
         ON DELETE CASCADE
         ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS cart_items (
+    ['cart_items', `CREATE TABLE IF NOT EXISTS cart_items (
       id INT AUTO_INCREMENT PRIMARY KEY,
       cart_id INT NOT NULL,
       product_id VARCHAR(64) NOT NULL,
@@ -606,9 +681,9 @@ export async function initializeDatabase(): Promise<void> {
         FOREIGN KEY (product_id) REFERENCES products (product_id)
         ON DELETE CASCADE
         ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS orders (
+    ['orders', `CREATE TABLE IF NOT EXISTS orders (
       id INT AUTO_INCREMENT PRIMARY KEY,
       order_id VARCHAR(64) NOT NULL UNIQUE,
       customer_id VARCHAR(64) NOT NULL,
@@ -635,9 +710,9 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_orders_customer_id (customer_id),
       INDEX idx_orders_status (status),
       INDEX idx_orders_payment_status (payment_status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS order_items (
+    ['order_items', `CREATE TABLE IF NOT EXISTS order_items (
       id INT AUTO_INCREMENT PRIMARY KEY,
       order_id VARCHAR(64) NOT NULL,
       product_id VARCHAR(64) NOT NULL,
@@ -653,9 +728,9 @@ export async function initializeDatabase(): Promise<void> {
         FOREIGN KEY (order_id) REFERENCES orders (order_id)
         ON DELETE CASCADE
         ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS coupons (
+    ['coupons', `CREATE TABLE IF NOT EXISTS coupons (
       id INT AUTO_INCREMENT PRIMARY KEY,
       coupon_code VARCHAR(64) NOT NULL UNIQUE,
       discount_percentage DECIMAL(5,2) NOT NULL DEFAULT 0.00,
@@ -665,9 +740,9 @@ export async function initializeDatabase(): Promise<void> {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_coupons_coupon_code (coupon_code)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS otp_records (
+    ['otp_records', `CREATE TABLE IF NOT EXISTS otp_records (
       id INT AUTO_INCREMENT PRIMARY KEY,
       order_id VARCHAR(64) NOT NULL UNIQUE,
       customer_id VARCHAR(64) NOT NULL,
@@ -685,9 +760,9 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_otp_order_id (order_id),
       INDEX idx_otp_customer_id (customer_id),
       INDEX idx_otp_used (used)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS inventory_logs (
+    ['inventory_logs', `CREATE TABLE IF NOT EXISTS inventory_logs (
       id INT AUTO_INCREMENT PRIMARY KEY,
       product_id VARCHAR(64) NOT NULL,
       previous_quantity INT NOT NULL,
@@ -698,9 +773,9 @@ export async function initializeDatabase(): Promise<void> {
       operator VARCHAR(100) NOT NULL DEFAULT 'Admin',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_inv_logs_product_id (product_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS payments (
+    ['payments', `CREATE TABLE IF NOT EXISTS payments (
       id INT AUTO_INCREMENT PRIMARY KEY,
       payment_id VARCHAR(64) NOT NULL UNIQUE,
       order_id VARCHAR(64) NOT NULL,
@@ -740,17 +815,17 @@ export async function initializeDatabase(): Promise<void> {
         FOREIGN KEY (customer_id) REFERENCES customers (customer_id)
         ON DELETE CASCADE
         ON UPDATE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS app_settings (
+    ['app_settings', `CREATE TABLE IF NOT EXISTS app_settings (
       id INT AUTO_INCREMENT PRIMARY KEY,
       setting_key VARCHAR(64) NOT NULL UNIQUE,
       setting_value JSON NOT NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_settings_key (setting_key)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS payment_settings (
+    ['payment_settings', `CREATE TABLE IF NOT EXISTS payment_settings (
       id INT AUTO_INCREMENT PRIMARY KEY,
       upi_id VARCHAR(255) NOT NULL,
       merchant_name VARCHAR(255) NOT NULL,
@@ -759,9 +834,9 @@ export async function initializeDatabase(): Promise<void> {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_payment_settings_upi (upi_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS admins (
+    ['admins', `CREATE TABLE IF NOT EXISTS admins (
       id INT AUTO_INCREMENT PRIMARY KEY,
       admin_id VARCHAR(64) NOT NULL UNIQUE,
       full_name VARCHAR(255) NOT NULL,
@@ -776,9 +851,9 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_admins_admin_id (admin_id),
       INDEX idx_admins_email (email),
       INDEX idx_admins_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS payment_audit_archive (
+    ['payment_audit_archive', `CREATE TABLE IF NOT EXISTS payment_audit_archive (
       id INT AUTO_INCREMENT PRIMARY KEY,
       order_id VARCHAR(64) NOT NULL,
       customer_id VARCHAR(64) NULL,
@@ -801,9 +876,9 @@ export async function initializeDatabase(): Promise<void> {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_paa_order_id (order_id),
       INDEX idx_paa_payment_status (payment_status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS delivery_assignments (
+    ['delivery_assignments', `CREATE TABLE IF NOT EXISTS delivery_assignments (
       id INT AUTO_INCREMENT PRIMARY KEY,
       order_id VARCHAR(64) NOT NULL,
       clean_order_id VARCHAR(64) NOT NULL UNIQUE,
@@ -818,9 +893,9 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_da_clean_order_id (clean_order_id),
       INDEX idx_da_employee_id (employee_id),
       INDEX idx_da_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
 
-    `CREATE TABLE IF NOT EXISTS password_resets (
+    ['password_resets', `CREATE TABLE IF NOT EXISTS password_resets (
       id INT AUTO_INCREMENT PRIMARY KEY,
       token_hash VARCHAR(64) NOT NULL UNIQUE,
       customer_id VARCHAR(64) NOT NULL,
@@ -832,139 +907,89 @@ export async function initializeDatabase(): Promise<void> {
       INDEX idx_resets_token_hash (token_hash),
       INDEX idx_resets_customer (customer_id),
       INDEX idx_resets_used (used)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`],
   ];
 
-  for (const sql of tableStatements) {
-    await currentPool.query(sql);
+  for (const [tableName, sql] of namedTableStatements) {
+    if (!existingTablesSet.has(tableName.toLowerCase())) {
+      await currentPool.query(sql);
+    }
   }
+
+  // Fetch existing columns once via information_schema to avoid unnecessary ALTER round-trips
+  const existingColumnsMap = new Map<string, Map<string, string>>();
+  try {
+    const [colRows] = await currentPool.query<RowDataPacket[]>(
+      'SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()'
+    );
+    for (const row of colRows as any[]) {
+      const tbl = String(row.TABLE_NAME || row.table_name || '').toLowerCase();
+      const col = String(row.COLUMN_NAME || row.column_name || '').toLowerCase();
+      const dtype = String(row.DATA_TYPE || row.data_type || '').toLowerCase();
+      if (!existingColumnsMap.has(tbl)) {
+        existingColumnsMap.set(tbl, new Map());
+      }
+      existingColumnsMap.get(tbl)!.set(col, dtype);
+    }
+  } catch {}
+
+  const ensureColumn = async (tableName: string, colName: string, alterSql: string) => {
+    const tblCols = existingColumnsMap.get(tableName.toLowerCase());
+    if (tblCols && tblCols.has(colName.toLowerCase())) {
+      return;
+    }
+    try {
+      await currentPool.query(alterSql);
+    } catch {}
+  };
 
   // Ensure payment_settings table columns exist safely if table pre-existed
-  try {
-    await currentPool.query('ALTER TABLE payment_settings ADD COLUMN upi_id VARCHAR(255) NOT NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payment_settings ADD COLUMN merchant_name VARCHAR(255) NOT NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payment_settings ADD COLUMN enabled TINYINT(1) NOT NULL DEFAULT 1');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payment_settings ADD COLUMN qr_code_url MEDIUMTEXT NULL');
-  } catch {}
+  await ensureColumn('payment_settings', 'upi_id', 'ALTER TABLE payment_settings ADD COLUMN upi_id VARCHAR(255) NOT NULL');
+  await ensureColumn('payment_settings', 'merchant_name', 'ALTER TABLE payment_settings ADD COLUMN merchant_name VARCHAR(255) NOT NULL');
+  await ensureColumn('payment_settings', 'enabled', 'ALTER TABLE payment_settings ADD COLUMN enabled TINYINT(1) NOT NULL DEFAULT 1');
+  await ensureColumn('payment_settings', 'qr_code_url', 'ALTER TABLE payment_settings ADD COLUMN qr_code_url MEDIUMTEXT NULL');
 
   // Ensure otp_records has otp_code column if the table already existed from an earlier schema
-  try {
-    await currentPool.query('ALTER TABLE otp_records ADD COLUMN otp_code VARCHAR(16) NULL AFTER customer_id');
-  } catch {
-    // Ignore if column already exists
-  }
+  await ensureColumn('otp_records', 'otp_code', 'ALTER TABLE otp_records ADD COLUMN otp_code VARCHAR(16) NULL AFTER customer_id');
 
   // Ensure orders table columns exist
-  try {
-    await currentPool.query('ALTER TABLE orders MODIFY COLUMN payment_status VARCHAR(64) NOT NULL DEFAULT "PENDING"');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN screenshot_url VARCHAR(512) NULL AFTER payment_status');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN screenshot_data LONGTEXT NULL AFTER screenshot_url');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN verified_at TIMESTAMP NULL AFTER screenshot_url');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN verified_by VARCHAR(100) NULL AFTER verified_at');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN stock_deducted BOOLEAN NOT NULL DEFAULT FALSE AFTER verified_by');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE cart_items ADD COLUMN selected_pack_size VARCHAR(100) NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE cart_items ADD COLUMN selected_price DECIMAL(10,2) NULL');
-  } catch {}
+  await ensureColumn('orders', 'screenshot_url', 'ALTER TABLE orders ADD COLUMN screenshot_url VARCHAR(512) NULL AFTER payment_status');
+  await ensureColumn('orders', 'screenshot_data', 'ALTER TABLE orders ADD COLUMN screenshot_data LONGTEXT NULL AFTER screenshot_url');
+  await ensureColumn('orders', 'verified_at', 'ALTER TABLE orders ADD COLUMN verified_at TIMESTAMP NULL AFTER screenshot_url');
+  await ensureColumn('orders', 'verified_by', 'ALTER TABLE orders ADD COLUMN verified_by VARCHAR(100) NULL AFTER verified_at');
+  await ensureColumn('orders', 'stock_deducted', 'ALTER TABLE orders ADD COLUMN stock_deducted BOOLEAN NOT NULL DEFAULT FALSE AFTER verified_by');
+  await ensureColumn('cart_items', 'selected_pack_size', 'ALTER TABLE cart_items ADD COLUMN selected_pack_size VARCHAR(100) NULL');
+  await ensureColumn('cart_items', 'selected_price', 'ALTER TABLE cart_items ADD COLUMN selected_price DECIMAL(10,2) NULL');
 
   // Ensure payments table supports UPI payment method and transaction details
-  try {
-    await currentPool.query('ALTER TABLE payments MODIFY COLUMN payment_method VARCHAR(32) NOT NULL DEFAULT "COD"');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments MODIFY COLUMN payment_status VARCHAR(64) NOT NULL DEFAULT "PENDING"');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN transaction_ref VARCHAR(128) NULL AFTER currency');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN upi_id VARCHAR(256) NULL AFTER transaction_ref');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN upi_merchant_name VARCHAR(256) NULL AFTER upi_id');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_path VARCHAR(512) NULL AFTER upi_merchant_name');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_mime VARCHAR(64) NULL AFTER screenshot_path');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_size INT NULL AFTER screenshot_mime');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_data LONGTEXT NULL AFTER screenshot_size');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN screenshot_uploaded_at TIMESTAMP NULL AFTER screenshot_size');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN verified_at TIMESTAMP NULL AFTER paid_at');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN verified_by VARCHAR(100) NULL AFTER verified_at');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN verification_notes TEXT NULL AFTER verified_by');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN otp_sent TINYINT(1) NOT NULL DEFAULT 0 AFTER verification_notes');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE payments ADD COLUMN otp_sent_at TIMESTAMP NULL AFTER otp_sent');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE customers ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT "Active" AFTER loyalty_tier');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE admins ADD COLUMN mobile VARCHAR(32) NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE admins ADD COLUMN username VARCHAR(64) NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_employee_id VARCHAR(64) NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_employee_name VARCHAR(255) NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_at TIMESTAMP NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN assigned_by VARCHAR(64) NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE orders ADD COLUMN assignment_status VARCHAR(32) NULL DEFAULT "unassigned"');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE admins ADD COLUMN last_assigned_at TIMESTAMP NULL');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE products ADD COLUMN pack_sizes TEXT NULL AFTER badge');
-  } catch {}
-  try {
-    await currentPool.query('ALTER TABLE products MODIFY COLUMN image MEDIUMTEXT NULL');
-  } catch {}
+  await ensureColumn('payments', 'transaction_ref', 'ALTER TABLE payments ADD COLUMN transaction_ref VARCHAR(128) NULL AFTER currency');
+  await ensureColumn('payments', 'upi_id', 'ALTER TABLE payments ADD COLUMN upi_id VARCHAR(256) NULL AFTER transaction_ref');
+  await ensureColumn('payments', 'upi_merchant_name', 'ALTER TABLE payments ADD COLUMN upi_merchant_name VARCHAR(256) NULL AFTER upi_id');
+  await ensureColumn('payments', 'screenshot_path', 'ALTER TABLE payments ADD COLUMN screenshot_path VARCHAR(512) NULL AFTER upi_merchant_name');
+  await ensureColumn('payments', 'screenshot_mime', 'ALTER TABLE payments ADD COLUMN screenshot_mime VARCHAR(64) NULL AFTER screenshot_path');
+  await ensureColumn('payments', 'screenshot_size', 'ALTER TABLE payments ADD COLUMN screenshot_size INT NULL AFTER screenshot_mime');
+  await ensureColumn('payments', 'screenshot_data', 'ALTER TABLE payments ADD COLUMN screenshot_data LONGTEXT NULL AFTER screenshot_size');
+  await ensureColumn('payments', 'screenshot_uploaded_at', 'ALTER TABLE payments ADD COLUMN screenshot_uploaded_at TIMESTAMP NULL AFTER screenshot_size');
+  await ensureColumn('payments', 'verified_at', 'ALTER TABLE payments ADD COLUMN verified_at TIMESTAMP NULL AFTER paid_at');
+  await ensureColumn('payments', 'verified_by', 'ALTER TABLE payments ADD COLUMN verified_by VARCHAR(100) NULL AFTER verified_at');
+  await ensureColumn('payments', 'verification_notes', 'ALTER TABLE payments ADD COLUMN verification_notes TEXT NULL AFTER verified_by');
+  await ensureColumn('payments', 'otp_sent', 'ALTER TABLE payments ADD COLUMN otp_sent TINYINT(1) NOT NULL DEFAULT 0 AFTER verification_notes');
+  await ensureColumn('payments', 'otp_sent_at', 'ALTER TABLE payments ADD COLUMN otp_sent_at TIMESTAMP NULL AFTER otp_sent');
+  await ensureColumn('customers', 'status', 'ALTER TABLE customers ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT "Active" AFTER loyalty_tier');
+  await ensureColumn('admins', 'mobile', 'ALTER TABLE admins ADD COLUMN mobile VARCHAR(32) NULL');
+  await ensureColumn('admins', 'username', 'ALTER TABLE admins ADD COLUMN username VARCHAR(64) NULL');
+  await ensureColumn('orders', 'assigned_employee_id', 'ALTER TABLE orders ADD COLUMN assigned_employee_id VARCHAR(64) NULL');
+  await ensureColumn('orders', 'assigned_employee_name', 'ALTER TABLE orders ADD COLUMN assigned_employee_name VARCHAR(255) NULL');
+  await ensureColumn('orders', 'assigned_at', 'ALTER TABLE orders ADD COLUMN assigned_at TIMESTAMP NULL');
+  await ensureColumn('orders', 'assigned_by', 'ALTER TABLE orders ADD COLUMN assigned_by VARCHAR(64) NULL');
+  await ensureColumn('orders', 'assignment_status', 'ALTER TABLE orders ADD COLUMN assignment_status VARCHAR(32) NULL DEFAULT "unassigned"');
+  await ensureColumn('admins', 'last_assigned_at', 'ALTER TABLE admins ADD COLUMN last_assigned_at TIMESTAMP NULL');
+  await ensureColumn('products', 'pack_sizes', 'ALTER TABLE products ADD COLUMN pack_sizes TEXT NULL AFTER badge');
+  if (existingColumnsMap.get('products')?.get('image') && existingColumnsMap.get('products')?.get('image') !== 'mediumtext') {
+    try {
+      await currentPool.query('ALTER TABLE products MODIFY COLUMN image MEDIUMTEXT NULL');
+    } catch {}
+  }
   try {
     await currentPool.query(`
       UPDATE payments p
@@ -978,22 +1003,36 @@ export async function initializeDatabase(): Promise<void> {
     `);
   } catch {}
 
-  // Ensure default guest customer records exist to satisfy foreign key constraints fk_payments_customer
+  // Ensure default guest customer records exist only if missing
   try {
-    const defaultPasswordHash = await bcrypt.hash('password123', 10);
-    await currentPool.query(`
-      INSERT INTO customers (customer_id, full_name, email, mobile, address, password_hash, loyalty_tier)
-      VALUES 
-        ('guest', 'Guest Customer', NULL, NULL, 'Walk-in / Guest', ?, 'Fresh Member'),
-        ('guest_user', 'Guest User', NULL, NULL, 'Walk-in / Guest', ?, 'Fresh Member')
-      ON DUPLICATE KEY UPDATE full_name = VALUES(full_name)
-    `, [defaultPasswordHash, defaultPasswordHash]);
+    const [guestRows] = await currentPool.query<RowDataPacket[]>(
+      "SELECT customer_id FROM customers WHERE customer_id IN ('guest', 'guest_user')"
+    );
+    if (guestRows.length < 2) {
+      const defaultPasswordHash = await bcrypt.hash('password123', 10);
+      await currentPool.query(`
+        INSERT INTO customers (customer_id, full_name, email, mobile, address, password_hash, loyalty_tier)
+        VALUES 
+          ('guest', 'Guest Customer', NULL, NULL, 'Walk-in / Guest', ?, 'Fresh Member'),
+          ('guest_user', 'Guest User', NULL, NULL, 'Walk-in / Guest', ?, 'Fresh Member')
+        ON DUPLICATE KEY UPDATE full_name = VALUES(full_name)
+      `, [defaultPasswordHash, defaultPasswordHash]);
+    }
   } catch (err: any) {
     console.warn('[MySQL] Notice: Guest customer record seeding:', err?.message);
   }
 
   // Seed default data if tables are empty
   await seedInitialDataIfDbEmpty();
+
+  // Persist current schema version so subsequent cold starts use fast-path verification
+  try {
+    await currentPool.query(
+      `INSERT INTO app_settings (setting_key, setting_value) VALUES ('schema_version', ?)
+       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+      [JSON.stringify(CURRENT_SCHEMA_VERSION)]
+    );
+  } catch {}
 }
 
 /**
@@ -2018,13 +2057,25 @@ export async function addCustomerAddressInDb(
 // PRODUCT & INVENTORY OPERATIONS
 // -----------------------------------------------------------------------------
 
+function isTransientMySqlError(err: any): boolean {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    code === 'PROTOCOL_CONNECTION_LOST' ||
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    code === 'EPIPE' ||
+    code === 'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR' ||
+    msg.includes('connection lost') ||
+    msg.includes('closed state')
+  );
+}
+
 /**
  * Retrieves products from MySQL with optional search / category filter, and optional pagination.
  */
 export async function getProductsFromDb(filters?: { category?: string; search?: string; limit?: number; offset?: number }): Promise<any[]> {
-  const pool = getPool();
-  try {
-    let sql = `
+  let sql = `
       SELECT product_id as id, name as title, category, supplier, price,
              quantity as stock, unit, image, description, sku, badge, pack_sizes as packSizesJson,
              is_organic as isOrganic, is_quick_prep as isQuickPrep,
@@ -2032,79 +2083,102 @@ export async function getProductsFromDb(filters?: { category?: string; search?: 
       FROM products
       WHERE 1=1
     `;
-    const params: any[] = [];
+  const params: any[] = [];
 
-    if (filters?.category && filters.category !== 'all') {
-      sql += ' AND category = ?';
-      params.push(filters.category);
-    }
-
-    if (filters?.search && filters.search.trim()) {
-      sql += ' AND (name LIKE ? OR description LIKE ? OR supplier LIKE ?)';
-      const term = `%${filters.search.trim()}%`;
-      params.push(term, term, term);
-    }
-
-    sql += ' ORDER BY id ASC';
-
-    if (filters?.limit !== undefined && Number(filters.limit) > 0) {
-      sql += ' LIMIT ?';
-      params.push(Number(filters.limit));
-      if (filters?.offset !== undefined && Number(filters.offset) >= 0) {
-        sql += ' OFFSET ?';
-        params.push(Number(filters.offset));
-      }
-    }
-
-    const [rows] = await pool.query<RowDataPacket[]>(sql, params);
-    const mapped = rows.map((r) => {
-      let packSizes: any[] | undefined = undefined;
-      if (r.packSizesJson) {
-        try {
-          packSizes = typeof r.packSizesJson === 'string' ? JSON.parse(r.packSizesJson) : r.packSizesJson;
-        } catch {}
-      }
-      return {
-        ...r,
-        price: Number(r.price),
-        stock: Number(r.stock),
-        packSizes,
-        isOrganic: Boolean(r.isOrganic),
-        isQuickPrep: Boolean(r.isQuickPrep),
-        categoryLabel: r.category === 'produce' ? 'Fruits & Veggies' : r.category,
-      };
-    });
-    console.log('[Diagnostic Stage 4: MySQL Query via getProductsFromDb] Rows returned:', mapped.length, 'IDs:', mapped.map((r: any) => r.id));
-    return mapped;
-  } catch (err: any) {
-    console.warn('[MySQL] Error querying products:', err?.message);
-    return [];
+  if (filters?.category && filters.category !== 'all') {
+    sql += ' AND category = ?';
+    params.push(filters.category);
   }
+
+  if (filters?.search && filters.search.trim()) {
+    sql += ' AND (name LIKE ? OR description LIKE ? OR supplier LIKE ?)';
+    const term = `%${filters.search.trim()}%`;
+    params.push(term, term, term);
+  }
+
+  sql += ' ORDER BY id ASC';
+
+  if (filters?.limit !== undefined && Number(filters.limit) > 0) {
+    sql += ' LIMIT ?';
+    params.push(Number(filters.limit));
+    if (filters?.offset !== undefined && Number(filters.offset) >= 0) {
+      sql += ' OFFSET ?';
+      params.push(Number(filters.offset));
+    }
+  }
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const currentPool = getPool();
+      const [rows] = await currentPool.query<RowDataPacket[]>(sql, params);
+      const mapped = rows.map((r) => {
+        let packSizes: any[] | undefined = undefined;
+        if (r.packSizesJson) {
+          try {
+            packSizes = typeof r.packSizesJson === 'string' ? JSON.parse(r.packSizesJson) : r.packSizesJson;
+          } catch {}
+        }
+        return {
+          ...r,
+          price: Number(r.price),
+          stock: Number(r.stock),
+          packSizes,
+          isOrganic: Boolean(r.isOrganic),
+          isQuickPrep: Boolean(r.isQuickPrep),
+          categoryLabel: r.category === 'produce' ? 'Fruits & Veggies' : r.category,
+        };
+      });
+      console.log('[Diagnostic Stage 4: MySQL Query via getProductsFromDb] Rows returned:', mapped.length, 'IDs:', mapped.map((r: any) => r.id));
+      return mapped;
+    } catch (err: any) {
+      if (attempt === 1 && isTransientMySqlError(err)) {
+        isConnected = false;
+        lastPingAt = 0;
+        await connectMySql().catch(() => false);
+        continue;
+      }
+      console.error('[MySQL] Error querying products:', err?.message);
+      throw err;
+    }
+  }
+
+  return [];
 }
 
 /**
  * Counts total products in MySQL matching optional filters.
  */
 export async function getProductsCountFromDb(filters?: { category?: string; search?: string }): Promise<number> {
-  const pool = getPool();
-  try {
-    let sql = 'SELECT COUNT(*) as total FROM products WHERE 1=1';
-    const params: any[] = [];
-    if (filters?.category && filters.category !== 'all') {
-      sql += ' AND category = ?';
-      params.push(filters.category);
-    }
-    if (filters?.search && filters.search.trim()) {
-      sql += ' AND (name LIKE ? OR description LIKE ? OR supplier LIKE ?)';
-      const term = `%${filters.search.trim()}%`;
-      params.push(term, term, term);
-    }
-    const [rows] = await pool.query<RowDataPacket[]>(sql, params);
-    return Number(rows[0]?.total || 0);
-  } catch (err: any) {
-    console.warn('[MySQL] Error counting products:', err?.message);
-    return 0;
+  let sql = 'SELECT COUNT(*) as total FROM products WHERE 1=1';
+  const params: any[] = [];
+  if (filters?.category && filters.category !== 'all') {
+    sql += ' AND category = ?';
+    params.push(filters.category);
   }
+  if (filters?.search && filters.search.trim()) {
+    sql += ' AND (name LIKE ? OR description LIKE ? OR supplier LIKE ?)';
+    const term = `%${filters.search.trim()}%`;
+    params.push(term, term, term);
+  }
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const currentPool = getPool();
+      const [rows] = await currentPool.query<RowDataPacket[]>(sql, params);
+      return Number(rows[0]?.total || 0);
+    } catch (err: any) {
+      if (attempt === 1 && isTransientMySqlError(err)) {
+        isConnected = false;
+        lastPingAt = 0;
+        await connectMySql().catch(() => false);
+        continue;
+      }
+      console.error('[MySQL] Error counting products:', err?.message);
+      throw err;
+    }
+  }
+
+  return 0;
 }
 
 /**

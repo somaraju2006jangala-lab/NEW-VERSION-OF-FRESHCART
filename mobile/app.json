@@ -23,10 +23,17 @@
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE"
       ],
+      "usesCleartextTraffic": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "apiUrl": "",
+      "prodApiUrl": "",
+      "lanIp": "10.240.114.237",
+      "port": "3000"
     }
   }
 }

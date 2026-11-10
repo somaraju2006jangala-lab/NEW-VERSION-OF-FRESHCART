@@ -23,7 +23,6 @@ import {
   UploadCloud,
   FileText,
   CreditCard,
-  ExternalLink,
 } from 'lucide-react';
 
 interface RegisterPageProps {
@@ -579,8 +578,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
               </div>
             </div>
 
-            {/* Pay Now Button & QR Code Row */}
-            <div className="flex flex-col sm:flex-row items-center gap-4 p-3 rounded-xl bg-white/35 border border-white/50">
+            {/* Official QR Code Payment Box */}
+            <div className="flex flex-col sm:flex-row items-center gap-4 p-3.5 rounded-xl bg-white/35 border border-white/50">
               {/* QR Code Container */}
               <div className="flex flex-col items-center shrink-0">
                 {qrCodeDataUrl ? (
@@ -588,45 +587,37 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                     <img
                       src={qrCodeDataUrl}
                       alt="UPI Registration QR Code"
-                      className="w-32 h-32 object-contain"
+                      className="w-36 h-36 object-contain"
                     />
                   </div>
                 ) : (
-                  <div className="w-32 h-32 rounded-xl bg-slate-100 flex flex-col items-center justify-center p-2 text-center text-slate-400 border border-slate-200">
+                  <div className="w-36 h-36 rounded-xl bg-slate-100 flex flex-col items-center justify-center p-2 text-center text-slate-400 border border-slate-200">
                     <QrCode className="w-8 h-8 mb-1" />
                     <span className="text-[10px]">Generating QR...</span>
                   </div>
                 )}
-                <span className="text-[10px] text-[#565e74] mt-1 text-center font-medium">
-                  Scan with GPay, PhonePe, Paytm, BHIM
+                <span className="text-[10px] text-[#565e74] mt-1.5 text-center font-medium">
+                  Scan with GPay, PhonePe, Paytm, or BHIM
                 </span>
               </div>
 
-              {/* Pay Now Direct Action */}
+              {/* Instructions & Copy UPI ID */}
               <div className="flex-1 space-y-2.5 w-full text-center sm:text-left">
                 <div className="text-[12px] text-[#0b1c30]">
-                  <p className="font-semibold">Quick Mobile Payment</p>
-                  <p className="text-[11px] text-[#565e74] mt-0.5">
-                    Tap Pay Now to trigger installed UPI applications, or scan the QR code to complete the ₹199 one-time registration fee.
+                  <p className="font-semibold">Scan & Pay Registration Fee</p>
+                  <p className="text-[11px] text-[#565e74] mt-0.5 leading-relaxed">
+                    Scan the QR code above with any UPI app on your phone, complete the ₹199 one-time registration payment, and upload your payment receipt below.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <a
-                    href={standardUpiUri}
-                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-[#006b2c] hover:bg-[#00873a] text-white font-semibold text-[12px] shadow-sm transition-all cursor-pointer"
-                  >
-                    <span>Pay Now (₹199)</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-
+                <div className="flex flex-wrap gap-2 justify-center sm:justify-start">
                   <button
                     type="button"
                     onClick={handleCopyUpiId}
-                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white/70 hover:bg-white text-[#0b1c30] border border-slate-300 font-semibold text-[12px] transition-all cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/80 hover:bg-white text-[#0b1c30] border border-slate-300 font-semibold text-[12px] shadow-xs transition-all cursor-pointer"
                   >
                     {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{isCopied ? 'UPI ID Copied' : 'Copy UPI ID'}</span>
+                    <span>{isCopied ? 'UPI ID Copied to Clipboard' : 'Copy Official UPI ID'}</span>
                   </button>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -21,7 +21,8 @@ import {
   Layers,
 } from 'lucide-react-native';
 import { PortalType, useAuth } from '../context/AuthContext';
-import { getApiBaseUrl } from '../config/api';
+import { getApiBaseUrl, invalidateCachedBaseUrl } from '../config/api';
+import { customerApi } from '../services/apiClient';
 import { ServerConfigModal } from '../components/common/ServerConfigModal';
 
 interface PortalSelectionScreenProps {
@@ -33,24 +34,36 @@ export const PortalSelectionScreen: React.FC<PortalSelectionScreenProps> = ({ on
   const [serverUrl, setServerUrl] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
+  const isMountedRef = useRef(true);
 
-  useEffect(() => {
-    checkServer();
+  const checkServer = useCallback(async () => {
+    try {
+      invalidateCachedBaseUrl();
+      const url = await getApiBaseUrl();
+      if (isMountedRef.current) setServerUrl(url);
+
+      const health = await customerApi.checkHealth();
+      const resolvedUrl = await getApiBaseUrl();
+      if (isMountedRef.current) {
+        setServerUrl(resolvedUrl);
+        setServerOnline(
+          Boolean(health && health.status === 'ok' && health.database !== 'disconnected')
+        );
+      }
+    } catch {
+      if (isMountedRef.current) {
+        setServerOnline(false);
+      }
+    }
   }, []);
 
-  const checkServer = async () => {
-    const url = await getApiBaseUrl();
-    setServerUrl(url);
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(`${url}/api/products`, { signal: controller.signal });
-      clearTimeout(id);
-      setServerOnline(res.ok);
-    } catch {
-      setServerOnline(false);
-    }
-  };
+  useEffect(() => {
+    isMountedRef.current = true;
+    checkServer();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [checkServer]);
 
   return (
     <SafeAreaView style={styles.container}>

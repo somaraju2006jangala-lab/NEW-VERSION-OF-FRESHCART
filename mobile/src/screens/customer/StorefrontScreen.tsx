@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { customerApi, cleanErrorMessage } from '../../services/apiClient';
+import { invalidateCachedBaseUrl } from '../../config/api';
 import { Header } from '../../components/common/Header';
 import { Product } from '../../types';
 import { ProductDetailModal } from './ProductDetailModal';
@@ -162,25 +163,51 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAssistantModal, setShowAssistantModal] = useState(false);
 
+  const isMountedRef = useRef(true);
+  const inFlightLoadRef = useRef(false);
+
   const loadProducts = useCallback(async (refresh = false) => {
-    if (refresh) setIsRefreshing(true);
-    else setIsLoading(true);
+    if (inFlightLoadRef.current) return;
+    inFlightLoadRef.current = true;
+
+    if (refresh) {
+      setIsRefreshing(true);
+      invalidateCachedBaseUrl();
+    } else {
+      setIsLoading(true);
+    }
+    setLoadError(null);
     try {
       // Retrieve the entire active product catalogue from MySQL via backend API
       const data = await customerApi.getAllProducts();
+      if (!isMountedRef.current) return;
       if (Array.isArray(data)) {
         setProducts(data);
         setLoadError(null);
         setHasMore(false);
       }
     } catch (err: any) {
-      console.warn('Failed loading products:', err);
+      if (!isMountedRef.current) return;
+      if (typeof __DEV__ === 'undefined' || __DEV__) {
+        console.warn('[Storefront] Failed loading products:', err);
+      }
       setLoadError(cleanErrorMessage(err));
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      inFlightLoadRef.current = false;
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    loadProducts();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [loadProducts]);
 
   const handleLoadMore = useCallback(async () => {
     if (isFetchingMore || !hasMore || isLoading) return;
@@ -206,10 +233,6 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
       setIsFetchingMore(false);
     }
   }, [isFetchingMore, hasMore, isLoading, products.length]);
-
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
 
   // Filter products by category and search query across the complete catalogue
   const filteredProducts = useMemo(() => {
@@ -280,7 +303,7 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
             : CATEGORIES.find((c) => c.slug === selectedCategory)?.name || 'Products'}
         </Text>
         <Text style={styles.sectionSubtitle}>
-          {loadError
+          {loadError && products.length === 0
             ? 'Connection unavailable'
             : `${filteredProducts.length} item${filteredProducts.length === 1 ? '' : 's'} available`}
         </Text>
@@ -376,11 +399,18 @@ export const StorefrontScreen: React.FC<StorefrontScreenProps> = ({
                 </Text>
                 <TouchableOpacity
                   style={styles.retryBtn}
-                  onPress={() => loadProducts()}
+                  onPress={() => loadProducts(true)}
                   activeOpacity={0.8}
+                  disabled={isRefreshing}
                 >
-                  <RefreshCw size={14} color="#ffffff" />
-                  <Text style={styles.retryBtnText}>Retry Connection</Text>
+                  {isRefreshing ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <RefreshCw size={14} color="#ffffff" />
+                  )}
+                  <Text style={styles.retryBtnText}>
+                    {isRefreshing ? 'Retrying...' : 'Retry Connection'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             ) : (

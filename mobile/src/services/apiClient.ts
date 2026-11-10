@@ -1,5 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getApiBaseUrl } from '../config/api';
+import {
+  getApiBaseUrl,
+  setApiBaseUrl,
+  getCandidateDevUrls,
+  isProductionHttpsUrl,
+} from '../config/api';
 import {
   Product,
   Order,
@@ -18,6 +23,9 @@ import {
   PaymentVerificationItem,
 } from '../types';
 
+const IS_DEV =
+  typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
@@ -25,12 +33,214 @@ interface RequestOptions {
   token?: string | null;
   timeoutMs?: number;
   retries?: number;
+  skipDedup?: boolean;
+  disableAutoHeal?: boolean;
+}
+
+const inFlightGetRequests = new Map<string, Promise<any>>();
+
+function parseJsonResponse(res: Response, rawText: string): { json: any; isHtml: boolean; isInvalidJson: boolean } {
+  const trimmed = (rawText || '').trim();
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const looksLikeHtml =
+    trimmed.startsWith('<!doctype') ||
+    trimmed.startsWith('<html') ||
+    trimmed.startsWith('<');
+
+  if (looksLikeHtml) {
+    return { json: null, isHtml: true, isInvalidJson: true };
+  }
+
+  if (trimmed.length === 0) {
+    if (contentType.includes('application/json')) {
+      return { json: {}, isHtml: false, isInvalidJson: false };
+    }
+    return { json: {}, isHtml: false, isInvalidJson: false };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    return { json: parsed, isHtml: false, isInvalidJson: false };
+  } catch {
+    return { json: null, isHtml: false, isInvalidJson: true };
+  }
+}
+
+function isTransientNetworkError(err: any): boolean {
+  if (!err) return false;
+  if (err?.name === 'AbortError') return true;
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    msg === 'load failed' ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network request failed') ||
+    msg.includes('connectexception') ||
+    msg.includes('failed to connect') ||
+    msg.includes('sockettimeoutexception') ||
+    msg.includes('unable to resolve host') ||
+    msg.includes('ehostunreach') ||
+    msg.includes('enetunreach') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('etimedout') ||
+    msg.includes('fetch failed') ||
+    msg.includes('timed out') ||
+    msg.includes('cleartext http traffic')
+  );
+}
+
+async function executeRequest<T = any>(
+  endpoint: string,
+  options: RequestOptions,
+  cleanEndpoint: string,
+  effectiveToken: string | null | undefined,
+  headers: Record<string, string>
+): Promise<T> {
+  const baseUrl = await getApiBaseUrl();
+  const url = `${baseUrl}${cleanEndpoint}`;
+  const method = options.method || 'GET';
+  const timeoutMs = options.timeoutMs || 18000;
+  const maxAttempts =
+    typeof options.retries === 'number'
+      ? Math.max(1, options.retries + 1)
+      : method === 'GET'
+      ? 3
+      : 1;
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const fetchOptions: RequestInit = {
+        method,
+        headers,
+        signal: controller.signal,
+      };
+
+      if (options.body !== undefined && method !== 'GET') {
+        fetchOptions.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+      }
+
+      const res = await fetch(url, fetchOptions);
+      clearTimeout(timeoutId);
+
+      const rawText = await res.text();
+      const { json, isHtml, isInvalidJson } = parseJsonResponse(res, rawText);
+
+      if (isHtml || isInvalidJson || typeof json !== 'object' || json === null) {
+        const invalidErr: any = new Error(
+          isHtml
+            ? `Received HTML instead of JSON from FreshCart API (HTTP ${res.status}).`
+            : `Received invalid JSON response from server (HTTP ${res.status}).`
+        );
+        invalidErr.status = res.status;
+        invalidErr.isNonJsonResponse = true;
+        throw invalidErr;
+      }
+
+      if (!res.ok) {
+        const errorMsg = json?.error || json?.message || `HTTP ${res.status}: Request failed`;
+        const httpErr: any = new Error(errorMsg);
+        httpErr.status = res.status;
+        throw httpErr;
+      }
+
+      return json as T;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      lastError = err;
+
+      const isNetworkIssue = isTransientNetworkError(err);
+
+      // Bounded backoff retry on transient network glitches
+      if (isNetworkIssue && attempt < maxAttempts) {
+        if (IS_DEV) {
+          console.log(`[ApiClient] Retry ${attempt}/${maxAttempts - 1} for ${method} ${url}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+        continue;
+      }
+
+      // Attempt automatic LAN auto-heal ONLY in __DEV__ when primary URL is not a production HTTPS domain
+      if (
+        isNetworkIssue &&
+        IS_DEV &&
+        !options.disableAutoHeal &&
+        !isProductionHttpsUrl(baseUrl)
+      ) {
+        const candidates = getCandidateDevUrls().filter((candidate) => candidate !== baseUrl);
+        for (const candidateBase of candidates) {
+          try {
+            if (IS_DEV) {
+              console.log(
+                `[ApiClient Auto-Heal] Primary ${url} failed. Probing fallback ${candidateBase}${cleanEndpoint}...`
+              );
+            }
+            const fallbackController = new AbortController();
+            const fallbackTimer = setTimeout(() => fallbackController.abort(), 7000);
+            const fallbackRes = await fetch(`${candidateBase}${cleanEndpoint}`, {
+              method,
+              headers,
+              signal: fallbackController.signal,
+              ...(options.body !== undefined && method !== 'GET'
+                ? { body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body) }
+                : {}),
+            });
+            clearTimeout(fallbackTimer);
+
+            const rawFallback = await fallbackRes.text();
+            const parsedFallback = parseJsonResponse(fallbackRes, rawFallback);
+            if (
+              fallbackRes.ok &&
+              !parsedFallback.isHtml &&
+              !parsedFallback.isInvalidJson &&
+              parsedFallback.json &&
+              (cleanEndpoint !== '/api/health' || parsedFallback.json?.database !== 'disconnected')
+            ) {
+              if (IS_DEV) {
+                console.log(`[ApiClient Auto-Heal] Switched active backend URL to ${candidateBase}`);
+              }
+              await setApiBaseUrl(candidateBase);
+              return parsedFallback.json as T;
+            }
+          } catch (fallbackErr: any) {
+            if (IS_DEV) {
+              console.warn(`[ApiClient Auto-Heal] Fallback ${candidateBase} unreachable:`, fallbackErr?.message || fallbackErr);
+            }
+          }
+        }
+      }
+
+      if (err?.name === 'AbortError') {
+        if (IS_DEV) {
+          console.warn(`[ApiClient Diagnostic] Timeout (${timeoutMs}ms) on ${method} ${url}`);
+        }
+        throw new Error('Connection timed out. Please check your network connection and try again.');
+      }
+
+      if (isNetworkIssue || err?.isNonJsonResponse) {
+        if (IS_DEV) {
+          console.warn(`[ApiClient Diagnostic] ${method} ${url} failed: ${err?.message || err}`);
+        }
+        throw new Error(
+          'Unable to connect to FreshCart server. Please check your network connection and try again.'
+        );
+      }
+
+      throw err;
+    }
+  }
+
+  throw lastError || new Error('Request failed');
 }
 
 export async function request<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const baseUrl = await getApiBaseUrl();
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const url = `${baseUrl}${cleanEndpoint}`;
+  const method = options.method || 'GET';
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -62,73 +272,28 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
     headers['x-admin-role'] = 'admin';
   }
 
-  const maxAttempts = typeof options.retries === 'number' ? options.retries + 1 : (options.method === 'GET' || !options.method ? 2 : 1);
-  let lastError: any = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
-
-    try {
-      const fetchOptions: RequestInit = {
-        method: options.method || 'GET',
-        headers,
-        signal: controller.signal,
-      };
-
-      if (options.body !== undefined && options.method !== 'GET') {
-        fetchOptions.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
-      }
-
-      const res = await fetch(url, fetchOptions);
-      clearTimeout(timeoutId);
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const errorMsg = json?.error || json?.message || `HTTP ${res.status}: Request failed`;
-        throw new Error(errorMsg);
-      }
-
-      return json as T;
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      lastError = err;
-
-      const msg = String(err?.message || '');
-      const isNetworkIssue =
-        err?.name === 'AbortError' ||
-        msg === 'Load failed' ||
-        msg.includes('Failed to fetch') ||
-        msg.includes('NetworkError') ||
-        msg.includes('Network request failed') ||
-        msg.includes('ConnectException') ||
-        msg.includes('Failed to connect') ||
-        msg.includes('ECONNREFUSED') ||
-        msg.includes('ENOTFOUND') ||
-        msg.includes('fetch failed') ||
-        msg.includes('timed out');
-
-      // Retry if this is a transient network issue and we still have attempts left
-      if (isNetworkIssue && attempt < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        continue;
-      }
-
-      if (err?.name === 'AbortError') {
-        throw new Error('Connection timed out. Please check your network connection and try again.');
-      }
-
-      if (isNetworkIssue) {
-        throw new Error(
-          'Unable to connect to FreshCart server. Please check your network connection and try again.'
-        );
-      }
-
-      throw err;
+  // Deduplicate simultaneous identical GET requests to prevent overlapping network storms
+  if (method === 'GET' && !options.skipDedup) {
+    const tokenScope = effectiveToken ? String(effectiveToken).slice(-12) : 'anon';
+    const dedupKey = `GET:${cleanEndpoint}:${tokenScope}`;
+    const existing = inFlightGetRequests.get(dedupKey);
+    if (existing) {
+      return existing as Promise<T>;
     }
+    const pendingPromise = executeRequest<T>(
+      endpoint,
+      options,
+      cleanEndpoint,
+      effectiveToken,
+      headers
+    ).finally(() => {
+      inFlightGetRequests.delete(dedupKey);
+    });
+    inFlightGetRequests.set(dedupKey, pendingPromise);
+    return pendingPromise;
   }
 
-  throw lastError || new Error('Request failed');
+  return executeRequest<T>(endpoint, options, cleanEndpoint, effectiveToken, headers);
 }
 
 /**
@@ -140,10 +305,15 @@ export function cleanErrorMessage(err: any, fallback = 'Unable to connect to Fre
   if (
     raw.includes('ConnectException') ||
     raw.includes('Failed to connect') ||
+    raw.includes('SocketTimeoutException') ||
+    raw.includes('Unable to resolve host') ||
+    raw.includes('Cleartext HTTP traffic') ||
     raw.includes('Network request failed') ||
     raw.includes('fetch failed') ||
     raw.includes('Load failed') ||
     raw.includes('ECONNREFUSED') ||
+    raw.includes('EHOSTUNREACH') ||
+    raw.includes('ENETUNREACH') ||
     raw.includes('ENOTFOUND') ||
     raw.includes('timed out') ||
     raw.includes('AbortError') ||
@@ -448,10 +618,29 @@ export const adminApi = {
     });
   },
 
-  async getUpiSettings() {
-    return request<{ success: boolean; settings: UpiPaymentSettings | null; upiId?: string; merchantName?: string }>(
-      '/api/payment-settings/upi'
-    );
+  async getUpiSettings(amount?: number) {
+    const q = amount !== undefined && amount > 0 ? `?amount=${amount}` : '';
+    return request<{
+      success: boolean;
+      settings: UpiPaymentSettings | null;
+      upiId?: string;
+      merchantName?: string;
+      qrCodeDataUrl?: string;
+      qrCodeUrl?: string;
+      upiUri?: string;
+    }>(`/api/payment-settings/upi${q}`);
+  },
+
+  async getUpiQrCode(amount?: number) {
+    const q = amount !== undefined && amount > 0 ? `?amount=${amount}&format=json` : '?format=json';
+    return request<{
+      success: boolean;
+      upiId: string;
+      merchantName: string;
+      amount?: number;
+      upiUri: string;
+      qrCodeDataUrl: string;
+    }>(`/api/payment-settings/upi/qr${q}`);
   },
 
   async saveUpiSettings(
@@ -598,6 +787,13 @@ export const employeeApi = {
 // Customer APIs
 // -------------------------------------------------------------
 export const customerApi = {
+  async checkHealth() {
+    return request<{ status: string; database?: string; productCount?: number }>('/api/health', {
+      timeoutMs: 8000,
+      retries: 1,
+    });
+  },
+
   async getProducts(params?: { category?: string; search?: string; limit?: number; offset?: number }) {
     const query = new URLSearchParams();
     if (params?.category && params.category !== 'all') query.set('category', params.category);
@@ -613,9 +809,14 @@ export const customerApi = {
       total?: number;
       count?: number;
       hasMore?: boolean;
+      error?: string;
     }>(endpoint);
 
-    return res.products || [];
+    if (!res || res.success === false || !Array.isArray(res.products)) {
+      throw new Error(res?.error || 'Unexpected response format from products API.');
+    }
+
+    return res.products;
   },
 
   async getAllProducts(params?: { category?: string; search?: string }): Promise<Product[]> {
@@ -631,54 +832,57 @@ export const customerApi = {
         products: Product[];
         total?: number;
         hasMore?: boolean;
+        error?: string;
       }>(endpoint);
 
-      if (res && res.success && Array.isArray(res.products)) {
-        const all: Product[] = [...res.products];
-        const seen = new Set<string>(all.map((p) => p.id));
-        const total = res.total ?? all.length;
-
-        // If backend paginated, automatically fetch all remaining pages to ensure 100% complete catalogue
-        if (res.hasMore && all.length < total) {
-          let offset = all.length;
-          const batchSize = 50;
-
-          while (all.length < total) {
-            const pageQuery = new URLSearchParams();
-            if (params?.category && params.category !== 'all') pageQuery.set('category', params.category);
-            if (params?.search && params.search.trim()) pageQuery.set('search', params.search.trim());
-            pageQuery.set('offset', String(offset));
-            pageQuery.set('limit', String(batchSize));
-
-            const pageRes = await request<{
-              success: boolean;
-              products: Product[];
-              total?: number;
-              hasMore?: boolean;
-            }>(`/api/products?${pageQuery.toString()}`);
-
-            if (!pageRes?.products || pageRes.products.length === 0) break;
-
-            for (const item of pageRes.products) {
-              if (!seen.has(item.id)) {
-                seen.add(item.id);
-                all.push(item);
-              }
-            }
-
-            if (!pageRes.hasMore || pageRes.products.length < batchSize) break;
-            offset += pageRes.products.length;
-          }
-        }
-
-        return all;
+      if (!res || res.success === false || !Array.isArray(res.products)) {
+        throw new Error(res?.error || 'Unexpected response format from products API.');
       }
+
+      const all: Product[] = [...res.products];
+      const seen = new Set<string>(all.map((p) => p.id));
+      const total = res.total ?? all.length;
+
+      // If backend paginated, automatically fetch all remaining pages to ensure 100% complete catalogue
+      if (res.hasMore && all.length < total) {
+        let offset = all.length;
+        const batchSize = 50;
+
+        while (all.length < total) {
+          const pageQuery = new URLSearchParams();
+          if (params?.category && params.category !== 'all') pageQuery.set('category', params.category);
+          if (params?.search && params.search.trim()) pageQuery.set('search', params.search.trim());
+          pageQuery.set('offset', String(offset));
+          pageQuery.set('limit', String(batchSize));
+
+          const pageRes = await request<{
+            success: boolean;
+            products: Product[];
+            total?: number;
+            hasMore?: boolean;
+          }>(`/api/products?${pageQuery.toString()}`);
+
+          if (!pageRes?.products || pageRes.products.length === 0) break;
+
+          for (const item of pageRes.products) {
+            if (!seen.has(item.id)) {
+              seen.add(item.id);
+              all.push(item);
+            }
+          }
+
+          if (!pageRes.hasMore || pageRes.products.length < batchSize) break;
+          offset += pageRes.products.length;
+        }
+      }
+
+      return all;
     } catch (err) {
-      console.warn('getAllProducts error:', err);
+      if (IS_DEV) {
+        console.warn('getAllProducts error:', err);
+      }
       throw err;
     }
-
-    return [];
   },
 
   async getCart(token: string) {
@@ -728,10 +932,29 @@ export const customerApi = {
     });
   },
 
-  async getUpiSettings() {
-    return request<{ success: boolean; settings: UpiPaymentSettings | null; upiId?: string; merchantName?: string }>(
-      '/api/payment-settings/upi'
-    );
+  async getUpiSettings(amount?: number) {
+    const q = amount !== undefined && amount > 0 ? `?amount=${amount}` : '';
+    return request<{
+      success: boolean;
+      settings: UpiPaymentSettings | null;
+      upiId?: string;
+      merchantName?: string;
+      qrCodeDataUrl?: string;
+      qrCodeUrl?: string;
+      upiUri?: string;
+    }>(`/api/payment-settings/upi${q}`);
+  },
+
+  async getUpiQrCode(amount?: number) {
+    const q = amount !== undefined && amount > 0 ? `?amount=${amount}&format=json` : '?format=json';
+    return request<{
+      success: boolean;
+      upiId: string;
+      merchantName: string;
+      amount?: number;
+      upiUri: string;
+      qrCodeDataUrl: string;
+    }>(`/api/payment-settings/upi/qr${q}`);
   },
 
   async initiateUpi(paymentData: {

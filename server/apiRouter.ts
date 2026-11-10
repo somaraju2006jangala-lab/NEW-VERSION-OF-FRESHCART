@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import QRCode from 'qrcode';
 import {
   generateOrderOtp,
   verifyOrderOtp,
@@ -337,7 +338,10 @@ export const apiRouter = express.Router();
 apiRouter.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-customer-id, x-admin-role, x-admin-token, x-staff-token, x-auth-token, x-vercel-matched-path');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, Accept, x-customer-id, x-admin-role, x-admin-token, x-staff-token, x-auth-token, x-client-platform, x-client, x-vercel-matched-path'
+  );
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
@@ -364,6 +368,29 @@ apiRouter.use(async (_req, _res, next) => {
     // handled within connectMySql
   }
   next();
+});
+
+// Global Health Check & Diagnostic endpoint for Mobile & Web clients
+apiRouter.get(['/api/health', '/health'], async (_req: Request, res: Response) => {
+  if (!isMySqlConnected()) {
+    await connectMySql().catch(() => false);
+  }
+  let productCount = 0;
+  try {
+    if (isMySqlConnected()) {
+      productCount = await getProductsCountFromDb();
+    }
+  } catch {}
+
+  sendJson(res, 200, {
+    status: 'ok',
+    service: 'FreshCart Backend API',
+    version: '1.0.0',
+    time: new Date().toISOString(),
+    database: isMySqlConnected() ? 'connected' : 'disconnected',
+    productCount,
+    port: Number(process.env.PORT) || 3000,
+  });
 });
 
 // Private directory for storing payment screenshots and registration proofs
@@ -1303,6 +1330,17 @@ apiRouter.get('/api/customers/:id', async (req: Request, res: Response) => {
  */
 apiRouter.get(['/api/products', '/products'], async (req: Request, res: Response) => {
   try {
+    if (!isMySqlConnected()) {
+      const connected = await connectMySql().catch(() => false);
+      if (!connected) {
+        sendJson(res, 503, {
+          success: false,
+          error: 'Database unavailable. Please try again in a moment.',
+        });
+        return;
+      }
+    }
+
     const category = (req.query.category as string) || '';
     const search = (req.query.search as string) || (req.query.q as string) || '';
     const limit = req.query.limit !== undefined ? Number(req.query.limit) : undefined;
@@ -1321,7 +1359,7 @@ apiRouter.get(['/api/products', '/products'], async (req: Request, res: Response
       hasMore: limit !== undefined ? (Number(offset || 0) + products.length < total) : false,
     });
   } catch (err: any) {
-    sendJson(res, 500, { success: false, error: err?.message || 'Failed to retrieve products.' });
+    sendJson(res, 503, { success: false, error: err?.message || 'Failed to retrieve products.' });
   }
 });
 
@@ -3975,7 +4013,7 @@ apiRouter.get(
     '/api/upi/settings',
     '/api/upi-settings',
   ],
-  async (_req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
@@ -3990,20 +4028,51 @@ apiRouter.get(
           merchantName: '',
           merchant_name: '',
           enabled: false,
+          qrCodeDataUrl: '',
         });
         return;
       }
 
+      // Dynamically generate a clean, standard UPI QR code data URL using configured details
+      const cleanId = String(settings.upiId).trim();
+      const cleanMerchant = String(settings.merchantName || 'FreshCart Store').trim();
+      const pa = encodeURIComponent(cleanId).replace(/%40/g, '@');
+      const pn = encodeURIComponent(cleanMerchant);
+      const reqAmount = req.query.amount ? Number(req.query.amount) : undefined;
+      const amountParam = reqAmount && !isNaN(reqAmount) && reqAmount > 0 ? `&am=${reqAmount.toFixed(2)}` : '';
+      const upiUri = `upi://pay?pa=${pa}&pn=${pn}${amountParam}&cu=INR`;
+
+      let generatedQrDataUrl = '';
+      try {
+        generatedQrDataUrl = await QRCode.toDataURL(upiUri, {
+          width: 320,
+          margin: 2,
+          errorCorrectionLevel: 'M',
+          color: { dark: '#022c22', light: '#ffffff' },
+        });
+      } catch (qrErr) {
+        console.warn('[QR] Error generating backend QR code data URL:', qrErr);
+      }
+
+      const effectiveQrUrl = generatedQrDataUrl || settings.qrCodeUrl || '';
+
       sendJson(res, 200, {
         success: true,
-        settings,
-        upiId: settings.upiId,
-        upi_id: settings.upiId,
-        merchantName: settings.merchantName,
-        merchant_name: settings.merchantName,
+        settings: {
+          ...settings,
+          qrCodeDataUrl: effectiveQrUrl,
+          qrCodeUrl: effectiveQrUrl,
+          upiUri,
+        },
+        upiId: cleanId,
+        upi_id: cleanId,
+        merchantName: cleanMerchant,
+        merchant_name: cleanMerchant,
         enabled: settings.enabled,
-        qrCodeUrl: settings.qrCodeUrl,
-        qr_code_url: settings.qrCodeUrl,
+        qrCodeUrl: effectiveQrUrl,
+        qr_code_url: effectiveQrUrl,
+        qrCodeDataUrl: effectiveQrUrl,
+        upiUri,
         updatedAt: settings.updatedAt,
         updated_at: settings.updatedAt,
       });
@@ -4014,6 +4083,71 @@ apiRouter.get(
         error: err?.message || 'Failed to fetch UPI payment settings from database.',
         details: err?.code || undefined,
       });
+    }
+  }
+);
+
+/**
+ * GET /api/payment-settings/upi/qr
+ * Generates an instant, configured UPI QR code for the given amount (or default).
+ * Supports JSON payload or direct PNG image stream.
+ */
+apiRouter.get(
+  [
+    '/api/payment-settings/upi/qr',
+    '/payment-settings/upi/qr',
+    '/api/upi/qr',
+    '/upi/qr',
+  ],
+  async (req: Request, res: Response) => {
+    try {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      const settings = await getUpiPaymentSettingsFromDb();
+      if (!settings || !settings.upiId) {
+        sendJson(res, 404, { success: false, error: 'UPI settings not configured in backend.' });
+        return;
+      }
+
+      const cleanId = String(settings.upiId).trim();
+      const cleanMerchant = String(settings.merchantName || 'FreshCart Store').trim();
+      const pa = encodeURIComponent(cleanId).replace(/%40/g, '@');
+      const pn = encodeURIComponent(cleanMerchant);
+      const reqAmount = req.query.amount ? Number(req.query.amount) : undefined;
+      const amountParam = reqAmount && !isNaN(reqAmount) && reqAmount > 0 ? `&am=${reqAmount.toFixed(2)}` : '';
+      const upiUri = `upi://pay?pa=${pa}&pn=${pn}${amountParam}&cu=INR`;
+
+      const format = String(req.query.format || '').toLowerCase();
+      if (format === 'json') {
+        const qrCodeDataUrl = await QRCode.toDataURL(upiUri, {
+          width: 320,
+          margin: 2,
+          errorCorrectionLevel: 'M',
+          color: { dark: '#022c22', light: '#ffffff' },
+        });
+        sendJson(res, 200, {
+          success: true,
+          upiId: cleanId,
+          merchantName: cleanMerchant,
+          amount: reqAmount,
+          upiUri,
+          qrCodeDataUrl,
+        });
+        return;
+      }
+
+      // Default: stream direct PNG image buffer
+      const pngBuffer = await QRCode.toBuffer(upiUri, {
+        width: 320,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#022c22', light: '#ffffff' },
+      });
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=60');
+      res.send(pngBuffer);
+    } catch (err: any) {
+      console.error('[API] Error streaming QR code image:', err);
+      sendJson(res, 500, { success: false, error: err?.message || 'Failed generating QR code.' });
     }
   }
 );

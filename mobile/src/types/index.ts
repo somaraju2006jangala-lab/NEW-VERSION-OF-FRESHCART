@@ -173,6 +173,8 @@ export interface UpiPaymentSettings {
   merchantName: string;
   enabled: boolean;
   qrCodeUrl?: string;
+  qrCodeDataUrl?: string;
+  upiUri?: string;
 }
 
 export interface PendingDeliveryOrder {

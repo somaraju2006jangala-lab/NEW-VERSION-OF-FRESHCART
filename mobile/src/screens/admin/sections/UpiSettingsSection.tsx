@@ -9,7 +9,6 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
-  Image,
 } from 'react-native';
 import {
   CreditCard,
@@ -18,12 +17,11 @@ import {
   CheckCircle2,
   AlertTriangle,
   Copy,
-  ExternalLink,
   Check,
 } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
-import QRCode from 'qrcode';
 import { adminApi } from '../../../services/apiClient';
+import { UpiQrCodeView } from '../../../components/payment/UpiQrCodeView';
 
 interface UpiSettingsSectionProps {
   adminToken: string | null;
@@ -42,7 +40,6 @@ export const UpiSettingsSection: React.FC<UpiSettingsSectionProps> = ({
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null
   );
-  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [isCopied, setIsCopied] = useState(false);
 
   const loadSettings = async () => {
@@ -77,20 +74,7 @@ export const UpiSettingsSection: React.FC<UpiSettingsSectionProps> = ({
       )}&cu=INR`
     : '';
 
-  useEffect(() => {
-    if (!generatedUri) {
-      setQrCodeDataUrl('');
-      return;
-    }
-    QRCode.toDataURL(generatedUri, {
-      width: 200,
-      margin: 2,
-      errorCorrectionLevel: 'M',
-      color: { dark: '#022c22', light: '#ffffff' },
-    })
-      .then((url) => setQrCodeDataUrl(url))
-      .catch(() => setQrCodeDataUrl(''));
-  }, [generatedUri]);
+  // QR rendering is handled robustly via UpiQrCodeView (pure vector SVG on mobile)
 
   const handleCopyUpiId = async () => {
     if (!upiId.trim()) return;
@@ -281,14 +265,12 @@ export const UpiSettingsSection: React.FC<UpiSettingsSectionProps> = ({
         </Text>
 
         <View style={styles.qrMockBox}>
-          {qrCodeDataUrl ? (
-            <View style={styles.qrFrame}>
-              <Image
-                source={{ uri: qrCodeDataUrl }}
-                style={{ width: 160, height: 160 }}
-                resizeMode="contain"
-              />
-            </View>
+          {upiId ? (
+            <UpiQrCodeView
+              upiId={upiId}
+              merchantName={merchantName}
+              size={170}
+            />
           ) : (
             <QrCode size={64} color="#10b981" />
           )}

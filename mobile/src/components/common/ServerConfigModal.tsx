@@ -8,11 +8,15 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
 import {
   getApiBaseUrl,
   setApiBaseUrl,
   resetApiBaseUrl,
+  probeBackendHealth,
+  extractHostname,
+  isLoopbackHost,
   DEFAULT_LAN_IP,
   DEFAULT_PORT,
 } from '../../config/api';
@@ -49,25 +53,24 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
     setTestResult(null);
     try {
       const clean = urlToTest.trim().replace(/\/+$/, '');
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(`${clean}/api/products`, { signal: controller.signal });
-      clearTimeout(id);
-      if (res.ok) {
+      const probe = await probeBackendHealth(clean, 8000);
+      if (probe.ok) {
+        const countInfo =
+          typeof probe.productCount === 'number' ? ` • ${probe.productCount} products` : '';
         setTestResult({
           success: true,
-          message: 'Connected successfully to FreshCart backend & MySQL!',
+          message: `Connected to FreshCart backend & MySQL${countInfo} (${probe.latencyMs || 0}ms)!`,
         });
       } else {
         setTestResult({
           success: false,
-          message: `Server responded with HTTP ${res.status}`,
+          message: probe.error || `Server responded with HTTP ${probe.status || 'error'}`,
         });
       }
     } catch (err: any) {
       setTestResult({
         success: false,
-        message: err.name === 'AbortError' ? 'Connection timed out' : err.message || 'Cannot reach server',
+        message: err?.message || 'Cannot reach server',
       });
     } finally {
       setIsTesting(false);
@@ -75,9 +78,17 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
   };
 
   const handleSave = async () => {
-    const clean = inputUrl.trim();
+    const clean = inputUrl.trim().replace(/\/+$/, '');
     if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
       Alert.alert('Invalid URL', 'Please include http:// or https://');
+      return;
+    }
+    const host = extractHostname(clean);
+    if (Platform.OS !== 'web' && isLoopbackHost(host)) {
+      Alert.alert(
+        'Physical Device Notice',
+        `A physical phone cannot reach "${host}". Use your Mac's LAN IP (http://${DEFAULT_LAN_IP}:${DEFAULT_PORT}) or press Auto-Detect.`
+      );
       return;
     }
     await setApiBaseUrl(clean);
@@ -90,6 +101,12 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
   const handleSetPreset = (presetUrl: string) => {
     setInputUrl(presetUrl);
     testConnection(presetUrl);
+  };
+
+  const handleAutoDetect = async () => {
+    const detected = await resetApiBaseUrl();
+    setInputUrl(detected);
+    testConnection(detected);
   };
 
   return (
@@ -127,22 +144,32 @@ export const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
           <View style={styles.presetRow}>
             <TouchableOpacity
               style={styles.presetBadge}
+              onPress={handleAutoDetect}
+            >
+              <Text style={styles.presetText}>Auto-Detect</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.presetBadge}
               onPress={() => handleSetPreset(`http://${DEFAULT_LAN_IP}:${DEFAULT_PORT}`)}
             >
               <Text style={styles.presetText}>LAN WiFi ({DEFAULT_LAN_IP})</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.presetBadge}
-              onPress={() => handleSetPreset(`http://localhost:${DEFAULT_PORT}`)}
-            >
-              <Text style={styles.presetText}>Localhost</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.presetBadge}
-              onPress={() => handleSetPreset(`http://10.0.2.2:${DEFAULT_PORT}`)}
-            >
-              <Text style={styles.presetText}>Android Emul (10.0.2.2)</Text>
-            </TouchableOpacity>
+            {Platform.OS === 'web' && (
+              <TouchableOpacity
+                style={styles.presetBadge}
+                onPress={() => handleSetPreset(`http://localhost:${DEFAULT_PORT}`)}
+              >
+                <Text style={styles.presetText}>Localhost</Text>
+              </TouchableOpacity>
+            )}
+            {Platform.OS === 'android' && (
+              <TouchableOpacity
+                style={styles.presetBadge}
+                onPress={() => handleSetPreset(`http://10.0.2.2:${DEFAULT_PORT}`)}
+              >
+                <Text style={styles.presetText}>Android Emul (10.0.2.2)</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Test connection result */}

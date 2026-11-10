@@ -97,6 +97,8 @@ export async function fetchUpiSettings(): Promise<UpiPaymentSettings | null> {
       enabled: isEnabled,
       qrCodeUrl: raw.qrCodeUrl || raw.qr_code_url,
       qr_code_url: raw.qrCodeUrl || raw.qr_code_url,
+      qrCodeDataUrl: raw.qrCodeDataUrl || raw.qrCodeUrl || raw.qr_code_url,
+      upiUri: raw.upiUri,
       updatedAt: raw.updatedAt || raw.updated_at,
       updated_at: raw.updatedAt || raw.updated_at,
     };
