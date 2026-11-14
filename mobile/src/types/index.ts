@@ -177,6 +177,19 @@ export interface UpiPaymentSettings {
   upiUri?: string;
 }
 
+export interface UploadedPaymentProof {
+  orderId: string;
+  transactionRef: string;
+  screenshotUrl: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  previewUri: string;
+  paymentStatus: string;
+  amount: number;
+  cartSignature?: string;
+}
+
 export interface PendingDeliveryOrder {
   id: string;
   cleanId?: string;

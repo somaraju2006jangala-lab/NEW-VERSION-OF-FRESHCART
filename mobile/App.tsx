@@ -19,6 +19,16 @@ import { ConfirmOrderScreen } from './src/screens/customer/ConfirmOrderScreen';
 import { OrderConfirmationScreen } from './src/screens/customer/OrderConfirmationScreen';
 import { CustomerOrdersScreen } from './src/screens/customer/CustomerOrdersScreen';
 import { settingsApi } from './src/services/apiClient';
+import { UploadedPaymentProof } from './src/types';
+
+function createCheckoutSession(): { orderId: string; transactionRef: string } {
+  const digits = String(Math.floor(100000 + Math.random() * 900000));
+  const suffix = Math.random().toString(36).substring(2, 8).toUpperCase();
+  return {
+    orderId: `#FC-${digits}`,
+    transactionRef: `FC-${digits}-${suffix}`,
+  };
+}
 
 type CustomerView =
   | 'storefront'
@@ -32,7 +42,7 @@ type CustomerView =
 
 function MainNavigator() {
   const { activePortal, setActivePortal, currentAdmin, currentEmployee, currentCustomer, isLoading } = useAuth();
-  const { subtotal } = useCart();
+  const { cart, subtotal } = useCart();
 
   // Sub-view inside customer portal
   const [customerView, setCustomerView] = useState<CustomerView>('storefront');
@@ -41,7 +51,7 @@ function MainNavigator() {
     undefined
   );
 
-  // Checkout sequence state: Cart -> Recipient Details -> Delivery Address -> Payment Method -> Confirm Order -> Confirmation
+  // Checkout sequence state: Cart -> Recipient Details -> Delivery Address -> Confirm Order -> Payment Method -> Confirmation
   const [checkoutRecipient, setCheckoutRecipient] = useState<RecipientInfo>({
     fullName: currentCustomer?.name || '',
     phone: currentCustomer?.phone || '',
@@ -54,6 +64,18 @@ function MainNavigator() {
   );
   const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'COD' | 'UPI'>('COD');
   const [deliveryCharge, setDeliveryCharge] = useState(40);
+  const [checkoutSession, setCheckoutSession] = useState(() => createCheckoutSession());
+  const [uploadedPaymentProof, setUploadedPaymentProof] = useState<UploadedPaymentProof | null>(null);
+
+  const cartSignature = React.useMemo(() => {
+    const itemKey = cart
+      .map(
+        (c) =>
+          `${c.product.id}:${c.selectedPackSize || ''}:${c.quantity}:${c.selectedPrice ?? c.product.price}`
+      )
+      .join('|');
+    return `${itemKey}|c:${appliedCoupon?.code || ''}:${appliedCoupon?.discount || 0}|d:${deliveryCharge}`;
+  }, [cart, appliedCoupon, deliveryCharge]);
 
   // Fetch delivery settings and calculate delivery charge
   useEffect(() => {
@@ -136,6 +158,22 @@ function MainNavigator() {
           <CartScreen
             onBack={() => setCustomerView('storefront')}
             onProceedToCheckout={(coupon) => {
+              const nextCouponSig = `${coupon?.code || ''}:${coupon?.discount || 0}`;
+              const itemsOnly = cart
+                .map(
+                  (c) =>
+                    `${c.product.id}:${c.selectedPackSize || ''}:${c.quantity}:${c.selectedPrice ?? c.product.price}`
+                )
+                .join('|');
+              const expectedSig = `${itemsOnly}|c:${nextCouponSig}|d:${deliveryCharge}`;
+              if (
+                uploadedPaymentProof &&
+                uploadedPaymentProof.cartSignature &&
+                uploadedPaymentProof.cartSignature !== expectedSig
+              ) {
+                setUploadedPaymentProof(null);
+                setCheckoutSession(createCheckoutSession());
+              }
               setAppliedCoupon(coupon);
               setCustomerView('recipient-details');
             }}
@@ -155,7 +193,7 @@ function MainNavigator() {
           />
         );
 
-      // Page 2: Delivery Address -> Next -> Payment Method
+      // Page 2: Delivery Address -> Next -> Confirm Order
       case 'delivery-address':
         return (
           <DeliveryAddressScreen
@@ -185,45 +223,52 @@ function MainNavigator() {
             onContinue={(formatted, details) => {
               setCheckoutFormattedAddress(formatted);
               setCheckoutAddressDetails(details);
-              setCustomerView('payment-method');
+              setCustomerView('confirm-order');
             }}
             onBack={() => setCustomerView('recipient-details')}
           />
         );
 
-      // Page 3: Payment Method -> Next -> Confirm Order
-      case 'payment-method':
-        return (
-          <PaymentMethodScreen
-            initialPaymentMethod={checkoutPaymentMethod}
-            subtotal={subtotal}
-            deliveryCharge={deliveryCharge}
-            appliedCoupon={appliedCoupon}
-            onNext={(method) => {
-              setCheckoutPaymentMethod(method);
-              setCustomerView('confirm-order');
-            }}
-            onBack={() => setCustomerView('delivery-address')}
-          />
-        );
-
-      // Page 4: Confirm Order -> Confirm Place Order -> Final Order Confirmation
+      // Page 3: Confirm Order (Summary Review) -> Next -> Payment Method
       case 'confirm-order':
         return (
           <ConfirmOrderScreen
             recipient={checkoutRecipient}
             deliveryAddress={checkoutFormattedAddress}
-            paymentMethod={checkoutPaymentMethod}
             appliedCoupon={appliedCoupon}
             deliveryCharge={deliveryCharge}
             onEditRecipient={() => setCustomerView('recipient-details')}
             onEditAddress={() => setCustomerView('delivery-address')}
-            onEditPayment={() => setCustomerView('payment-method')}
+            onNext={() => setCustomerView('payment-method')}
+            onBack={() => setCustomerView('delivery-address')}
+          />
+        );
+
+      // Page 4: Payment Method -> Confirm Place Order -> Final Order Confirmation
+      case 'payment-method':
+        return (
+          <PaymentMethodScreen
+            initialPaymentMethod={checkoutPaymentMethod}
+            onPaymentMethodChange={(method) => setCheckoutPaymentMethod(method)}
+            subtotal={subtotal}
+            deliveryCharge={deliveryCharge}
+            appliedCoupon={appliedCoupon}
+            orderId={checkoutSession.orderId}
+            transactionRef={checkoutSession.transactionRef}
+            recipient={checkoutRecipient}
+            deliveryAddress={checkoutFormattedAddress}
+            cartSignature={cartSignature}
+            uploadedProof={uploadedPaymentProof}
+            onProofUploaded={(proof) => setUploadedPaymentProof(proof)}
+            onProofCleared={() => setUploadedPaymentProof(null)}
             onOrderSuccess={(order) => {
               setConfirmedOrder(order);
+              setUploadedPaymentProof(null);
+              setAppliedCoupon(undefined);
+              setCheckoutSession(createCheckoutSession());
               setCustomerView('confirmation');
             }}
-            onBack={() => setCustomerView('payment-method')}
+            onBack={() => setCustomerView('confirm-order')}
           />
         );
 

@@ -35,6 +35,7 @@ interface RequestOptions {
   retries?: number;
   skipDedup?: boolean;
   disableAutoHeal?: boolean;
+  customerScoped?: boolean;
 }
 
 const inFlightGetRequests = new Map<string, Promise<any>>();
@@ -146,6 +147,9 @@ async function executeRequest<T = any>(
         const errorMsg = json?.error || json?.message || `HTTP ${res.status}: Request failed`;
         const httpErr: any = new Error(errorMsg);
         httpErr.status = res.status;
+        httpErr.data = json;
+        httpErr.alreadySubmitted = Boolean(json?.alreadySubmitted);
+        httpErr.alreadyPaid = Boolean(json?.alreadyPaid);
         throw httpErr;
       }
 
@@ -267,9 +271,11 @@ export async function request<T = any>(endpoint: string, options: RequestOptions
 
   if (effectiveToken) {
     headers['Authorization'] = `Bearer ${effectiveToken}`;
-    headers['x-admin-token'] = effectiveToken;
-    headers['x-staff-token'] = effectiveToken;
-    headers['x-admin-role'] = 'admin';
+    if (!options.customerScoped) {
+      headers['x-admin-token'] = effectiveToken;
+      headers['x-staff-token'] = effectiveToken;
+      headers['x-admin-role'] = 'admin';
+    }
   }
 
   // Deduplicate simultaneous identical GET requests to prevent overlapping network storms
@@ -915,13 +921,18 @@ export const customerApi = {
     return request('/api/orders', {
       method: 'POST',
       token,
+      customerScoped: true,
+      retries: 0,
       body: orderData,
     });
   },
 
   async getCustomerOrders(customerId?: string, token?: string) {
     const q = customerId ? `?customerId=${encodeURIComponent(customerId)}` : '';
-    const res = await request<{ success: boolean; orders: Order[] }>(`/api/orders${q}`, { token });
+    const res = await request<{ success: boolean; orders: Order[] }>(`/api/orders${q}`, {
+      token,
+      customerScoped: true,
+    });
     return res.orders || [];
   },
 
@@ -961,12 +972,18 @@ export const customerApi = {
     orderId: string;
     customerId?: string;
     amount: number;
+    upiId?: string;
+    merchantName?: string;
     transactionRef: string;
     customerName?: string;
+    customerEmail?: string;
     customerPhone?: string;
+    deliveryAddress?: string;
   }) {
     return request('/api/payments/initiate-upi', {
       method: 'POST',
+      customerScoped: true,
+      retries: 0,
       body: paymentData,
     });
   },
@@ -976,26 +993,81 @@ export const customerApi = {
     fileData: string,
     token?: string,
     mimeType?: string,
-    fileName?: string
+    fileName?: string,
+    customerId?: string,
+    replaceDraft = false
   ) {
+    const cleanOrderId = (orderId || '').trim();
+    if (!cleanOrderId) {
+      throw new Error('Order ID is missing. Please restart checkout and try again.');
+    }
+    const cleanData = (fileData || '').trim();
+    if (!cleanData) {
+      throw new Error('Selected payment screenshot appears empty. Please select the image again.');
+    }
+
     const mime =
       mimeType ||
-      (fileData.startsWith('data:application/pdf')
+      (cleanData.startsWith('data:application/pdf')
         ? 'application/pdf'
-        : fileData.startsWith('data:image/png')
+        : cleanData.startsWith('data:image/png')
         ? 'image/png'
         : 'image/jpeg');
-    const screenshot = fileData.startsWith('data:') ? fileData : `data:${mime};base64,${fileData}`;
-    return request('/api/payments/screenshot/upload', {
+    const screenshot = cleanData.startsWith('data:') ? cleanData : `data:${mime};base64,${cleanData}`;
+
+    const extraHeaders: Record<string, string> = {};
+    if (!token && customerId) {
+      extraHeaders['x-customer-id'] = customerId;
+    }
+
+    return request<{
+      success: boolean;
+      message?: string;
+      paymentStatus?: string;
+      orderId?: string;
+      screenshotUrl?: string;
+      fileSize?: number;
+      mimeType?: string;
+      alreadySubmitted?: boolean;
+      alreadyPaid?: boolean;
+      error?: string;
+    }>('/api/payments/screenshot/upload', {
       method: 'POST',
       token,
+      customerScoped: true,
+      headers: extraHeaders,
+      timeoutMs: 45000,
+      retries: 0,
       body: {
-        orderId,
+        orderId: cleanOrderId,
         screenshot,
         mimeType: mime,
         fileName: fileName || (mime === 'application/pdf' ? 'proof.pdf' : 'proof.jpg'),
+        ...(replaceDraft ? { replaceDraft: true } : {}),
+        ...(!token && customerId ? { customerId } : {}),
       },
     });
+  },
+
+  async removeScreenshotProof(orderId: string, token?: string, customerId?: string) {
+    const cleanOrderId = (orderId || '').trim();
+    if (!cleanOrderId) return { success: true };
+
+    const extraHeaders: Record<string, string> = {};
+    if (!token && customerId) {
+      extraHeaders['x-customer-id'] = customerId;
+    }
+
+    return request<{ success: boolean; paymentStatus?: string; message?: string; error?: string }>(
+      `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}`,
+      {
+        method: 'DELETE',
+        token,
+        customerScoped: true,
+        headers: extraHeaders,
+        retries: 0,
+      }
+    );
   },
 
   async getOtpStatus(orderId: string) {
@@ -1006,6 +1078,8 @@ export const customerApi = {
     return request('/api/orders/confirm', {
       method: 'POST',
       token,
+      customerScoped: true,
+      retries: 0,
       body: { orderId, ...orderData, confirmed: true },
     });
   },

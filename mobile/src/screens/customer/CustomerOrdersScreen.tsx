@@ -82,8 +82,10 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
         const uploadRes = await customerApi.uploadScreenshotProof(
           orderId,
           base64,
+          customerToken || undefined,
           mime,
-          file.name
+          file.name,
+          currentCustomer?.id || 'guest'
         );
         setUploadingOrderId(null);
 
@@ -96,7 +98,7 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
       }
     } catch (err: any) {
       setUploadingOrderId(null);
-      Alert.alert('Error', err?.message || 'Could not upload payment proof.');
+      Alert.alert('Error', cleanErrorMessage(err, 'Could not upload payment proof.'));
     }
   };
 
@@ -325,8 +327,8 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
                   </View>
                 ) : null}
 
-                {/* Upload Payment Proof for UPI Orders if not yet verified */}
-                {isUpi && !isPaid && (
+                {/* Upload Payment Proof for UPI Orders if missing proof or rejected by admin */}
+                {isUpi && !isPaid && (isRejected || !ord.screenshotUrl) ? (
                   <TouchableOpacity
                     style={styles.uploadProofBtn}
                     onPress={() => handleUploadProofForOrder(ord.id)}
@@ -338,14 +340,21 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
                       <>
                         <UploadCloud size={14} color="#006b2c" />
                         <Text style={styles.uploadProofBtnText}>
-                          {ord.screenshotUrl
-                            ? 'Re-upload Payment Proof (JPG, PNG, PDF)'
+                          {isRejected
+                            ? 'Re-upload Payment Proof (Rejected — Try Again)'
                             : 'Upload Payment Receipt Proof (JPG, PNG, PDF)'}
                         </Text>
                       </>
                     )}
                   </TouchableOpacity>
-                )}
+                ) : isUpi && !isPaid && ord.screenshotUrl ? (
+                  <View style={[styles.uploadProofBtn, { borderStyle: 'solid' }]}>
+                    <CheckCircle2 size={14} color="#006b2c" />
+                    <Text style={styles.uploadProofBtnText}>
+                      Payment Proof Submitted — Awaiting Admin Verification
+                    </Text>
+                  </View>
+                ) : null}
 
                 {/* Expand Items Toggle */}
                 <TouchableOpacity

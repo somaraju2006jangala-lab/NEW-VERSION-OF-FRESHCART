@@ -4637,6 +4637,7 @@ export async function savePaymentScreenshotInDb(data: {
   email?: string;
   mobile?: string;
   total?: number;
+  allowReplaceUnpaidDraft?: boolean;
 }): Promise<SaveScreenshotResult> {
   const pool = getPool();
   const orderId = (data.orderId || '').trim();
@@ -4662,7 +4663,7 @@ export async function savePaymentScreenshotInDb(data: {
 
     // 2. Lock and check existing order record
     const [orderRows] = await connection.query<RowDataPacket[]>(
-      `SELECT order_id, total, subtotal, discount, payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      `SELECT order_id, status, total, subtotal, discount, payment_status, screenshot_url FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
       [orderId, altId]
     );
 
@@ -4686,11 +4687,17 @@ export async function savePaymentScreenshotInDb(data: {
 
       const currentOrderStatus = orderRows[0]?.payment_status;
       const currentPaymentStatus = existing[0]?.payment_status;
+      const currentOrderLifecycleStatus = String(orderRows[0]?.status || '');
       const currentOrderScreenshot = orderRows[0]?.screenshot_url;
       const currentPaymentScreenshot = existing[0]?.screenshot_path;
 
-      // Rule: If already PAID in MySQL, permanently disable upload
-      if (currentOrderStatus === 'PAID' || currentPaymentStatus === 'PAID') {
+      // Rule: If already PAID/COMPLETED in MySQL, permanently disable upload
+      if (
+        currentOrderStatus === 'PAID' ||
+        currentOrderStatus === 'COMPLETED' ||
+        currentPaymentStatus === 'PAID' ||
+        currentPaymentStatus === 'COMPLETED'
+      ) {
         await connection.rollback();
         return {
           success: false,
@@ -4699,11 +4706,14 @@ export async function savePaymentScreenshotInDb(data: {
         };
       }
 
-      // Rule: If active screenshot proof exists, block duplicate upload UNLESS order was REJECTED by admin
+      // Rule: If active screenshot proof exists, block duplicate upload UNLESS rejected by admin OR replacing unconfirmed checkout draft
       const hasProof = Boolean(currentOrderScreenshot || currentPaymentScreenshot);
       const isRejected = currentOrderStatus === 'REJECTED' || currentPaymentStatus === 'REJECTED';
+      const canReplaceDraft =
+        Boolean(data.allowReplaceUnpaidDraft) &&
+        currentOrderLifecycleStatus === 'Pending';
 
-      if (hasProof && !isRejected) {
+      if (hasProof && !isRejected && !canReplaceDraft) {
         await connection.rollback();
         return {
           success: false,
@@ -4796,6 +4806,87 @@ export async function savePaymentScreenshotInDb(data: {
     await connection.rollback();
     console.error('[MySQL Payment Proof] Error saving payment screenshot in DB:', err?.message);
     return { success: false, error: err?.message || 'Database update failed.' };
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Clears an unconfirmed checkout draft's payment screenshot so the customer
+ * must successfully upload a replacement proof before proceeding or submitting.
+ */
+export async function clearCheckoutScreenshotProofInDb(orderId: string): Promise<{
+  success: boolean;
+  screenshotPathToDelete?: string;
+  error?: string;
+}> {
+  const clean = (orderId || '').trim();
+  if (!clean) {
+    return { success: false, error: 'orderId is required.' };
+  }
+
+  const pool = getPool();
+  const altId = clean.startsWith('#') ? clean.slice(1) : `#${clean}`;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [orderRows] = await connection.query<RowDataPacket[]>(
+      `SELECT order_id, status, payment_status FROM orders WHERE order_id IN (?, ?) FOR UPDATE`,
+      [clean, altId]
+    );
+    const [paymentRows] = await connection.query<RowDataPacket[]>(
+      `SELECT payment_id, payment_status, screenshot_path FROM payments WHERE order_id IN (?, ?) FOR UPDATE`,
+      [clean, altId]
+    );
+
+    const oStatus = String(orderRows[0]?.payment_status || '');
+    const pStatus = String(paymentRows[0]?.payment_status || '');
+    const lifecycle = String(orderRows[0]?.status || '');
+
+    if (oStatus === 'PAID' || oStatus === 'COMPLETED' || pStatus === 'PAID' || pStatus === 'COMPLETED') {
+      await connection.rollback();
+      return { success: false, error: 'Payment has already been verified and cannot be removed.' };
+    }
+
+    if (lifecycle && lifecycle !== 'Pending') {
+      await connection.rollback();
+      return { success: false, error: 'Submitted order proof cannot be removed once fulfillment has started.' };
+    }
+
+    const screenshotPathToDelete = paymentRows[0]?.screenshot_path || undefined;
+
+    if (orderRows.length > 0) {
+      await connection.query(
+        `UPDATE orders
+         SET screenshot_url = NULL,
+             screenshot_data = NULL,
+             payment_status = 'INITIATED'
+         WHERE order_id IN (?, ?)`,
+        [clean, altId]
+      );
+    }
+
+    if (paymentRows.length > 0) {
+      await connection.query(
+        `UPDATE payments
+         SET screenshot_path = NULL,
+             screenshot_mime = NULL,
+             screenshot_size = NULL,
+             screenshot_data = NULL,
+             screenshot_uploaded_at = NULL,
+             payment_status = 'INITIATED'
+         WHERE order_id IN (?, ?)`,
+        [clean, altId]
+      );
+    }
+
+    await connection.commit();
+    return { success: true, screenshotPathToDelete };
+  } catch (err: any) {
+    await connection.rollback();
+    return { success: false, error: err?.message || 'Failed to clear screenshot proof.' };
   } finally {
     connection.release();
   }

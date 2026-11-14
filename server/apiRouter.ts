@@ -64,6 +64,7 @@ import {
   saveUpiPaymentSettingsToDb,
   createUpiPaymentAttemptInDb,
   savePaymentScreenshotInDb,
+  clearCheckoutScreenshotProofInDb,
   getPaymentRecordByOrderId,
   getAllUpiPaymentsForVerification,
   verifyUpiPaymentInDb,
@@ -1656,7 +1657,8 @@ apiRouter.post('/api/orders', async (req: Request, res: Response) => {
       return;
     }
 
-    // Backend enforcement: Online orders (UPI & Direct Payment) must have submitted payment proof before order confirmation
+    // Backend enforcement: Online UPI orders MUST have an uploaded payment screenshot in DB before placement/confirmation.
+    // Only unconfirmed pre-payment checkout draft initialization (`paymentStatus: 'INITIATED'`) is permitted prior to upload.
     const isUpiOrder =
       typeof orderData.paymentMethod === 'string' &&
       (orderData.paymentMethod.toLowerCase().includes('upi') ||
@@ -1668,29 +1670,60 @@ apiRouter.post('/api/orders', async (req: Request, res: Response) => {
       orderData.status === 'CONFIRMED' ||
       orderData.action === 'confirm';
 
-    if (isUpiOrder && isConfirmAction) {
+    if (isUpiOrder) {
       const existingOrder = await findOrderInDb(orderData.id);
       const existingPayment = await getPaymentRecordByOrderId(orderData.id);
 
       const hasProofInDb = Boolean(
         existingOrder?.screenshotUrl ||
+        (existingOrder as any)?.screenshotData ||
         existingPayment?.screenshotPath ||
         (existingPayment as any)?.screenshot_path ||
-        existingPayment?.paymentStatus === 'PENDING_VERIFICATION' ||
-        (existingPayment as any)?.payment_status === 'PENDING_VERIFICATION'
-      );
-      const hasProofInPayload = Boolean(
-        orderData.screenshotUrl ||
-        orderData.screenshot ||
-        orderData.imageBase64
+        (existingPayment as any)?.screenshotData
       );
 
-      if (!hasProofInDb && !hasProofInPayload) {
+      const isDraftInitiation =
+        !isConfirmAction &&
+        orderData.paymentStatus === 'INITIATED' &&
+        (!orderData.status || orderData.status === 'Pending');
+
+      if (!isDraftInitiation && !hasProofInDb) {
         sendJson(res, 400, {
           success: false,
-          error: 'Payment screenshot proof is required before confirming an online order. Please upload and submit payment proof first.',
+          code: 'PAYMENT_PROOF_REQUIRED',
+          error: 'Payment screenshot proof is required before placing or confirming a UPI order. Please upload your payment proof first.',
         });
         return;
+      }
+
+      const alreadyPaidInDb =
+        existingOrder?.paymentStatus === 'PAID' ||
+        existingOrder?.paymentStatus === 'COMPLETED' ||
+        existingPayment?.paymentStatus === 'PAID' ||
+        existingPayment?.paymentStatus === 'COMPLETED';
+
+      if (isDraftInitiation) {
+        orderData.status = 'Pending';
+        if (alreadyPaidInDb) {
+          orderData.paymentStatus = existingOrder?.paymentStatus || existingPayment?.paymentStatus;
+        } else if (hasProofInDb) {
+          orderData.paymentStatus =
+            existingOrder?.paymentStatus === 'REJECTED' || existingPayment?.paymentStatus === 'REJECTED'
+              ? 'REJECTED'
+              : 'PENDING_VERIFICATION';
+        } else {
+          orderData.paymentStatus = 'INITIATED';
+        }
+      } else if (!alreadyPaidInDb) {
+        // Never allow client order submission to auto-mark payment as PAID or bypass Pending Verification
+        orderData.status = 'Pending';
+        orderData.paymentStatus =
+          existingOrder?.paymentStatus === 'REJECTED' || existingPayment?.paymentStatus === 'REJECTED'
+            ? 'REJECTED'
+            : 'PENDING_VERIFICATION';
+        orderData.screenshotUrl =
+          existingOrder?.screenshotUrl ||
+          `/api/payments/screenshot/${encodeURIComponent(String(orderData.id).replace(/^#/, ''))}`;
       }
     }
 
@@ -1772,24 +1805,29 @@ apiRouter.post(
             paymentMethod.toLowerCase().includes('direct'));
 
         if (isUpi) {
-          const hasProof = Boolean(
+          const hasProofInDb = Boolean(
             order?.screenshotUrl ||
+            (order as any)?.screenshotData ||
             payment?.screenshotPath ||
             (payment as any)?.screenshot_path ||
-            payment?.paymentStatus === 'PENDING_VERIFICATION' ||
-            (payment as any)?.payment_status === 'PENDING_VERIFICATION' ||
-            req.body?.screenshotUrl ||
-            req.body?.screenshot
+            (payment as any)?.screenshotData
           );
 
-          if (!hasProof) {
+          if (!hasProofInDb) {
             sendJson(res, 400, {
               success: false,
+              code: 'PAYMENT_PROOF_REQUIRED',
               error: 'Payment screenshot proof is required before confirming an online order. Please upload and submit payment proof first.',
             });
             return;
           }
         }
+
+        const alreadyPaidInDb =
+          order?.paymentStatus === 'PAID' ||
+          order?.paymentStatus === 'COMPLETED' ||
+          payment?.paymentStatus === 'PAID' ||
+          payment?.paymentStatus === 'COMPLETED';
 
         // Keep order and payment status consistent with admin verification workflow:
         // Do not mark UPI as PAID! It remains PENDING_VERIFICATION for admin approval.
@@ -1797,8 +1835,15 @@ apiRouter.post(
           ...(order || {}),
           ...(req.body || {}),
           id: orderId,
-          status: isUpi ? 'Pending' : 'CONFIRMED',
-          paymentStatus: isUpi ? 'PENDING_VERIFICATION' : (order?.paymentStatus || 'Pending'),
+          status: isUpi ? (alreadyPaidInDb ? order?.status || 'CONFIRMED' : 'Pending') : 'CONFIRMED',
+          paymentStatus: isUpi
+            ? alreadyPaidInDb
+              ? order?.paymentStatus || payment?.paymentStatus || 'COMPLETED'
+              : 'PENDING_VERIFICATION'
+            : order?.paymentStatus || 'PENDING_COLLECTION',
+          screenshotUrl: isUpi
+            ? order?.screenshotUrl || `/api/payments/screenshot/${encodeURIComponent(orderId.replace(/^#/, ''))}`
+            : undefined,
           confirmed: true,
         };
 
@@ -4521,8 +4566,11 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
       return;
     }
 
-    // 1. If order is already PAID in MySQL, proof is no longer accepted
-    if ((order && order.paymentStatus === 'PAID') || (payment && payment.paymentStatus === 'PAID')) {
+    // 1. If order is already PAID/COMPLETED in MySQL, proof is no longer accepted
+    if (
+      (order && (order.paymentStatus === 'PAID' || order.paymentStatus === 'COMPLETED')) ||
+      (payment && (payment.paymentStatus === 'PAID' || payment.paymentStatus === 'COMPLETED'))
+    ) {
       sendJson(res, 400, {
         success: false,
         alreadyPaid: true,
@@ -4532,7 +4580,8 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
     }
 
     // 2. Enforce one-upload restriction per order:
-    // If active screenshot proof exists (and is not REJECTED), block duplicate upload!
+    // If active screenshot proof exists (and is not REJECTED), block duplicate upload
+    // unless explicitly replacing an unconfirmed checkout draft (`replaceDraft: true`).
     const hasActiveScreenshot = Boolean(
       order?.screenshotUrl ||
       payment?.screenshotPath ||
@@ -4542,8 +4591,10 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
     const isRejected =
       (order && order.paymentStatus === 'REJECTED') ||
       (payment && payment.paymentStatus === 'REJECTED');
+    const canReplaceCheckoutDraft =
+      req.body?.replaceDraft === true && (!order || order.status === 'Pending');
 
-    if (hasActiveScreenshot && !isRejected) {
+    if (hasActiveScreenshot && !isRejected && !canReplaceCheckoutDraft) {
       sendJson(res, 400, {
         success: false,
         alreadySubmitted: true,
@@ -4551,6 +4602,8 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
       });
       return;
     }
+
+    const previousScreenshotPath = payment?.screenshotPath || '';
 
     // Acquire order lock for the upload write
     activeUploadsByOrder.add(trimmedOrderId);
@@ -4581,6 +4634,7 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
         email: order?.customerEmail,
         mobile: order?.customerPhone,
         total: order?.total || payment?.amount,
+        allowReplaceUnpaidDraft: canReplaceCheckoutDraft,
       });
 
       if (!saved.success) {
@@ -4595,6 +4649,13 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
           error: saved.error || 'Database update failed. Payment status was not changed to PENDING_VERIFICATION.',
         });
         return;
+      }
+
+      // Remove superseded screenshot file on disk after clean replacement
+      if (canReplaceCheckoutDraft && previousScreenshotPath && previousScreenshotPath !== filePathOnDisk) {
+        try {
+          if (fs.existsSync(previousScreenshotPath)) fs.unlinkSync(previousScreenshotPath);
+        } catch {}
       }
 
       const cleanOrderId = trimmedOrderId.replace(/^#/, '');
@@ -4616,6 +4677,91 @@ apiRouter.post(['/api/payments/screenshot/upload', '/payments/screenshot/upload'
     sendJson(res, 500, {
       success: false,
       error: err?.message || 'Server error uploading payment screenshot.',
+    });
+  }
+});
+
+/**
+ * DELETE /api/payments/screenshot/:orderId
+ * Removes an unconfirmed checkout draft's screenshot so the customer must upload
+ * a new proof before proceeding or confirming the UPI order.
+ */
+apiRouter.delete(['/api/payments/screenshot/:orderId', '/payments/screenshot/:orderId'], async (req: Request, res: Response) => {
+  try {
+    const rawOrderId = decodeURIComponent(req.params.orderId || '').trim();
+    if (!rawOrderId) {
+      sendJson(res, 400, { success: false, error: 'orderId is required.' });
+      return;
+    }
+
+    const adminAuth = await extractAdminAuth(req);
+    const isAdmin = adminAuth.authenticated && !!adminAuth.admin;
+    let isCustomer = false;
+    let customerAuthId = '';
+
+    if (!isAdmin) {
+      const custAuth = extractAuthCustomer(req);
+      if (custAuth.authenticated) {
+        isCustomer = true;
+        customerAuthId = custAuth.customerId;
+      }
+    }
+
+    if (!isAdmin && !isCustomer) {
+      sendJson(res, 401, {
+        success: false,
+        error: 'Authentication required to remove payment screenshot.',
+      });
+      return;
+    }
+
+    const order = await findOrderInDb(rawOrderId);
+    const payment = await getPaymentRecordByOrderId(rawOrderId);
+
+    if (!order && !payment) {
+      sendJson(res, 200, { success: true, paymentStatus: 'INITIATED' });
+      return;
+    }
+
+    const orderOwner = order?.customerId || payment?.customerId || 'guest';
+    const isOwner =
+      isAdmin ||
+      customerAuthId === orderOwner ||
+      orderOwner === 'guest' ||
+      orderOwner === 'guest_user';
+
+    if (!isOwner) {
+      sendJson(res, 403, {
+        success: false,
+        error: 'Access denied: You can only modify payment proof for your own order.',
+      });
+      return;
+    }
+
+    const cleared = await clearCheckoutScreenshotProofInDb(rawOrderId);
+    if (!cleared.success) {
+      sendJson(res, 400, {
+        success: false,
+        error: cleared.error || 'Cannot remove uploaded payment proof for this order.',
+      });
+      return;
+    }
+
+    if (cleared.screenshotPathToDelete && fs.existsSync(cleared.screenshotPathToDelete)) {
+      try {
+        fs.unlinkSync(cleared.screenshotPathToDelete);
+      } catch {}
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      paymentStatus: 'INITIATED',
+      message: 'Payment screenshot removed. Please upload a new screenshot before continuing.',
+    });
+  } catch (err: any) {
+    sendJson(res, 500, {
+      success: false,
+      error: err?.message || 'Server error removing payment screenshot.',
     });
   }
 });

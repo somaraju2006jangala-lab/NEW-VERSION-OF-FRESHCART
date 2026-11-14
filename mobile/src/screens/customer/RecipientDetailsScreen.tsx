@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { ComponentRef, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,15 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { User, Phone, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
 import { Header } from '../../components/common/Header';
+import { useKeyboardAwareScroll } from '../../utils/useKeyboardAwareScroll';
 
 export interface RecipientInfo {
   fullName: string;
@@ -31,6 +33,22 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
   onContinue,
   onBack,
 }) => {
+  const insets = useSafeAreaInsets();
+  const {
+    scrollViewRef,
+    containerRef,
+    isKeyboardVisible,
+    scrollBottomPadding,
+    onContainerLayout,
+    onScroll,
+    setFieldRef,
+    handleFieldFocus,
+    handleFieldBlur,
+  } = useKeyboardAwareScroll();
+
+  const phoneInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const emailInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+
   const [fullName, setFullName] = useState(initialRecipient.fullName || '');
   const [phone, setPhone] = useState(initialRecipient.phone || '');
   const [email, setEmail] = useState(initialRecipient.email || '');
@@ -65,6 +83,7 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
   };
 
   const handleContinue = () => {
+    Keyboard.dismiss();
     if (!validate()) {
       Alert.alert('Required Information', 'Please complete all recipient fields before proceeding.');
       return;
@@ -78,136 +97,170 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <Header title="Checkout" subtitle="Step 1 of 4: Recipient Details" showBack onBack={onBack} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Progress Indicator - 4 Steps */}
-          <View style={styles.stepProgressRow}>
-            <View style={[styles.stepBadge, styles.stepActive]}>
-              <Text style={styles.stepNumberActive}>1</Text>
-              <Text style={styles.stepLabelActive}>Recipient</Text>
-            </View>
-            <View style={styles.stepLine} />
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepNumber}>2</Text>
-              <Text style={styles.stepLabel}>Address</Text>
-            </View>
-            <View style={styles.stepLine} />
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepNumber}>3</Text>
-              <Text style={styles.stepLabel}>Payment</Text>
-            </View>
-            <View style={styles.stepLine} />
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepNumber}>4</Text>
-              <Text style={styles.stepLabel}>Confirm</Text>
-            </View>
-          </View>
-
-          {/* Form Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.iconCircle}>
-                <User size={20} color="#006b2c" />
+        <View
+          ref={containerRef}
+          style={{ flex: 1 }}
+          onLayout={onContainerLayout}
+        >
+          <ScrollView
+            ref={scrollViewRef}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: scrollBottomPadding },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Progress Indicator - 4 Steps */}
+            <View style={styles.stepProgressRow}>
+              <View style={[styles.stepBadge, styles.stepActive]}>
+                <Text style={styles.stepNumberActive}>1</Text>
+                <Text style={styles.stepLabelActive}>Recipient</Text>
               </View>
-              <View>
-                <Text style={styles.cardTitle}>Who is receiving this order?</Text>
-                <Text style={styles.cardSubtitle}>
-                  We will send dispatch alerts and delivery updates to these details.
+              <View style={styles.stepLine} />
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepNumber}>2</Text>
+                <Text style={styles.stepLabel}>Address</Text>
+              </View>
+              <View style={styles.stepLine} />
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepNumber}>3</Text>
+                <Text style={styles.stepLabel}>Confirm</Text>
+              </View>
+              <View style={styles.stepLine} />
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepNumber}>4</Text>
+                <Text style={styles.stepLabel}>Payment</Text>
+              </View>
+            </View>
+
+            {/* Form Card */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <View style={styles.iconCircle}>
+                  <User size={20} color="#006b2c" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>Who is receiving this order?</Text>
+                  <Text style={styles.cardSubtitle}>
+                    We will send dispatch alerts and delivery updates to these details.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Full Name */}
+              <View ref={setFieldRef('fullName')} collapsable={false} style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Recipient Full Name <Text style={styles.requiredAsterisk}>*</Text>
                 </Text>
+                <View style={[styles.inputBox, errors.fullName ? styles.inputBoxError : null]}>
+                  <User size={18} color="#94a3b8" />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g. Rahul Sharma"
+                    placeholderTextColor="#94a3b8"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    value={fullName}
+                    onFocus={() => handleFieldFocus('fullName')}
+                    onBlur={() => handleFieldBlur('fullName')}
+                    onSubmitEditing={() => phoneInputRef.current?.focus()}
+                    onChangeText={(text) => {
+                      setFullName(text);
+                      if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: undefined }));
+                    }}
+                  />
+                </View>
+                {errors.fullName ? <Text style={styles.errorText}>{errors.fullName}</Text> : null}
+              </View>
+
+              {/* Mobile Phone */}
+              <View ref={setFieldRef('phone')} collapsable={false} style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Mobile Phone Number <Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
+                <View style={[styles.inputBox, errors.phone ? styles.inputBoxError : null]}>
+                  <Phone size={18} color="#94a3b8" />
+                  <TextInput
+                    ref={phoneInputRef}
+                    style={styles.textInput}
+                    placeholder="e.g. 9876543210"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="phone-pad"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    value={phone}
+                    onFocus={() => handleFieldFocus('phone')}
+                    onBlur={() => handleFieldBlur('phone')}
+                    onSubmitEditing={() => emailInputRef.current?.focus()}
+                    onChangeText={(text) => {
+                      setPhone(text);
+                      if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
+                    }}
+                  />
+                </View>
+                {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
+              </View>
+
+              {/* Email Address */}
+              <View ref={setFieldRef('email')} collapsable={false} style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Email Address (for invoices & receipt) <Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
+                <View style={[styles.inputBox, errors.email ? styles.inputBoxError : null]}>
+                  <Mail size={18} color="#94a3b8" />
+                  <TextInput
+                    ref={emailInputRef}
+                    style={styles.textInput}
+                    placeholder="e.g. rahul@freshcart.com"
+                    placeholderTextColor="#94a3b8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    returnKeyType="done"
+                    value={email}
+                    onFocus={() => handleFieldFocus('email')}
+                    onBlur={() => handleFieldBlur('email')}
+                    onSubmitEditing={() => Keyboard.dismiss()}
+                    onChangeText={(text) => {
+                      setEmail(text);
+                      if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
+                    }}
+                  />
+                </View>
+                {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
               </View>
             </View>
 
-            {/* Full Name */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Recipient Full Name <Text style={styles.requiredAsterisk}>*</Text>
+            {/* Privacy Guarantee Note */}
+            <View style={styles.guaranteeBox}>
+              <ShieldCheck size={18} color="#006b2c" />
+              <Text style={styles.guaranteeText}>
+                Your contact details are encrypted and only used for order delivery notifications.
               </Text>
-              <View style={[styles.inputBox, errors.fullName ? styles.inputBoxError : null]}>
-                <User size={18} color="#94a3b8" />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. Rahul Sharma"
-                  placeholderTextColor="#94a3b8"
-                  value={fullName}
-                  onChangeText={(text) => {
-                    setFullName(text);
-                    if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: undefined }));
-                  }}
-                />
-              </View>
-              {errors.fullName ? <Text style={styles.errorText}>{errors.fullName}</Text> : null}
             </View>
-
-            {/* Mobile Phone */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Mobile Phone Number <Text style={styles.requiredAsterisk}>*</Text>
-              </Text>
-              <View style={[styles.inputBox, errors.phone ? styles.inputBoxError : null]}>
-                <Phone size={18} color="#94a3b8" />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. 9876543210"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="phone-pad"
-                  value={phone}
-                  onChangeText={(text) => {
-                    setPhone(text);
-                    if (errors.phone) setErrors((prev) => ({ ...prev, phone: undefined }));
-                  }}
-                />
-              </View>
-              {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
-            </View>
-
-            {/* Email Address */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Email Address (for invoices & receipt) <Text style={styles.requiredAsterisk}>*</Text>
-              </Text>
-              <View style={[styles.inputBox, errors.email ? styles.inputBoxError : null]}>
-                <Mail size={18} color="#94a3b8" />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g. rahul@freshcart.com"
-                  placeholderTextColor="#94a3b8"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={email}
-                  onChangeText={(text) => {
-                    setEmail(text);
-                    if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
-                  }}
-                />
-              </View>
-              {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
-            </View>
-          </View>
-
-          {/* Privacy Guarantee Note */}
-          <View style={styles.guaranteeBox}>
-            <ShieldCheck size={18} color="#006b2c" />
-            <Text style={styles.guaranteeText}>
-              Your contact details are encrypted and only used for order delivery notifications.
-            </Text>
-          </View>
-        </ScrollView>
-
-        {/* Bottom Next Action */}
-        <View style={styles.bottomBar}>
-          <TouchableOpacity style={styles.continueBtn} onPress={handleContinue}>
-            <Text style={styles.continueBtnText}>Next</Text>
-            <ArrowRight size={18} color="#ffffff" />
-          </TouchableOpacity>
+          </ScrollView>
         </View>
+
+        {/* Bottom Next Action - hidden while keyboard is open so fields are never covered */}
+        {!isKeyboardVisible && (
+          <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <TouchableOpacity style={styles.continueBtn} onPress={handleContinue}>
+              <Text style={styles.continueBtnText}>Next</Text>
+              <ArrowRight size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -267,10 +320,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   stepLine: {
-    width: 40,
+    width: 32,
     height: 2,
     backgroundColor: '#cbd5e1',
-    marginHorizontal: 8,
+    marginHorizontal: 6,
     marginBottom: 16,
   },
   card: {

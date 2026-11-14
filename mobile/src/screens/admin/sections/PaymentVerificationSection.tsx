@@ -98,7 +98,10 @@ export const PaymentVerificationSection: React.FC<PaymentVerificationSectionProp
     }
     try {
       const base = await getApiBaseUrl();
-      const resolved = `${base}${rawProof.startsWith('/') ? '' : '/'}${rawProof}`;
+      let resolved = `${base}${rawProof.startsWith('/') ? '' : '/'}${rawProof}`;
+      if (adminToken && !resolved.includes('adminToken=')) {
+        resolved += `${resolved.includes('?') ? '&' : '?'}adminToken=${encodeURIComponent(adminToken)}`;
+      }
       setSelectedScreenshot(resolved);
     } catch {
       setSelectedScreenshot(rawProof);

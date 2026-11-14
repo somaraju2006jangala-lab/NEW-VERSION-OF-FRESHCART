@@ -1,14 +1,16 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   Alert,
   Platform,
+  ActivityIndicator,
+  Keyboard,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Banknote,
   QrCode,
@@ -19,30 +21,74 @@ import {
   Check,
 } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
-import { customerApi } from '../../services/apiClient';
+import { customerApi, cleanErrorMessage } from '../../services/apiClient';
+import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
 import { Header } from '../../components/common/Header';
-import { UpiPaymentSettings } from '../../types';
+import { UpiPaymentSettings, UploadedPaymentProof } from '../../types';
 import { UpiQrCodeView } from '../../components/payment/UpiQrCodeView';
+import { UpiPaymentProofUpload } from '../../components/payment/UpiPaymentProofUpload';
+import { RecipientInfo } from './RecipientDetailsScreen';
+import { useKeyboardAwareScroll } from '../../utils/useKeyboardAwareScroll';
 
 interface PaymentMethodScreenProps {
   initialPaymentMethod?: 'COD' | 'UPI';
+  onPaymentMethodChange?: (method: 'COD' | 'UPI') => void;
   subtotal: number;
   deliveryCharge: number;
   appliedCoupon?: { code: string; discount: number };
-  onNext: (selectedMethod: 'COD' | 'UPI') => void;
+  orderId: string;
+  transactionRef: string;
+  recipient: RecipientInfo;
+  deliveryAddress: string;
+  cartSignature?: string;
+  uploadedProof: UploadedPaymentProof | null;
+  onProofUploaded: (proof: UploadedPaymentProof) => void;
+  onProofCleared: () => void;
+  onOrderSuccess: (order: any) => void;
   onBack: () => void;
 }
 
 export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
   initialPaymentMethod = 'COD',
+  onPaymentMethodChange,
   subtotal,
   deliveryCharge,
   appliedCoupon,
-  onNext,
+  orderId,
+  transactionRef,
+  recipient,
+  deliveryAddress,
+  cartSignature,
+  uploadedProof,
+  onProofUploaded,
+  onProofCleared,
+  onOrderSuccess,
   onBack,
 }) => {
+  const insets = useSafeAreaInsets();
+  const {
+    scrollViewRef,
+    containerRef,
+    isKeyboardVisible,
+    scrollBottomPadding,
+    onContainerLayout,
+    onScroll,
+    setFieldRef,
+    scrollSectionIntoView,
+  } = useKeyboardAwareScroll();
+
+  useEffect(() => {
+    Keyboard.dismiss();
+  }, []);
+
+  const { cart, clearCart } = useCart();
+  const { currentCustomer, customerToken } = useAuth();
   const [paymentMethod, setPaymentMethod] = useState<'COD' | 'UPI'>(initialPaymentMethod);
   const [upiSettings, setUpiSettings] = useState<UpiPaymentSettings | null>(null);
+  const [proofRequiredError, setProofRequiredError] = useState<string | null>(null);
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   // Sync state if initialPaymentMethod changes
   useEffect(() => {
@@ -74,13 +120,119 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
   const rawUpiId = (upiSettings?.upiId || 'somaraju2006jangala-1@okhdfcbank').trim();
   const rawMerchantName = (upiSettings?.merchantName || 'FreshCart Store').trim();
 
-  const handleNext = () => {
+  const handleSelectMethod = (method: 'COD' | 'UPI') => {
+    setPaymentMethod(method);
+    onPaymentMethodChange?.(method);
+    if (method === 'COD') {
+      setProofRequiredError(null);
+    } else {
+      scrollSectionIntoView('proof', 180);
+    }
+  };
+
+  const handlePlaceOrder = async () => {
+    if (isPlacingOrder || isSubmittingRef.current) return;
+
+    if (!recipient.fullName.trim() || !recipient.phone.trim()) {
+      Alert.alert('Missing Details', 'Recipient information is incomplete. Please review recipient details.');
+      return;
+    }
+    if (!deliveryAddress.trim()) {
+      Alert.alert('Missing Address', 'Delivery address is required. Please review delivery address.');
+      return;
+    }
+    if (cart.length === 0) {
+      Alert.alert('Empty Cart', 'Your cart is empty. Please add items before placing an order.');
+      return;
+    }
     if (!paymentMethod) {
       Alert.alert('Payment Method Required', 'Please select a payment method to proceed.');
       return;
     }
 
-    onNext(paymentMethod);
+    if (paymentMethod === 'UPI' && !uploadedProof) {
+      const msg =
+        'Please select and upload your UPI payment screenshot proof below the QR code before submitting your order.';
+      setProofRequiredError(msg);
+      Alert.alert('Payment Proof Required', msg);
+      return;
+    }
+
+    setProofRequiredError(null);
+    isSubmittingRef.current = true;
+    setIsPlacingOrder(true);
+
+    try {
+      const effectiveOrderId =
+        uploadedProof?.orderId ||
+        (orderId && orderId.trim()) ||
+        `#FC-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      const orderPayload: any = {
+        id: effectiveOrderId,
+        orderId: effectiveOrderId,
+        customerName: recipient.fullName.trim(),
+        customerId: currentCustomer?.id || 'guest',
+        customerEmail: recipient.email.trim() || 'guest@freshcart.com',
+        customerPhone: recipient.phone.trim(),
+        deliveryAddress: deliveryAddress.trim(),
+        items: cart.map((c) => ({
+          product: {
+            id: c.product.id,
+            title: c.product.title,
+            price: c.selectedPrice !== undefined ? c.selectedPrice : c.product.price,
+            unit: c.product.unit,
+            image: c.product.image,
+            category: c.product.category,
+          },
+          quantity: c.quantity,
+          selectedPackSize: c.selectedPackSize,
+          selectedPrice: c.selectedPrice,
+        })),
+        subtotal,
+        discount: discountAmount,
+        total: grandTotal,
+        couponCode: appliedCoupon?.code || '',
+        status: paymentMethod === 'COD' ? 'CONFIRMED' : 'Pending',
+        paymentMethod: paymentMethod === 'COD' ? 'Cash on Delivery' : 'UPI',
+        paymentStatus: paymentMethod === 'COD' ? 'PENDING_COLLECTION' : 'PENDING_VERIFICATION',
+        transactionRef:
+          paymentMethod === 'UPI' ? uploadedProof?.transactionRef || transactionRef : undefined,
+        screenshotUrl: paymentMethod === 'UPI' ? uploadedProof?.screenshotUrl : undefined,
+        createdAt: new Date().toISOString(),
+      };
+
+      const res =
+        paymentMethod === 'UPI'
+          ? await customerApi.confirmOrder(effectiveOrderId, orderPayload, customerToken || undefined)
+          : await customerApi.placeOrder(orderPayload, customerToken || undefined);
+
+      if (res.success || res.order || res.orderId) {
+        const confirmedOrder = {
+          ...orderPayload,
+          ...(res.order || {}),
+          paymentStatus: paymentMethod === 'COD' ? 'PENDING_COLLECTION' : 'PENDING_VERIFICATION',
+          screenshotUrl: uploadedProof?.screenshotUrl || res.order?.screenshotUrl,
+        };
+
+        clearCart();
+        onOrderSuccess(confirmedOrder);
+      } else {
+        Alert.alert(
+          'Order Placement Failed',
+          res.error || 'Server rejected order submission. Please retry.'
+        );
+        isSubmittingRef.current = false;
+        setIsPlacingOrder(false);
+      }
+    } catch (err: any) {
+      Alert.alert(
+        'Error',
+        cleanErrorMessage(err, 'Failed to place order. Please check your connection and try again.')
+      );
+      isSubmittingRef.current = false;
+      setIsPlacingOrder(false);
+    }
   };
 
   const handleCopyUpiId = async () => {
@@ -95,11 +247,26 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Header title="Checkout" subtitle="Step 3 of 4: Payment Method" showBack onBack={onBack} />
+    <View style={styles.container}>
+      <Header title="Payment Method" subtitle="Step 4 of 4: Payment & Place Order" showBack onBack={onBack} />
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Progress Indicator - 4 Steps */}
+      <View
+        ref={containerRef}
+        style={{ flex: 1 }}
+        onLayout={onContainerLayout}
+      >
+        <ScrollView
+          ref={scrollViewRef}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: scrollBottomPadding },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+        {/* Progress Indicator - 4 Steps: Recipient -> Address -> Confirm -> Payment */}
         <View style={styles.stepProgressRow}>
           <View style={styles.stepBadge}>
             <View style={styles.stepDoneCircle}>
@@ -115,14 +282,16 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
             <Text style={styles.stepLabelDone}>Address</Text>
           </View>
           <View style={[styles.stepLine, styles.stepLineDone]} />
-          <View style={[styles.stepBadge, styles.stepActive]}>
-            <Text style={styles.stepNumberActive}>3</Text>
-            <Text style={styles.stepLabelActive}>Payment</Text>
-          </View>
-          <View style={styles.stepLine} />
           <View style={styles.stepBadge}>
-            <Text style={styles.stepNumber}>4</Text>
-            <Text style={styles.stepLabel}>Confirm</Text>
+            <View style={styles.stepDoneCircle}>
+              <CheckCircle2 size={16} color="#ffffff" />
+            </View>
+            <Text style={styles.stepLabelDone}>Confirm</Text>
+          </View>
+          <View style={[styles.stepLine, styles.stepLineDone]} />
+          <View style={[styles.stepBadge, styles.stepActive]}>
+            <Text style={styles.stepNumberActive}>4</Text>
+            <Text style={styles.stepLabelActive}>Payment</Text>
           </View>
         </View>
 
@@ -130,12 +299,12 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
         <Text style={styles.sectionTitle}>Select Preferred Payment Method</Text>
 
         {/* Method 1: Cash on Delivery (COD) */}
-        <TouchableOpacity
-          style={[styles.methodCard, paymentMethod === 'COD' ? styles.methodCardActive : null]}
-          activeOpacity={0.9}
-          onPress={() => setPaymentMethod('COD')}
-        >
-          <View style={styles.methodHeader}>
+        <View style={[styles.methodCard, paymentMethod === 'COD' ? styles.methodCardActive : null]}>
+          <TouchableOpacity
+            style={styles.methodHeader}
+            activeOpacity={0.85}
+            onPress={() => handleSelectMethod('COD')}
+          >
             <View style={styles.methodLeft}>
               <View style={[styles.methodIconBox, paymentMethod === 'COD' ? styles.methodIconBoxActive : null]}>
                 <Banknote size={22} color={paymentMethod === 'COD' ? '#006b2c' : '#64748b'} />
@@ -156,7 +325,7 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
             <View style={[styles.radioCircle, paymentMethod === 'COD' ? styles.radioCircleActive : null]}>
               {paymentMethod === 'COD' ? <View style={styles.radioInner} /> : null}
             </View>
-          </View>
+          </TouchableOpacity>
 
           {paymentMethod === 'COD' && (
             <View style={styles.codDetailsBox}>
@@ -166,15 +335,15 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
               </Text>
             </View>
           )}
-        </TouchableOpacity>
+        </View>
 
         {/* Method 2: UPI / Online Payment */}
-        <TouchableOpacity
-          style={[styles.methodCard, paymentMethod === 'UPI' ? styles.methodCardActive : null]}
-          activeOpacity={0.9}
-          onPress={() => setPaymentMethod('UPI')}
-        >
-          <View style={styles.methodHeader}>
+        <View style={[styles.methodCard, paymentMethod === 'UPI' ? styles.methodCardActive : null]}>
+          <TouchableOpacity
+            style={styles.methodHeader}
+            activeOpacity={0.85}
+            onPress={() => handleSelectMethod('UPI')}
+          >
             <View style={styles.methodLeft}>
               <View style={[styles.methodIconBox, paymentMethod === 'UPI' ? styles.methodIconBoxActive : null]}>
                 <QrCode size={22} color={paymentMethod === 'UPI' ? '#006b2c' : '#64748b'} />
@@ -190,7 +359,7 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
             <View style={[styles.radioCircle, paymentMethod === 'UPI' ? styles.radioCircleActive : null]}>
               {paymentMethod === 'UPI' ? <View style={styles.radioInner} /> : null}
             </View>
-          </View>
+          </TouchableOpacity>
 
           {paymentMethod === 'UPI' && (
             <View style={styles.upiDetailsBox}>
@@ -237,9 +406,38 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
                   });
                 }}
               />
+
+              {/* Payment Proof Upload Directly Below QR Code & Instructions */}
+              <View ref={setFieldRef('proof')} collapsable={false}>
+                <UpiPaymentProofUpload
+                  orderId={orderId}
+                  transactionRef={transactionRef}
+                  amount={grandTotal}
+                  upiId={rawUpiId}
+                  merchantName={rawMerchantName}
+                  upiSettingsReady={upiSettings ? upiSettings.enabled !== false : Boolean(rawUpiId)}
+                  recipient={recipient}
+                  deliveryAddress={deliveryAddress}
+                  subtotal={subtotal}
+                  discountAmount={discountAmount}
+                  appliedCouponCode={appliedCoupon?.code}
+                  cartSignature={cartSignature}
+                  uploadedProof={uploadedProof}
+                  highlightedError={proofRequiredError}
+                  onInteractionFocus={() => scrollSectionIntoView('proof', 140)}
+                  onProofUploaded={(proof) => {
+                    setProofRequiredError(null);
+                    onProofUploaded(proof);
+                  }}
+                  onProofCleared={() => {
+                    onProofCleared();
+                    scrollSectionIntoView('proof', 140);
+                  }}
+                />
+              </View>
             </View>
           )}
-        </TouchableOpacity>
+        </View>
 
         {/* Order Bill Summary */}
         <View style={styles.billCard}>
@@ -282,20 +480,45 @@ export const PaymentMethodScreen: React.FC<PaymentMethodScreenProps> = ({
           </Text>
         </View>
       </ScrollView>
-
-      {/* Bottom Next Action */}
-      <View style={styles.bottomBar}>
-        <View style={styles.bottomBarLeft}>
-          <Text style={styles.bottomTotalLabel}>Total Payable</Text>
-          <Text style={styles.bottomTotalValue}>₹{grandTotal}</Text>
-        </View>
-
-        <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
-          <Text style={styles.nextBtnText}>Next</Text>
-          <ArrowRight size={18} color="#ffffff" />
-        </TouchableOpacity>
       </View>
-    </SafeAreaView>
+
+      {/* Bottom Place Order Action (disabled for UPI until payment proof upload succeeds) */}
+      {!isKeyboardVisible && (
+        <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+          <View style={styles.bottomBarLeft}>
+            <Text style={styles.bottomTotalLabel}>
+              {paymentMethod === 'UPI' && !uploadedProof ? 'Upload Proof First' : 'Total Payable'}
+            </Text>
+            <Text style={styles.bottomTotalValue}>₹{grandTotal}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.nextBtn,
+              (isPlacingOrder || (paymentMethod === 'UPI' && !uploadedProof)) && styles.nextBtnDisabled,
+            ]}
+            onPress={handlePlaceOrder}
+            disabled={isPlacingOrder || (paymentMethod === 'UPI' && !uploadedProof)}
+            activeOpacity={0.85}
+          >
+            {isPlacingOrder ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <>
+                <Text style={styles.nextBtnText}>
+                  {paymentMethod === 'UPI' && !uploadedProof
+                    ? 'Upload Proof to Submit'
+                    : 'Confirm Place Order'}
+                </Text>
+                {!(paymentMethod === 'UPI' && !uploadedProof) && (
+                  <ArrowRight size={18} color="#ffffff" />
+                )}
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
   );
 };
 
@@ -330,17 +553,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stepNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#e2e8f0',
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 28,
-    fontSize: 13,
-    fontWeight: '700',
-  },
   stepNumberActive: {
     width: 28,
     height: 28,
@@ -351,11 +563,6 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     fontSize: 13,
     fontWeight: '800',
-  },
-  stepLabel: {
-    fontSize: 11,
-    color: '#94a3b8',
-    fontWeight: '600',
   },
   stepLabelDone: {
     fontSize: 11,
@@ -670,6 +877,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#006b2c',
     borderRadius: 14,
     height: 48,
+    paddingHorizontal: 12,
+  },
+  nextBtnDisabled: {
+    backgroundColor: '#94a3b8',
+    opacity: 0.7,
   },
   nextBtnText: {
     fontSize: 15,

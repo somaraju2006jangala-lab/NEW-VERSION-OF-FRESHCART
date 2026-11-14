@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { ComponentRef, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,21 +6,21 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   MapPin,
   Home,
   Building,
   ArrowRight,
   CheckCircle2,
-  Plus,
-  Compass,
 } from 'lucide-react-native';
 import { Header } from '../../components/common/Header';
+import { useKeyboardAwareScroll } from '../../utils/useKeyboardAwareScroll';
 
 export interface DeliveryAddressInfo {
   houseNo: string;
@@ -45,6 +45,25 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
   onContinue,
   onBack,
 }) => {
+  const insets = useSafeAreaInsets();
+  const {
+    scrollViewRef,
+    containerRef,
+    isKeyboardVisible,
+    scrollBottomPadding,
+    onContainerLayout,
+    onScroll,
+    setFieldRef,
+    handleFieldFocus,
+    handleFieldBlur,
+  } = useKeyboardAwareScroll();
+
+  const streetInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const areaInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const cityInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const stateInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const pinCodeInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+
   // Pre-fill or default
   const [houseNo, setHouseNo] = useState(initialAddress?.houseNo || '');
   const [street, setStreet] = useState(initialAddress?.street || '');
@@ -52,7 +71,9 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
   const [city, setCity] = useState(initialAddress?.city || 'Bengaluru');
   const [stateName, setStateName] = useState(initialAddress?.state || 'Karnataka');
   const [pinCode, setPinCode] = useState(initialAddress?.pinCode || '');
-  const [addressType, setAddressType] = useState<'Home' | 'Work' | 'Other'>('Home');
+  const [addressType, setAddressType] = useState<'Home' | 'Work' | 'Other'>(
+    initialAddress?.type || 'Home'
+  );
 
   // Synchronize state when navigating backward or editing
   React.useEffect(() => {
@@ -105,6 +126,7 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
   };
 
   const handleContinue = () => {
+    Keyboard.dismiss();
     if (!validate()) {
       Alert.alert('Incomplete Address', 'Please provide house number, street, city, state, and 6-digit PIN code.');
       return;
@@ -128,222 +150,279 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <Header title="Checkout" subtitle="Step 2 of 4: Delivery Address" showBack onBack={onBack} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Progress Indicator - 4 Steps */}
-          <View style={styles.stepProgressRow}>
-            <View style={styles.stepBadge}>
-              <View style={styles.stepDoneCircle}>
-                <CheckCircle2 size={16} color="#ffffff" />
+        <View
+          ref={containerRef}
+          style={{ flex: 1 }}
+          onLayout={onContainerLayout}
+        >
+          <ScrollView
+            ref={scrollViewRef}
+            onScroll={onScroll}
+            scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: scrollBottomPadding },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Progress Indicator - 4 Steps */}
+            <View style={styles.stepProgressRow}>
+              <View style={styles.stepBadge}>
+                <View style={styles.stepDoneCircle}>
+                  <CheckCircle2 size={16} color="#ffffff" />
+                </View>
+                <Text style={styles.stepLabelDone}>Recipient</Text>
               </View>
-              <Text style={styles.stepLabelDone}>Recipient</Text>
+              <View style={[styles.stepLine, styles.stepLineDone]} />
+              <View style={[styles.stepBadge, styles.stepActive]}>
+                <Text style={styles.stepNumberActive}>2</Text>
+                <Text style={styles.stepLabelActive}>Address</Text>
+              </View>
+              <View style={styles.stepLine} />
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepNumber}>3</Text>
+                <Text style={styles.stepLabel}>Confirm</Text>
+              </View>
+              <View style={styles.stepLine} />
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepNumber}>4</Text>
+                <Text style={styles.stepLabel}>Payment</Text>
+              </View>
             </View>
-            <View style={[styles.stepLine, styles.stepLineDone]} />
-            <View style={[styles.stepBadge, styles.stepActive]}>
-              <Text style={styles.stepNumberActive}>2</Text>
-              <Text style={styles.stepLabelActive}>Address</Text>
-            </View>
-            <View style={styles.stepLine} />
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepNumber}>3</Text>
-              <Text style={styles.stepLabel}>Payment</Text>
-            </View>
-            <View style={styles.stepLine} />
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepNumber}>4</Text>
-              <Text style={styles.stepLabel}>Confirm</Text>
-            </View>
-          </View>
 
-          {/* Quick Saved Addresses Selection if any */}
-          {savedAddresses && savedAddresses.length > 0 && (
-            <View style={styles.savedSection}>
-              <Text style={styles.sectionHeading}>Saved Addresses:</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
-                {savedAddresses.map((addr, idx) => {
-                  const isCurrent =
-                    houseNo === addr.houseNo &&
-                    street === addr.street &&
-                    pinCode === addr.pinCode;
+            {/* Quick Saved Addresses Selection if any */}
+            {savedAddresses && savedAddresses.length > 0 && (
+              <View style={styles.savedSection}>
+                <Text style={styles.sectionHeading}>Saved Addresses:</Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  style={{ marginTop: 8 }}
+                >
+                  {savedAddresses.map((addr, idx) => {
+                    const isCurrent =
+                      houseNo === addr.houseNo &&
+                      street === addr.street &&
+                      pinCode === addr.pinCode;
 
+                    return (
+                      <TouchableOpacity
+                        key={idx}
+                        style={[styles.savedCard, isCurrent ? styles.savedCardActive : null]}
+                        onPress={() => handleSelectSaved(addr)}
+                      >
+                        <View style={styles.savedCardHeader}>
+                          {addr.type === 'Work' ? (
+                            <Building size={14} color="#0284c7" />
+                          ) : (
+                            <Home size={14} color="#006b2c" />
+                          )}
+                          <Text style={styles.savedCardType}>{addr.type || 'Home'}</Text>
+                        </View>
+                        <Text style={styles.savedCardText} numberOfLines={2}>
+                          {addr.houseNo}, {addr.street}, {addr.city} - {addr.pinCode}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Form Card */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <View style={styles.iconCircle}>
+                  <MapPin size={20} color="#006b2c" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>Complete Delivery Address</Text>
+                  <Text style={styles.cardSubtitle}>
+                    Direct dispatch to your doorstep from our fresh fulfillment pod.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Address Type Tag (Home / Work / Other) */}
+              <View style={styles.typeSelectorRow}>
+                {(['Home', 'Work', 'Other'] as const).map((type) => {
+                  const isSelected = addressType === type;
                   return (
                     <TouchableOpacity
-                      key={idx}
-                      style={[styles.savedCard, isCurrent ? styles.savedCardActive : null]}
-                      onPress={() => handleSelectSaved(addr)}
+                      key={type}
+                      style={[styles.typePill, isSelected ? styles.typePillActive : null]}
+                      onPress={() => setAddressType(type)}
                     >
-                      <View style={styles.savedCardHeader}>
-                        {addr.type === 'Work' ? (
-                          <Building size={14} color="#0284c7" />
-                        ) : (
-                          <Home size={14} color="#006b2c" />
-                        )}
-                        <Text style={styles.savedCardType}>{addr.type || 'Home'}</Text>
-                      </View>
-                      <Text style={styles.savedCardText} numberOfLines={2}>
-                        {addr.houseNo}, {addr.street}, {addr.city} - {addr.pinCode}
+                      <Text style={[styles.typePillText, isSelected ? styles.typePillTextActive : null]}>
+                        {type}
                       </Text>
                     </TouchableOpacity>
                   );
                 })}
-              </ScrollView>
-            </View>
-          )}
-
-          {/* Form Card */}
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.iconCircle}>
-                <MapPin size={20} color="#006b2c" />
               </View>
-              <View>
-                <Text style={styles.cardTitle}>Complete Delivery Address</Text>
-                <Text style={styles.cardSubtitle}>
-                  Direct dispatch to your doorstep from our fresh fulfillment pod.
-                </Text>
-              </View>
-            </View>
 
-            {/* Address Type Tag (Home / Work / Other) */}
-            <View style={styles.typeSelectorRow}>
-              {(['Home', 'Work', 'Other'] as const).map((type) => {
-                const isSelected = addressType === type;
-                return (
-                  <TouchableOpacity
-                    key={type}
-                    style={[styles.typePill, isSelected ? styles.typePillActive : null]}
-                    onPress={() => setAddressType(type)}
-                  >
-                    <Text style={[styles.typePillText, isSelected ? styles.typePillTextActive : null]}>
-                      {type}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* House / Flat No */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                House / Flat / Block No. <Text style={styles.requiredAsterisk}>*</Text>
-              </Text>
-              <TextInput
-                style={[styles.textInput, errors.houseNo ? styles.inputError : null]}
-                placeholder="e.g. Flat 304, Block B"
-                placeholderTextColor="#94a3b8"
-                value={houseNo}
-                onChangeText={(val) => {
-                  setHouseNo(val);
-                  if (errors.houseNo) setErrors((prev) => ({ ...prev, houseNo: '' }));
-                }}
-              />
-              {errors.houseNo ? <Text style={styles.errorText}>{errors.houseNo}</Text> : null}
-            </View>
-
-            {/* Apartment / Street */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Apartment / Street / Road Name <Text style={styles.requiredAsterisk}>*</Text>
-              </Text>
-              <TextInput
-                style={[styles.textInput, errors.street ? styles.inputError : null]}
-                placeholder="e.g. Green Meadows, 100ft Main Road"
-                placeholderTextColor="#94a3b8"
-                value={street}
-                onChangeText={(val) => {
-                  setStreet(val);
-                  if (errors.street) setErrors((prev) => ({ ...prev, street: '' }));
-                }}
-              />
-              {errors.street ? <Text style={styles.errorText}>{errors.street}</Text> : null}
-            </View>
-
-            {/* Area / Landmark */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Area / Locality / Nearby Landmark</Text>
-              <TextInput
-                style={styles.textInput}
-                placeholder="e.g. Near Metro Station, Indiranagar"
-                placeholderTextColor="#94a3b8"
-                value={area}
-                onChangeText={setArea}
-              />
-            </View>
-
-            {/* City & State Row */}
-            <View style={styles.formRow}>
-              <View style={{ flex: 1, marginRight: 6 }}>
+              {/* House / Flat No */}
+              <View ref={setFieldRef('houseNo')} collapsable={false} style={styles.inputGroup}>
                 <Text style={styles.label}>
-                  City <Text style={styles.requiredAsterisk}>*</Text>
+                  House / Flat / Block No. <Text style={styles.requiredAsterisk}>*</Text>
                 </Text>
                 <TextInput
-                  style={[styles.textInput, errors.city ? styles.inputError : null]}
-                  placeholder="e.g. Bengaluru"
+                  style={[styles.textInput, errors.houseNo ? styles.inputError : null]}
+                  placeholder="e.g. Flat 304, Block B"
                   placeholderTextColor="#94a3b8"
-                  value={city}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  value={houseNo}
+                  onFocus={() => handleFieldFocus('houseNo')}
+                  onBlur={() => handleFieldBlur('houseNo')}
+                  onSubmitEditing={() => streetInputRef.current?.focus()}
                   onChangeText={(val) => {
-                    setCity(val);
-                    if (errors.city) setErrors((prev) => ({ ...prev, city: '' }));
+                    setHouseNo(val);
+                    if (errors.houseNo) setErrors((prev) => ({ ...prev, houseNo: '' }));
                   }}
                 />
-                {errors.city ? <Text style={styles.errorText}>{errors.city}</Text> : null}
+                {errors.houseNo ? <Text style={styles.errorText}>{errors.houseNo}</Text> : null}
               </View>
 
-              <View style={{ flex: 1, marginLeft: 6 }}>
+              {/* Apartment / Street */}
+              <View ref={setFieldRef('street')} collapsable={false} style={styles.inputGroup}>
                 <Text style={styles.label}>
-                  State <Text style={styles.requiredAsterisk}>*</Text>
+                  Apartment / Street / Road Name <Text style={styles.requiredAsterisk}>*</Text>
                 </Text>
                 <TextInput
-                  style={[styles.textInput, errors.state ? styles.inputError : null]}
-                  placeholder="e.g. Karnataka"
+                  ref={streetInputRef}
+                  style={[styles.textInput, errors.street ? styles.inputError : null]}
+                  placeholder="e.g. Green Meadows, 100ft Main Road"
                   placeholderTextColor="#94a3b8"
-                  value={stateName}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  value={street}
+                  onFocus={() => handleFieldFocus('street')}
+                  onBlur={() => handleFieldBlur('street')}
+                  onSubmitEditing={() => areaInputRef.current?.focus()}
                   onChangeText={(val) => {
-                    setStateName(val);
-                    if (errors.state) setErrors((prev) => ({ ...prev, state: '' }));
+                    setStreet(val);
+                    if (errors.street) setErrors((prev) => ({ ...prev, street: '' }));
                   }}
                 />
-                {errors.state ? <Text style={styles.errorText}>{errors.state}</Text> : null}
+                {errors.street ? <Text style={styles.errorText}>{errors.street}</Text> : null}
+              </View>
+
+              {/* Area / Landmark */}
+              <View ref={setFieldRef('area')} collapsable={false} style={styles.inputGroup}>
+                <Text style={styles.label}>Area / Locality / Nearby Landmark</Text>
+                <TextInput
+                  ref={areaInputRef}
+                  style={styles.textInput}
+                  placeholder="e.g. Near Metro Station, Indiranagar"
+                  placeholderTextColor="#94a3b8"
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  value={area}
+                  onFocus={() => handleFieldFocus('area')}
+                  onBlur={() => handleFieldBlur('area')}
+                  onSubmitEditing={() => cityInputRef.current?.focus()}
+                  onChangeText={setArea}
+                />
+              </View>
+
+              {/* City & State Row */}
+              <View style={styles.formRow}>
+                <View ref={setFieldRef('city')} collapsable={false} style={{ flex: 1, marginRight: 6 }}>
+                  <Text style={styles.label}>
+                    City <Text style={styles.requiredAsterisk}>*</Text>
+                  </Text>
+                  <TextInput
+                    ref={cityInputRef}
+                    style={[styles.textInput, errors.city ? styles.inputError : null]}
+                    placeholder="e.g. Bengaluru"
+                    placeholderTextColor="#94a3b8"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    value={city}
+                    onFocus={() => handleFieldFocus('city')}
+                    onBlur={() => handleFieldBlur('city')}
+                    onSubmitEditing={() => stateInputRef.current?.focus()}
+                    onChangeText={(val) => {
+                      setCity(val);
+                      if (errors.city) setErrors((prev) => ({ ...prev, city: '' }));
+                    }}
+                  />
+                  {errors.city ? <Text style={styles.errorText}>{errors.city}</Text> : null}
+                </View>
+
+                <View ref={setFieldRef('state')} collapsable={false} style={{ flex: 1, marginLeft: 6 }}>
+                  <Text style={styles.label}>
+                    State <Text style={styles.requiredAsterisk}>*</Text>
+                  </Text>
+                  <TextInput
+                    ref={stateInputRef}
+                    style={[styles.textInput, errors.state ? styles.inputError : null]}
+                    placeholder="e.g. Karnataka"
+                    placeholderTextColor="#94a3b8"
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    value={stateName}
+                    onFocus={() => handleFieldFocus('state')}
+                    onBlur={() => handleFieldBlur('state')}
+                    onSubmitEditing={() => pinCodeInputRef.current?.focus()}
+                    onChangeText={(val) => {
+                      setStateName(val);
+                      if (errors.state) setErrors((prev) => ({ ...prev, state: '' }));
+                    }}
+                  />
+                  {errors.state ? <Text style={styles.errorText}>{errors.state}</Text> : null}
+                </View>
+              </View>
+
+              {/* PIN Code */}
+              <View ref={setFieldRef('pinCode')} collapsable={false} style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  PIN Code <Text style={styles.requiredAsterisk}>*</Text>
+                </Text>
+                <TextInput
+                  ref={pinCodeInputRef}
+                  style={[styles.textInput, errors.pinCode ? styles.inputError : null]}
+                  placeholder="e.g. 560038"
+                  placeholderTextColor="#94a3b8"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  returnKeyType="done"
+                  value={pinCode}
+                  onFocus={() => handleFieldFocus('pinCode')}
+                  onBlur={() => handleFieldBlur('pinCode')}
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                  onChangeText={(val) => {
+                    setPinCode(val);
+                    if (errors.pinCode) setErrors((prev) => ({ ...prev, pinCode: '' }));
+                  }}
+                />
+                {errors.pinCode ? <Text style={styles.errorText}>{errors.pinCode}</Text> : null}
               </View>
             </View>
-
-            {/* PIN Code */}
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                PIN Code <Text style={styles.requiredAsterisk}>*</Text>
-              </Text>
-              <TextInput
-                style={[styles.textInput, errors.pinCode ? styles.inputError : null]}
-                placeholder="e.g. 560038"
-                placeholderTextColor="#94a3b8"
-                keyboardType="number-pad"
-                maxLength={6}
-                value={pinCode}
-                onChangeText={(val) => {
-                  setPinCode(val);
-                  if (errors.pinCode) setErrors((prev) => ({ ...prev, pinCode: '' }));
-                }}
-              />
-              {errors.pinCode ? <Text style={styles.errorText}>{errors.pinCode}</Text> : null}
-            </View>
-          </View>
-        </ScrollView>
-
-        {/* Bottom Next Action */}
-        <View style={styles.bottomBar}>
-          <TouchableOpacity style={styles.continueBtn} onPress={handleContinue}>
-            <Text style={styles.continueBtnText}>Next</Text>
-            <ArrowRight size={18} color="#ffffff" />
-          </TouchableOpacity>
+          </ScrollView>
         </View>
+
+        {/* Bottom Next Action - hidden while keyboard is open so fields are never covered */}
+        {!isKeyboardVisible && (
+          <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <TouchableOpacity style={styles.continueBtn} onPress={handleContinue}>
+              <Text style={styles.continueBtnText}>Next</Text>
+              <ArrowRight size={18} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -416,10 +495,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   stepLine: {
-    width: 40,
+    width: 32,
     height: 2,
     backgroundColor: '#cbd5e1',
-    marginHorizontal: 8,
+    marginHorizontal: 6,
     marginBottom: 16,
   },
   stepLineDone: {
