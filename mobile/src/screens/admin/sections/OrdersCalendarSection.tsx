@@ -77,9 +77,7 @@ export const OrdersCalendarSection: React.FC<OrdersCalendarSectionProps> = ({
   const [isLoadingReport, setIsLoadingReport] = useState(false);
 
   // Orders filter within selected date
-  const [orderFilter, setOrderFilter] = useState<'all' | 'upi' | 'cod' | 'verified' | 'pending'>(
-    'all'
-  );
+  const [orderFilter, setOrderFilter] = useState<'all' | 'cod'>('all');
 
   // Fetch month summary
   const loadMonthSummary = useCallback(async () => {
@@ -201,15 +199,8 @@ export const OrdersCalendarSection: React.FC<OrdersCalendarSectionProps> = ({
   const filteredOrders = useMemo(() => {
     if (!dailyReport?.orders) return [];
     return dailyReport.orders.filter((ord) => {
-      const isUpi = ord.paymentMethod?.toLowerCase().includes('upi');
       const isCod = ord.paymentMethod?.toLowerCase().includes('cod');
-      const isPaid = ord.paymentStatus === 'PAID' || ord.paymentStatus === 'COMPLETED';
-
-      if (orderFilter === 'upi') return isUpi;
       if (orderFilter === 'cod') return isCod;
-      if (orderFilter === 'verified') return isPaid;
-      if (orderFilter === 'pending') return !isPaid;
-
       return true;
     });
   }, [dailyReport, orderFilter]);
@@ -383,7 +374,7 @@ export const OrdersCalendarSection: React.FC<OrdersCalendarSectionProps> = ({
                 </View>
                 <Text style={styles.metricCardVal}>{dailyReport.totalOrders}</Text>
                 <Text style={styles.metricCardSub}>
-                  {dailyReport.upiOrdersCount} UPI · {dailyReport.codOrdersCount} COD
+                  {dailyReport.codOrdersCount || dailyReport.totalOrders} COD Orders
                 </Text>
               </View>
 
@@ -396,33 +387,20 @@ export const OrdersCalendarSection: React.FC<OrdersCalendarSectionProps> = ({
                   ₹{dailyReport.totalCollectedAmount.toLocaleString('en-IN')}
                 </Text>
                 <Text style={styles.metricCardSub}>
-                  UPI: ₹{dailyReport.totalUpiTransactions} · COD: ₹{dailyReport.totalCodCollections}
+                  Total Cash on Delivery: ₹{dailyReport.totalCodCollections || dailyReport.totalCollectedAmount}
                 </Text>
               </View>
 
-              <View style={[styles.metricCard, { borderColor: '#f59e0b' }]}>
+              <View style={[styles.metricCard, { borderColor: '#10b981' }]}>
                 <View style={styles.metricIconRow}>
-                  <Clock size={14} color="#f59e0b" />
-                  <Text style={styles.metricCardLabel}>Pending UPI</Text>
+                  <Clock size={14} color="#10b981" />
+                  <Text style={styles.metricCardLabel}>COD Orders</Text>
                 </View>
-                <Text style={[styles.metricCardVal, { color: '#f59e0b' }]}>
-                  {dailyReport.pendingUpiCount}
+                <Text style={[styles.metricCardVal, { color: '#10b981' }]}>
+                  {dailyReport.codOrdersCount || dailyReport.totalOrders}
                 </Text>
                 <Text style={styles.metricCardSub}>
-                  ₹{dailyReport.pendingUpiAmount} awaiting verification
-                </Text>
-              </View>
-
-              <View style={[styles.metricCard, { borderColor: '#ef4444' }]}>
-                <View style={styles.metricIconRow}>
-                  <XCircle size={14} color="#ef4444" />
-                  <Text style={styles.metricCardLabel}>Rejected Payments</Text>
-                </View>
-                <Text style={[styles.metricCardVal, { color: '#ef4444' }]}>
-                  {dailyReport.rejectedUpiCount}
-                </Text>
-                <Text style={styles.metricCardSub}>
-                  ₹{dailyReport.rejectedUpiAmount} rejected
+                  Doorstep collection
                 </Text>
               </View>
             </View>
@@ -431,10 +409,7 @@ export const OrdersCalendarSection: React.FC<OrdersCalendarSectionProps> = ({
             <View style={styles.ordersFilterRow}>
               {[
                 { key: 'all' as const, label: `All (${dailyReport.orders?.length || 0})` },
-                { key: 'upi' as const, label: `UPI (${dailyReport.upiOrdersCount || 0})` },
-                { key: 'cod' as const, label: `COD (${dailyReport.codOrdersCount || 0})` },
-                { key: 'verified' as const, label: 'Verified' },
-                { key: 'pending' as const, label: 'Pending' },
+                { key: 'cod' as const, label: `COD (${dailyReport.codOrdersCount || dailyReport.orders?.length || 0})` },
               ].map((tab) => (
                 <TouchableOpacity
                   key={tab.key}

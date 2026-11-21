@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Image,
   Alert,
   Keyboard,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -18,9 +19,10 @@ import {
   CheckCircle2,
   ShieldCheck,
   Package,
-  ArrowRight,
 } from 'lucide-react-native';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { customerApi } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 import { RecipientInfo } from './RecipientDetailsScreen';
 
@@ -31,7 +33,7 @@ interface ConfirmOrderScreenProps {
   deliveryCharge: number;
   onEditRecipient: () => void;
   onEditAddress: () => void;
-  onNext: () => void;
+  onOrderSuccess: (order: any) => void;
   onBack: () => void;
 }
 
@@ -42,11 +44,13 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
   deliveryCharge,
   onEditRecipient,
   onEditAddress,
-  onNext,
+  onOrderSuccess,
   onBack,
 }) => {
   const insets = useSafeAreaInsets();
-  const { cart, subtotal } = useCart();
+  const { cart, subtotal, clearCart } = useCart();
+  const { currentCustomer, customerToken } = useAuth();
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
 
   useEffect(() => {
     Keyboard.dismiss();
@@ -55,8 +59,10 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
   const discountAmount = appliedCoupon?.discount || 0;
   const finalPayableAmount = Math.max(0, subtotal - discountAmount + deliveryCharge);
 
-  // Validate recipient, address, and cart before proceeding to payment step (no DB order created yet)
-  const handleContinueToPayment = () => {
+  // Directly place order without payment gateway or payment verification gate
+  const handleConfirmPlaceOrder = async () => {
+    if (isPlacingOrder) return;
+
     if (!recipient.fullName.trim() || !recipient.phone.trim()) {
       Alert.alert('Missing Details', 'Recipient information is incomplete. Please edit recipient details.');
       return;
@@ -66,23 +72,72 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
       return;
     }
     if (cart.length === 0) {
-      Alert.alert('Empty Cart', 'Your cart is empty. Please add items before continuing checkout.');
+      Alert.alert('Empty Cart', 'Your cart is empty. Please add items before placing order.');
       return;
     }
 
-    onNext();
+    setIsPlacingOrder(true);
+
+    try {
+      const generatedOrderId = `#FC-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const orderPayload = {
+        id: generatedOrderId,
+        orderId: generatedOrderId,
+        customerName: recipient.fullName.trim(),
+        customerId: currentCustomer?.id || 'guest',
+        customerEmail: recipient.email.trim() || 'customer@freshcart.com',
+        customerPhone: recipient.phone.trim(),
+        deliveryAddress: deliveryAddress.trim(),
+        items: cart.map((c) => ({
+          product: {
+            id: c.product.id,
+            title: c.product.title,
+            price: c.selectedPrice !== undefined ? c.selectedPrice : c.product.price,
+            unit: c.product.unit,
+            image: c.product.image,
+            category: c.product.category,
+          },
+          quantity: c.quantity,
+          selectedPackSize: c.selectedPackSize,
+          selectedPrice: c.selectedPrice,
+        })),
+        subtotal,
+        discount: discountAmount,
+        total: finalPayableAmount,
+        couponCode: appliedCoupon?.code || '',
+        status: 'CONFIRMED',
+        paymentMethod: 'Cash on Delivery',
+        paymentStatus: 'PENDING_COLLECTION',
+        createdAt: new Date().toISOString(),
+      };
+
+      const res = await customerApi.placeOrder(orderPayload, customerToken || undefined);
+
+      if (res && (res.success || res.order || res.orderId)) {
+        const confirmedOrder = res.order || orderPayload;
+        clearCart();
+        onOrderSuccess(confirmedOrder);
+      } else {
+        Alert.alert('Order Placement Failed', res?.error || 'Server rejected the order. Please try again.');
+      }
+    } catch (err: any) {
+      Alert.alert('Connection Error', err?.message || 'Could not place order. Please check network and try again.');
+    } finally {
+      setIsPlacingOrder(false);
+    }
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Confirm Order" subtitle="Step 3 of 4: Review Order Summary" showBack onBack={onBack} />
+      <Header title="Confirm Order" subtitle="Step 3 of 3: Review & Place Order" showBack onBack={onBack} />
 
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 32 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Progress Indicator - 4 Steps: Recipient -> Address -> Confirm -> Payment */}
+        {/* Progress Indicator - 3 Steps: Recipient -> Address -> Confirm */}
         <View style={styles.stepProgressRow}>
           <View style={styles.stepBadge}>
             <View style={styles.stepDoneCircle}>
@@ -101,11 +156,6 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
           <View style={[styles.stepBadge, styles.stepActive]}>
             <Text style={styles.stepNumberActive}>3</Text>
             <Text style={styles.stepLabelActive}>Confirm</Text>
-          </View>
-          <View style={styles.stepLine} />
-          <View style={styles.stepBadge}>
-            <Text style={styles.stepNumber}>4</Text>
-            <Text style={styles.stepLabel}>Payment</Text>
           </View>
         </View>
 
@@ -196,7 +246,7 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
           </View>
         </View>
 
-        {/* 5. Order Bill Summary */}
+        {/* 4. Order Bill Summary */}
         <View style={styles.billCard}>
           <Text style={styles.billHeading}>Final Order Bill</Text>
 
@@ -233,12 +283,12 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
         <View style={styles.assuranceBox}>
           <ShieldCheck size={18} color="#006b2c" />
           <Text style={styles.assuranceText}>
-            Please verify your recipient details, delivery address, items, and bill summary before choosing your payment method.
+            Please verify your recipient details, delivery address, items, and bill summary before confirming your order.
           </Text>
         </View>
       </ScrollView>
 
-      {/* Bottom Next Action -> Step 4: Payment Method */}
+      {/* Bottom Action Bar: Confirm Place Order */}
       <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
         <View style={styles.bottomBarLeft}>
           <Text style={styles.bottomTotalLabel}>Total Amount</Text>
@@ -246,12 +296,19 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
         </View>
 
         <TouchableOpacity
-          style={styles.confirmBtn}
-          onPress={handleContinueToPayment}
+          style={[styles.confirmBtn, isPlacingOrder && styles.confirmBtnDisabled]}
+          onPress={handleConfirmPlaceOrder}
+          disabled={isPlacingOrder}
           activeOpacity={0.85}
         >
-          <Text style={styles.confirmBtnText}>Next: Payment Method</Text>
-          <ArrowRight size={18} color="#ffffff" />
+          {isPlacingOrder ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <>
+              <CheckCircle2 size={18} color="#ffffff" />
+              <Text style={styles.confirmBtnText}>Confirm Place Order</Text>
+            </>
+          )}
         </TouchableOpacity>
       </View>
     </View>
@@ -327,10 +384,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   stepLine: {
-    width: 32,
+    width: 44,
     height: 2,
     backgroundColor: '#cbd5e1',
-    marginHorizontal: 6,
+    marginHorizontal: 8,
     marginBottom: 16,
   },
   stepLineDone: {
@@ -546,6 +603,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     height: 48,
     paddingHorizontal: 12,
+  },
+  confirmBtnDisabled: {
+    opacity: 0.6,
   },
   confirmBtnText: {
     fontSize: 15,

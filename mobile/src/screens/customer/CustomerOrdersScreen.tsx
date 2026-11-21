@@ -21,12 +21,8 @@ import {
   Truck,
   ArrowLeft,
   Sparkles,
-  UploadCloud,
-  CreditCard,
   AlertCircle,
 } from 'lucide-react-native';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import { useAuth } from '../../context/AuthContext';
 import { customerApi, cleanErrorMessage } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
@@ -48,59 +44,6 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedOrders, setExpandedOrders] = useState<Record<string, boolean>>({});
   const [otpCodes, setOtpCodes] = useState<Record<string, string>>({});
-  const [uploadingOrderId, setUploadingOrderId] = useState<string | null>(null);
-
-  const handleUploadProofForOrder = async (orderId: string) => {
-    try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'],
-        copyToCacheDirectory: true,
-      });
-
-      if (!res.canceled && res.assets && res.assets.length > 0) {
-        const file = res.assets[0];
-        const fileSize = file.size || 0;
-        const MAX_SIZE = 10 * 1024 * 1024;
-        if (fileSize > MAX_SIZE) {
-          Alert.alert('File Too Large', 'Please select a file smaller than 10 MB.');
-          return;
-        }
-
-        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-        const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
-        if (!validExts.includes(ext)) {
-          Alert.alert('Invalid Format', 'Accepted formats are JPG, JPEG, PNG, and PDF.');
-          return;
-        }
-
-        const mime = file.mimeType || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg');
-        const base64 = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-
-        setUploadingOrderId(orderId);
-        const uploadRes = await customerApi.uploadScreenshotProof(
-          orderId,
-          base64,
-          customerToken || undefined,
-          mime,
-          file.name,
-          currentCustomer?.id || 'guest'
-        );
-        setUploadingOrderId(null);
-
-        if (uploadRes.success) {
-          Alert.alert('Proof Submitted', 'Payment proof submitted successfully! Awaiting admin verification.');
-          loadOrders(true);
-        } else {
-          Alert.alert('Upload Failed', uploadRes.error || 'Failed to upload payment proof.');
-        }
-      }
-    } catch (err: any) {
-      setUploadingOrderId(null);
-      Alert.alert('Error', cleanErrorMessage(err, 'Could not upload payment proof.'));
-    }
-  };
 
   const loadOrders = useCallback(async (refresh = false) => {
     if (refresh) setIsRefreshing(true);
@@ -324,35 +267,6 @@ export const CustomerOrdersScreen: React.FC<CustomerOrdersScreenProps> = ({
                   <View style={styles.infoRow}>
                     <Clock size={14} color="#64748b" />
                     <Text style={styles.infoText}>Slot: {ord.deliveryTimeSlot}</Text>
-                  </View>
-                ) : null}
-
-                {/* Upload Payment Proof for UPI Orders if missing proof or rejected by admin */}
-                {isUpi && !isPaid && (isRejected || !ord.screenshotUrl) ? (
-                  <TouchableOpacity
-                    style={styles.uploadProofBtn}
-                    onPress={() => handleUploadProofForOrder(ord.id)}
-                    disabled={uploadingOrderId === ord.id}
-                  >
-                    {uploadingOrderId === ord.id ? (
-                      <ActivityIndicator size="small" color="#006b2c" />
-                    ) : (
-                      <>
-                        <UploadCloud size={14} color="#006b2c" />
-                        <Text style={styles.uploadProofBtnText}>
-                          {isRejected
-                            ? 'Re-upload Payment Proof (Rejected — Try Again)'
-                            : 'Upload Payment Receipt Proof (JPG, PNG, PDF)'}
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                ) : isUpi && !isPaid && ord.screenshotUrl ? (
-                  <View style={[styles.uploadProofBtn, { borderStyle: 'solid' }]}>
-                    <CheckCircle2 size={14} color="#006b2c" />
-                    <Text style={styles.uploadProofBtnText}>
-                      Payment Proof Submitted — Awaiting Admin Verification
-                    </Text>
                   </View>
                 ) : null}
 

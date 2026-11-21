@@ -115,8 +115,8 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
 
   // Table filters & search
   const [tableSearch, setTableSearch] = useState<string>('');
-  const [methodFilter, setMethodFilter] = useState<'all' | 'upi' | 'cod'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending' | 'rejected'>('all');
+  const [methodFilter, setMethodFilter] = useState<'all' | 'cod'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending'>('all');
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
 
   // Load monthly activity indicators
@@ -344,7 +344,6 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
       // Method filter
       const rawMethod = (ord.paymentMethod || '').toLowerCase();
       const isCod = rawMethod.includes('cash') || rawMethod === 'cod';
-      if (methodFilter === 'upi' && isCod) return false;
       if (methodFilter === 'cod' && !isCod) return false;
 
       // Status filter
@@ -353,8 +352,6 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
         if (pStatus !== 'COMPLETED' && pStatus !== 'PAID' && pStatus !== 'COLLECTED') return false;
       } else if (statusFilter === 'pending') {
         if (!pStatus.includes('PENDING') && pStatus !== 'COD') return false;
-      } else if (statusFilter === 'rejected') {
-        if (pStatus !== 'REJECTED' && pStatus !== 'FAILED') return false;
       }
 
       // Search query
@@ -677,8 +674,8 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
               </div>
             )}
 
-            {/* 6 Core Statistics Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-5">
+            {/* Core Statistics Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
               {/* Card 1: Total Orders */}
               <div
                 id="report-card-total-orders"
@@ -694,22 +691,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                 <p className="text-[10px] text-[#94a3b8] mt-0.5 truncate">Placed on selected date</p>
               </div>
 
-              {/* Card 2: UPI Orders */}
-              <div
-                id="report-card-upi-orders"
-                className="bg-white/[0.03] hover:bg-white/[0.05] p-3.5 rounded-xl border border-white/10 transition-all"
-              >
-                <div className="flex items-center justify-between text-[#94a3b8]">
-                  <span className="text-[11px] font-medium">UPI Orders</span>
-                  <CreditCard className="w-4 h-4 text-purple-400" />
-                </div>
-                <div className="text-[22px] font-extrabold text-purple-300 font-display mt-1 tabular-nums">
-                  {isLoadingReport ? '...' : report?.upiOrdersCount ?? 0}
-                </div>
-                <p className="text-[10px] text-[#94a3b8] mt-0.5 truncate">Orders via UPI/Online</p>
-              </div>
-
-              {/* Card 3: COD Orders */}
+              {/* Card 2: COD Orders */}
               <div
                 id="report-card-cod-orders"
                 className="bg-white/[0.03] hover:bg-white/[0.05] p-3.5 rounded-xl border border-white/10 transition-all"
@@ -724,37 +706,7 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                 <p className="text-[10px] text-[#94a3b8] mt-0.5 truncate">Cash on Delivery orders</p>
               </div>
 
-              {/* Card 4: Total UPI Transactions */}
-              <div
-                id="report-card-upi-transactions"
-                className="bg-purple-950/20 hover:bg-purple-950/30 p-3.5 rounded-xl border border-purple-500/20 transition-all"
-              >
-                <div className="flex items-center justify-between text-purple-300">
-                  <span className="text-[11px] font-semibold">Total UPI Txns</span>
-                  <CheckCircle2 className="w-4 h-4 text-purple-400" />
-                </div>
-                <div className="text-[18px] sm:text-[20px] font-extrabold text-purple-200 font-mono mt-1 tabular-nums">
-                  {isLoadingReport ? '...' : formatINR(report?.totalUpiTransactions ?? 0)}
-                </div>
-                <p className="text-[10px] text-purple-300/70 mt-0.5 truncate">Verified PAID payments</p>
-              </div>
-
-              {/* Card 5: Total COD Collections */}
-              <div
-                id="report-card-cod-collections"
-                className="bg-amber-950/20 hover:bg-amber-950/30 p-3.5 rounded-xl border border-amber-500/20 transition-all"
-              >
-                <div className="flex items-center justify-between text-amber-300">
-                  <span className="text-[11px] font-semibold">Total COD Collections</span>
-                  <Banknote className="w-4 h-4 text-amber-400" />
-                </div>
-                <div className="text-[18px] sm:text-[20px] font-extrabold text-amber-200 font-mono mt-1 tabular-nums">
-                  {isLoadingReport ? '...' : formatINR(report?.totalCodCollections ?? 0)}
-                </div>
-                <p className="text-[10px] text-amber-300/70 mt-0.5 truncate">Confirmed COLLECTED cash</p>
-              </div>
-
-              {/* Card 6: Total Collected Amount (PROMINENT HIGHLIGHT) */}
+              {/* Card 3: Total Collected Amount */}
               <div
                 id="report-card-total-collected"
                 className="bg-gradient-to-br from-emerald-950/60 to-emerald-900/30 p-3.5 rounded-xl border border-emerald-500/40 shadow-lg shadow-emerald-950/40 transition-all"
@@ -766,48 +718,16 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                 <div className="text-[18px] sm:text-[20px] font-extrabold text-emerald-300 font-mono mt-1 tabular-nums">
                   {isLoadingReport ? '...' : formatINR(report?.totalCollectedAmount ?? 0)}
                 </div>
-                <p className="text-[10px] text-emerald-300/70 mt-0.5 truncate">UPI Paid + COD Collected</p>
+                <p className="text-[10px] text-emerald-300/70 mt-0.5 truncate">Confirmed Collections</p>
               </div>
             </div>
 
             {/* Secondary Reconciliation Breakdown Strip */}
-            <div className="mt-4 pt-4 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              {/* Pending UPI */}
-              <div
-                id="report-pending-upi-strip"
-                className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between"
-              >
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <div>
-                    <p className="text-[10px] text-[#94a3b8] leading-tight">Pending UPI Verification</p>
-                    <p className="text-[11px] font-bold text-amber-300 font-mono mt-0.5">
-                      {report?.pendingUpiCount ?? 0} ord ({formatINR(report?.pendingUpiAmount ?? 0)})
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Rejected UPI */}
-              <div
-                id="report-rejected-upi-strip"
-                className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between"
-              >
-                <div className="flex items-center gap-2">
-                  <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <div>
-                    <p className="text-[10px] text-[#94a3b8] leading-tight">Rejected UPI Proofs</p>
-                    <p className="text-[11px] font-bold text-rose-300 font-mono mt-0.5">
-                      {report?.rejectedUpiCount ?? 0} ord ({formatINR(report?.rejectedUpiAmount ?? 0)})
-                    </p>
-                  </div>
-                </div>
-              </div>
-
+            <div className="mt-4 pt-4 border-t border-white/10">
               {/* Pending COD */}
               <div
                 id="report-pending-cod-strip"
-                className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between"
+                className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between max-w-sm"
               >
                 <div className="flex items-center gap-2">
                   <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -863,15 +783,6 @@ export const AdminCalendarReport: React.FC<AdminCalendarReportProps> = ({ initia
                   }`}
                 >
                   All
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMethodFilter('upi')}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
-                    methodFilter === 'upi' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  UPI
                 </button>
                 <button
                   type="button"

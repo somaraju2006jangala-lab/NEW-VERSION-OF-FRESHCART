@@ -13,14 +13,12 @@ import {
   AuthorizedEmployee,
   Coupon,
   DeliveryChargeRule,
-  UpiPaymentSettings,
   PendingDeliveryOrder,
   InventoryLog,
   AppSettings,
   DailyReportResponse,
   CalendarMonthResponse,
   AdminCustomerAccount,
-  PaymentVerificationItem,
 } from '../types';
 
 const IS_DEV =
@@ -624,50 +622,6 @@ export const adminApi = {
     });
   },
 
-  async getUpiSettings(amount?: number) {
-    const q = amount !== undefined && amount > 0 ? `?amount=${amount}` : '';
-    return request<{
-      success: boolean;
-      settings: UpiPaymentSettings | null;
-      upiId?: string;
-      merchantName?: string;
-      qrCodeDataUrl?: string;
-      qrCodeUrl?: string;
-      upiUri?: string;
-    }>(`/api/payment-settings/upi${q}`);
-  },
-
-  async getUpiQrCode(amount?: number) {
-    const q = amount !== undefined && amount > 0 ? `?amount=${amount}&format=json` : '?format=json';
-    return request<{
-      success: boolean;
-      upiId: string;
-      merchantName: string;
-      amount?: number;
-      upiUri: string;
-      qrCodeDataUrl: string;
-    }>(`/api/payment-settings/upi/qr${q}`);
-  },
-
-  async saveUpiSettings(
-    token: string,
-    settings: {
-      upiId: string;
-      merchantName: string;
-      enabled?: boolean;
-      qrCodeUrl?: string;
-    }
-  ) {
-    return request<{ success: boolean; settings?: UpiPaymentSettings; error?: string }>(
-      '/api/payment-settings/upi',
-      {
-        method: 'POST',
-        token,
-        body: settings,
-      }
-    );
-  },
-
   async getAuthorizedAdmins(token: string) {
     return request<{
       success: boolean;
@@ -725,26 +679,6 @@ export const adminApi = {
   ): Promise<CalendarMonthResponse> {
     return request<CalendarMonthResponse>(`/api/admin/reports/calendar-month?year=${year}&month=${month}`, {
       token,
-    });
-  },
-
-  async getPaymentVerificationQueue(token: string) {
-    return request('/api/admin/payments/verification-queue', { token });
-  },
-
-  async verifyPayment(token: string, orderId: string, action: 'APPROVE' | 'REJECT', notes?: string) {
-    return request('/api/admin/payments/verify', {
-      method: 'POST',
-      token,
-      body: { orderId, action, notes },
-    });
-  },
-
-  async deletePaymentOrder(token: string, orderId: string) {
-    return request('/api/admin/payments/delete-order', {
-      method: 'POST',
-      token,
-      body: { orderId },
     });
   },
 };
@@ -941,133 +875,6 @@ export const customerApi = {
       method: 'POST',
       body: { code, subtotal },
     });
-  },
-
-  async getUpiSettings(amount?: number) {
-    const q = amount !== undefined && amount > 0 ? `?amount=${amount}` : '';
-    return request<{
-      success: boolean;
-      settings: UpiPaymentSettings | null;
-      upiId?: string;
-      merchantName?: string;
-      qrCodeDataUrl?: string;
-      qrCodeUrl?: string;
-      upiUri?: string;
-    }>(`/api/payment-settings/upi${q}`);
-  },
-
-  async getUpiQrCode(amount?: number) {
-    const q = amount !== undefined && amount > 0 ? `?amount=${amount}&format=json` : '?format=json';
-    return request<{
-      success: boolean;
-      upiId: string;
-      merchantName: string;
-      amount?: number;
-      upiUri: string;
-      qrCodeDataUrl: string;
-    }>(`/api/payment-settings/upi/qr${q}`);
-  },
-
-  async initiateUpi(paymentData: {
-    orderId: string;
-    customerId?: string;
-    amount: number;
-    upiId?: string;
-    merchantName?: string;
-    transactionRef: string;
-    customerName?: string;
-    customerEmail?: string;
-    customerPhone?: string;
-    deliveryAddress?: string;
-  }) {
-    return request('/api/payments/initiate-upi', {
-      method: 'POST',
-      customerScoped: true,
-      retries: 0,
-      body: paymentData,
-    });
-  },
-
-  async uploadScreenshotProof(
-    orderId: string,
-    fileData: string,
-    token?: string,
-    mimeType?: string,
-    fileName?: string,
-    customerId?: string,
-    replaceDraft = false
-  ) {
-    const cleanOrderId = (orderId || '').trim();
-    if (!cleanOrderId) {
-      throw new Error('Order ID is missing. Please restart checkout and try again.');
-    }
-    const cleanData = (fileData || '').trim();
-    if (!cleanData) {
-      throw new Error('Selected payment screenshot appears empty. Please select the image again.');
-    }
-
-    const mime =
-      mimeType ||
-      (cleanData.startsWith('data:application/pdf')
-        ? 'application/pdf'
-        : cleanData.startsWith('data:image/png')
-        ? 'image/png'
-        : 'image/jpeg');
-    const screenshot = cleanData.startsWith('data:') ? cleanData : `data:${mime};base64,${cleanData}`;
-
-    const extraHeaders: Record<string, string> = {};
-    if (!token && customerId) {
-      extraHeaders['x-customer-id'] = customerId;
-    }
-
-    return request<{
-      success: boolean;
-      message?: string;
-      paymentStatus?: string;
-      orderId?: string;
-      screenshotUrl?: string;
-      fileSize?: number;
-      mimeType?: string;
-      alreadySubmitted?: boolean;
-      alreadyPaid?: boolean;
-      error?: string;
-    }>('/api/payments/screenshot/upload', {
-      method: 'POST',
-      token,
-      customerScoped: true,
-      headers: extraHeaders,
-      timeoutMs: 45000,
-      retries: 0,
-      body: {
-        orderId: cleanOrderId,
-        screenshot,
-        mimeType: mime,
-        fileName: fileName || (mime === 'application/pdf' ? 'proof.pdf' : 'proof.jpg'),
-        ...(replaceDraft ? { replaceDraft: true } : {}),
-        ...(!token && customerId ? { customerId } : {}),
-      },
-    });
-  },
-
-  async removeScreenshotProof(orderId: string, token?: string, customerId?: string) {
-    const cleanOrderId = (orderId || '').trim();
-    if (!cleanOrderId) return { success: true };
-
-    const extraHeaders: Record<string, string> = {};
-    if (!token && customerId) {
-      extraHeaders['x-customer-id'] = customerId;
-    }
-
-    return request<{ success: boolean; paymentStatus?: string; message?: string; error?: string }>(
-      `/api/payments/screenshot/${encodeURIComponent(cleanOrderId)}`,
-      {
-        method: 'DELETE',
-        token,
-        customerScoped: true,
-        headers: extraHeaders,
-        retries: 0,
-      }
-    );
   },
 
   async getOtpStatus(orderId: string) {

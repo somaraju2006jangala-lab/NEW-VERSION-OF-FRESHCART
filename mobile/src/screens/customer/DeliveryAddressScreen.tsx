@@ -151,7 +151,7 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <Header title="Checkout" subtitle="Step 2 of 4: Delivery Address" showBack onBack={onBack} />
+      <Header title="Checkout" subtitle="Step 2 of 3: Delivery Address" showBack onBack={onBack} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -173,7 +173,7 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
             ]}
             showsVerticalScrollIndicator={false}
           >
-            {/* Progress Indicator - 4 Steps */}
+            {/* Progress Indicator - 3 Steps */}
             <View style={styles.stepProgressRow}>
               <View style={styles.stepBadge}>
                 <View style={styles.stepDoneCircle}>
@@ -190,11 +190,6 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
               <View style={styles.stepBadge}>
                 <Text style={styles.stepNumber}>3</Text>
                 <Text style={styles.stepLabel}>Confirm</Text>
-              </View>
-              <View style={styles.stepLine} />
-              <View style={styles.stepBadge}>
-                <Text style={styles.stepNumber}>4</Text>
-                <Text style={styles.stepLabel}>Payment</Text>
               </View>
             </View>
 

@@ -15,13 +15,10 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
   onContinueShopping,
 }) => {
   const items = Array.isArray(order?.items) ? order.items : [];
-  const isUpi = String(order?.paymentMethod || '').toLowerCase().includes('upi');
-  const isPaid = order?.paymentStatus === 'PAID' || order?.paymentStatus === 'COMPLETED';
-  const isPendingVerification = isUpi && !isPaid;
 
   return (
     <SafeAreaView style={styles.container}>
-      <Header title="Order Confirmation" subtitle="Step 4 of 4" />
+      <Header title="Order Confirmation" subtitle="Order Confirmed" />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Celebration Header */}
@@ -31,9 +28,7 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
           </View>
           <Text style={styles.heading}>Order Placed Successfully!</Text>
           <Text style={styles.subheading}>
-            {isPendingVerification
-              ? 'Your order and UPI payment proof have been submitted and are pending admin verification.'
-              : 'Your fresh grocery order has been saved and dispatched to the fulfillment center.'}
+            Your fresh grocery order has been confirmed and dispatched to the fulfillment center.
           </Text>
         </View>
 
@@ -76,25 +71,6 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
               {order?.deliveryAddress}
             </Text>
           </View>
-
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Payment Method</Text>
-            <Text style={styles.detailValue}>{order?.paymentMethod || 'Cash on Delivery'}</Text>
-          </View>
-
-          {isUpi && (
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>Payment Status</Text>
-              <Text
-                style={[
-                  styles.detailValue,
-                  { color: isPaid ? '#006b2c' : '#b45309' },
-                ]}
-              >
-                {isPaid ? 'Verified & Paid' : 'Pending Admin Verification'}
-              </Text>
-            </View>
-          )}
         </View>
 
         {/* Ordered Products & Quantities List */}
@@ -143,13 +119,9 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
 
         {/* Doorstep Delivery Handover OTP Notice */}
         <View style={styles.otpNoticeBox}>
-          <Text style={styles.otpNoticeTitle}>
-            {isPendingVerification ? 'Awaiting Admin Payment Verification' : 'Doorstep Handover OTP'}
-          </Text>
+          <Text style={styles.otpNoticeTitle}>Doorstep Handover OTP</Text>
           <Text style={styles.otpNoticeDesc}>
-            {isPendingVerification
-              ? 'An authorized admin will review your uploaded UPI screenshot in the Admin Portal. Once verified as paid, your 6-digit delivery OTP will be activated automatically.'
-              : 'A 6-digit delivery verification OTP is generated in your order tracking ledger. Please share this OTP with the delivery partner upon arrival to accept the grocery bag.'}
+            A 6-digit delivery verification OTP is generated in your order tracking ledger. Please share this OTP with the delivery partner upon arrival to accept the grocery bag.
           </Text>
         </View>
 

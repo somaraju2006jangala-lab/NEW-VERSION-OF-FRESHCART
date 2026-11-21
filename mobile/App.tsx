@@ -14,28 +14,16 @@ import { StorefrontScreen } from './src/screens/customer/StorefrontScreen';
 import { CartScreen } from './src/screens/customer/CartScreen';
 import { RecipientDetailsScreen, RecipientInfo } from './src/screens/customer/RecipientDetailsScreen';
 import { DeliveryAddressScreen, DeliveryAddressInfo } from './src/screens/customer/DeliveryAddressScreen';
-import { PaymentMethodScreen } from './src/screens/customer/PaymentMethodScreen';
 import { ConfirmOrderScreen } from './src/screens/customer/ConfirmOrderScreen';
 import { OrderConfirmationScreen } from './src/screens/customer/OrderConfirmationScreen';
 import { CustomerOrdersScreen } from './src/screens/customer/CustomerOrdersScreen';
 import { settingsApi } from './src/services/apiClient';
-import { UploadedPaymentProof } from './src/types';
-
-function createCheckoutSession(): { orderId: string; transactionRef: string } {
-  const digits = String(Math.floor(100000 + Math.random() * 900000));
-  const suffix = Math.random().toString(36).substring(2, 8).toUpperCase();
-  return {
-    orderId: `#FC-${digits}`,
-    transactionRef: `FC-${digits}-${suffix}`,
-  };
-}
 
 type CustomerView =
   | 'storefront'
   | 'cart'
   | 'recipient-details'
   | 'delivery-address'
-  | 'payment-method'
   | 'confirm-order'
   | 'confirmation'
   | 'orders';
@@ -51,7 +39,7 @@ function MainNavigator() {
     undefined
   );
 
-  // Checkout sequence state: Cart -> Recipient Details -> Delivery Address -> Confirm Order -> Payment Method -> Confirmation
+  // Checkout sequence state: Cart -> Recipient Details -> Delivery Address -> Confirm Order -> Confirmation
   const [checkoutRecipient, setCheckoutRecipient] = useState<RecipientInfo>({
     fullName: currentCustomer?.name || '',
     phone: currentCustomer?.phone || '',
@@ -62,20 +50,7 @@ function MainNavigator() {
   const [checkoutFormattedAddress, setCheckoutFormattedAddress] = useState<string>(
     currentCustomer?.address || ''
   );
-  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState<'COD' | 'UPI'>('COD');
   const [deliveryCharge, setDeliveryCharge] = useState(40);
-  const [checkoutSession, setCheckoutSession] = useState(() => createCheckoutSession());
-  const [uploadedPaymentProof, setUploadedPaymentProof] = useState<UploadedPaymentProof | null>(null);
-
-  const cartSignature = React.useMemo(() => {
-    const itemKey = cart
-      .map(
-        (c) =>
-          `${c.product.id}:${c.selectedPackSize || ''}:${c.quantity}:${c.selectedPrice ?? c.product.price}`
-      )
-      .join('|');
-    return `${itemKey}|c:${appliedCoupon?.code || ''}:${appliedCoupon?.discount || 0}|d:${deliveryCharge}`;
-  }, [cart, appliedCoupon, deliveryCharge]);
 
   // Fetch delivery settings and calculate delivery charge
   useEffect(() => {
@@ -158,22 +133,6 @@ function MainNavigator() {
           <CartScreen
             onBack={() => setCustomerView('storefront')}
             onProceedToCheckout={(coupon) => {
-              const nextCouponSig = `${coupon?.code || ''}:${coupon?.discount || 0}`;
-              const itemsOnly = cart
-                .map(
-                  (c) =>
-                    `${c.product.id}:${c.selectedPackSize || ''}:${c.quantity}:${c.selectedPrice ?? c.product.price}`
-                )
-                .join('|');
-              const expectedSig = `${itemsOnly}|c:${nextCouponSig}|d:${deliveryCharge}`;
-              if (
-                uploadedPaymentProof &&
-                uploadedPaymentProof.cartSignature &&
-                uploadedPaymentProof.cartSignature !== expectedSig
-              ) {
-                setUploadedPaymentProof(null);
-                setCheckoutSession(createCheckoutSession());
-              }
               setAppliedCoupon(coupon);
               setCustomerView('recipient-details');
             }}
@@ -229,7 +188,7 @@ function MainNavigator() {
           />
         );
 
-      // Page 3: Confirm Order (Summary Review) -> Next -> Payment Method
+      // Page 3: Confirm Order (Summary Review) -> Confirm Place Order -> Final Order Confirmation
       case 'confirm-order':
         return (
           <ConfirmOrderScreen
@@ -239,36 +198,12 @@ function MainNavigator() {
             deliveryCharge={deliveryCharge}
             onEditRecipient={() => setCustomerView('recipient-details')}
             onEditAddress={() => setCustomerView('delivery-address')}
-            onNext={() => setCustomerView('payment-method')}
-            onBack={() => setCustomerView('delivery-address')}
-          />
-        );
-
-      // Page 4: Payment Method -> Confirm Place Order -> Final Order Confirmation
-      case 'payment-method':
-        return (
-          <PaymentMethodScreen
-            initialPaymentMethod={checkoutPaymentMethod}
-            onPaymentMethodChange={(method) => setCheckoutPaymentMethod(method)}
-            subtotal={subtotal}
-            deliveryCharge={deliveryCharge}
-            appliedCoupon={appliedCoupon}
-            orderId={checkoutSession.orderId}
-            transactionRef={checkoutSession.transactionRef}
-            recipient={checkoutRecipient}
-            deliveryAddress={checkoutFormattedAddress}
-            cartSignature={cartSignature}
-            uploadedProof={uploadedPaymentProof}
-            onProofUploaded={(proof) => setUploadedPaymentProof(proof)}
-            onProofCleared={() => setUploadedPaymentProof(null)}
             onOrderSuccess={(order) => {
               setConfirmedOrder(order);
-              setUploadedPaymentProof(null);
               setAppliedCoupon(undefined);
-              setCheckoutSession(createCheckoutSession());
               setCustomerView('confirmation');
             }}
-            onBack={() => setCustomerView('confirm-order')}
+            onBack={() => setCustomerView('delivery-address')}
           />
         );
 

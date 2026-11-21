@@ -14,8 +14,6 @@ import {
   Tag,
   ShoppingBag,
   Truck,
-  CreditCard,
-  CheckCircle,
   ShieldCheck,
   UserCheck,
   Users,
@@ -30,7 +28,6 @@ interface AdminQuickMenuModalProps {
   activeSection: AdminPortalSectionId;
   onSelectSection: (id: AdminPortalSectionId) => void;
   onClose: () => void;
-  pendingVerificationCount?: number;
   activeAdminsCount?: number;
   maxAdminsLimit?: number;
   customerAccountsCount?: number;
@@ -41,7 +38,6 @@ export const AdminQuickMenuModal: React.FC<AdminQuickMenuModalProps> = ({
   activeSection,
   onSelectSection,
   onClose,
-  pendingVerificationCount = 0,
   activeAdminsCount = 2,
   maxAdminsLimit = 5,
   customerAccountsCount = 0,
@@ -86,22 +82,8 @@ export const AdminQuickMenuModal: React.FC<AdminQuickMenuModalProps> = ({
       icon: Truck,
     },
     {
-      id: 'upi-settings',
-      title: '6. UPI Settings',
-      subtitle: 'Merchant VPA & dynamic QR code configuration',
-      icon: CreditCard,
-    },
-    {
-      id: 'payment-verification',
-      title: '7. Payment Verification',
-      subtitle: 'Review UPI transaction screenshots & dispatch OTP',
-      icon: CheckCircle,
-      badge: pendingVerificationCount > 0 ? `${pendingVerificationCount} Pending` : null,
-      badgeColor: '#d97706',
-    },
-    {
       id: 'admins',
-      title: '8. Authorized Admins',
+      title: '6. Authorized Admins',
       subtitle: 'Manage authorized administrator credentials & roles',
       icon: ShieldCheck,
       badge: `${activeAdminsCount}/${maxAdminsLimit}`,
@@ -109,13 +91,13 @@ export const AdminQuickMenuModal: React.FC<AdminQuickMenuModalProps> = ({
     },
     {
       id: 'employees',
-      title: '9. Employee Management',
+      title: '7. Employee Management',
       subtitle: 'Manage delivery partners & operations staff',
       icon: UserCheck,
     },
     {
       id: 'customers',
-      title: '10. Customer Accounts',
+      title: '8. Customer Accounts',
       subtitle: 'Registered customer profiles & account status',
       icon: Users,
       badge: customerAccountsCount > 0 ? `${customerAccountsCount}` : null,
@@ -123,7 +105,7 @@ export const AdminQuickMenuModal: React.FC<AdminQuickMenuModalProps> = ({
     },
     {
       id: 'calendar',
-      title: '11. Orders & Transactions Calendar',
+      title: '9. Orders & Transactions Calendar',
       subtitle: 'Calendar grid, daily reports & transaction history',
       icon: Calendar,
     },

@@ -25,19 +25,9 @@ import {
   Eye,
   EyeOff,
   KeyRound,
-  CreditCard,
-  QrCode,
-  Copy,
-  Check,
-  UploadCloud,
-  FileText,
 } from 'lucide-react-native';
-import * as Clipboard from 'expo-clipboard';
-import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
 import { useAuth } from '../../context/AuthContext';
 import { authApi, customerApi, cleanErrorMessage } from '../../services/apiClient';
-import { UpiQrCodeView } from '../../components/payment/UpiQrCodeView';
 
 interface CustomerAuthModalProps {
   visible: boolean;
@@ -66,102 +56,12 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Registration UPI Payment Details
-  const [upiId, setUpiId] = useState('somaraju2006jangala-1@okhdfcbank');
-  const [merchantName, setMerchantName] = useState('FreshCart Store');
-  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
-  const [isCopied, setIsCopied] = useState(false);
-  const [transactionRef, setTransactionRef] = useState('');
-  const [paymentProofBase64, setPaymentProofBase64] = useState<string | null>(null);
-  const [paymentProofMime, setPaymentProofMime] = useState<string | null>(null);
-  const [paymentProofName, setPaymentProofName] = useState<string | null>(null);
-  const [paymentProofSize, setPaymentProofSize] = useState<number>(0);
-  const [isPickingProof, setIsPickingProof] = useState(false);
-
-  // Fetch shared UPI settings when modal opens
-  useEffect(() => {
-    if (!visible) return;
-    customerApi
-      .getUpiSettings(199)
-      .then((res) => {
-        if (res.success && res.settings?.upiId) {
-          setUpiId(res.settings.upiId);
-          if (res.settings.merchantName) setMerchantName(res.settings.merchantName);
-          if (res.settings.qrCodeDataUrl) setQrCodeDataUrl(res.settings.qrCodeDataUrl);
-        } else if (res.upiId) {
-          setUpiId(res.upiId);
-          if (res.merchantName) setMerchantName(res.merchantName);
-          if (res.qrCodeDataUrl) setQrCodeDataUrl(res.qrCodeDataUrl);
-        }
-      })
-      .catch(() => {});
-  }, [visible]);
-
-  // Handle Copy UPI ID
-  const handleCopyUpiId = async () => {
-    try {
-      await Clipboard.setStringAsync(upiId);
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), 2500);
-      Alert.alert('Copied', 'UPI ID copied to clipboard: ' + upiId);
-    } catch {
-      Alert.alert('Copy failed', 'UPI ID: ' + upiId);
-    }
-  };
-
-  // Handle Pick Proof
-  const handlePickProof = async () => {
-    try {
-      setIsPickingProof(true);
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'],
-        copyToCacheDirectory: true,
-      });
-
-      if (!res.canceled && res.assets && res.assets.length > 0) {
-        const file = res.assets[0];
-        const fileSize = file.size || 0;
-        const MAX_SIZE = 10 * 1024 * 1024;
-        if (fileSize > MAX_SIZE) {
-          Alert.alert('File Too Large', 'Please select a file smaller than 10 MB.');
-          return;
-        }
-
-        const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-        const validExts = ['.jpg', '.jpeg', '.png', '.pdf'];
-        if (!validExts.includes(ext)) {
-          Alert.alert('Invalid Format', 'Accepted formats are JPG, JPEG, PNG, and PDF.');
-          return;
-        }
-
-        const mime = file.mimeType || (ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : 'image/jpeg');
-        const base64 = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-
-        setPaymentProofBase64(base64);
-        setPaymentProofMime(mime);
-        setPaymentProofName(file.name);
-        setPaymentProofSize(fileSize);
-      }
-    } catch (err: any) {
-      Alert.alert('File Selection Error', err?.message || 'Could not access file.');
-    } finally {
-      setIsPickingProof(false);
-    }
-  };
-
   const resetForm = () => {
     setEmail('');
     setPassword('');
     setFullName('');
     setMobile('');
     setAddress('');
-    setTransactionRef('');
-    setPaymentProofBase64(null);
-    setPaymentProofName(null);
-    setPaymentProofSize(0);
-    setPaymentProofMime(null);
     setErrorMessage(null);
     setSuccessMessage(null);
   };
@@ -203,18 +103,12 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
       mobile: mobile.trim(),
       password,
       address: address.trim(),
-      transactionRef: transactionRef.trim() || undefined,
-      paymentProof: paymentProofBase64 || undefined,
-      mimeType: paymentProofMime || undefined,
-      fileName: paymentProofName || undefined,
     });
     setIsLoading(false);
     if (res.success) {
       Alert.alert(
-        'Registration Submitted',
-        paymentProofBase64
-          ? 'Your registration and ₹199 payment proof have been submitted. Payment is pending admin verification.'
-          : 'Account created successfully. Welcome to FreshCart!'
+        'Account Created',
+        'Account created successfully. Welcome to FreshCart!'
       );
       resetForm();
       onClose();
@@ -457,120 +351,6 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                       value={address}
                       onChangeText={setAddress}
                     />
-                  </View>
-
-                  {/* REGISTRATION PAYMENT DETAILS */}
-                  <View style={styles.paymentCard}>
-                    <View style={styles.paymentCardHeader}>
-                      <CreditCard size={18} color="#006b2c" />
-                      <Text style={styles.paymentCardTitle}>Registration Fee: ₹199</Text>
-                    </View>
-                    <Text style={styles.paymentCardSubtitle}>
-                      Complete your one-time ₹199 membership registration via UPI.
-                    </Text>
-
-                    {/* Merchant & UPI details */}
-                    <View style={styles.paymentDetailsBox}>
-                      <View style={styles.paymentDetailRow}>
-                        <Text style={styles.paymentDetailLabel}>Merchant:</Text>
-                        <Text style={styles.paymentDetailValue}>{merchantName}</Text>
-                      </View>
-                      <View style={styles.paymentDetailRow}>
-                        <Text style={styles.paymentDetailLabel}>Payable Amount:</Text>
-                        <Text style={[styles.paymentDetailValue, { color: '#006b2c', fontWeight: '800' }]}>₹199.00</Text>
-                      </View>
-                      <View style={styles.paymentDetailRow}>
-                        <Text style={styles.paymentDetailLabel}>Official UPI ID:</Text>
-                        <Text style={[styles.paymentDetailValue, { fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace', fontSize: 12 }]}>
-                          {upiId}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {/* Official Dynamic UPI QR Code */}
-                    <View style={{ alignItems: 'center', marginVertical: 8 }}>
-                      <UpiQrCodeView
-                        upiId={upiId}
-                        merchantName={merchantName}
-                        amount={199}
-                        qrDataUrl={qrCodeDataUrl}
-                        size={170}
-                      />
-                    </View>
-
-                    {/* Copy UPI ID Button */}
-                    <TouchableOpacity
-                      style={[styles.copyBtn, isCopied && styles.copyBtnSuccess]}
-                      onPress={handleCopyUpiId}
-                      activeOpacity={0.7}
-                    >
-                      {isCopied ? <Check size={16} color="#15803d" /> : <Copy size={16} color="#334155" />}
-                      <Text style={[styles.copyBtnText, isCopied && styles.copyBtnTextSuccess]}>
-                        {isCopied ? 'UPI ID Copied to Clipboard' : 'Copy UPI ID'}
-                      </Text>
-                    </TouchableOpacity>
-
-                    {/* Transaction Reference Input */}
-                    <Text style={[styles.inputLabel, { marginTop: 12 }]}>Transaction Reference / UTR (Optional)</Text>
-                    <View style={styles.inputWrap}>
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="e.g. 12-digit UPI reference ID"
-                        placeholderTextColor="#94a3b8"
-                        value={transactionRef}
-                        onChangeText={setTransactionRef}
-                      />
-                    </View>
-
-                    {/* Payment Proof Upload */}
-                    <Text style={styles.inputLabel}>Payment Proof (JPG, PNG, or PDF up to 10MB)</Text>
-                    {paymentProofName ? (
-                      <View style={styles.proofFileBadge}>
-                        {paymentProofMime?.includes('pdf') ? (
-                          <FileText size={20} color="#dc2626" />
-                        ) : paymentProofBase64 ? (
-                          <Image
-                            source={{ uri: `data:${paymentProofMime || 'image/jpeg'};base64,${paymentProofBase64}` }}
-                            style={styles.proofThumb}
-                          />
-                        ) : (
-                          <FileText size={20} color="#006b2c" />
-                        )}
-                        <View style={{ flex: 1, marginHorizontal: 8 }}>
-                          <Text style={styles.proofFileName} numberOfLines={1}>
-                            {paymentProofName}
-                          </Text>
-                          <Text style={styles.proofFileSize}>
-                            {paymentProofSize ? `${(paymentProofSize / 1024).toFixed(1)} KB` : 'Ready to submit'}
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          onPress={() => {
-                            setPaymentProofBase64(null);
-                            setPaymentProofName(null);
-                            setPaymentProofMime(null);
-                            setPaymentProofSize(0);
-                          }}
-                        >
-                          <X size={18} color="#64748b" />
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.uploadProofBtn}
-                        onPress={handlePickProof}
-                        disabled={isPickingProof}
-                      >
-                        {isPickingProof ? (
-                          <ActivityIndicator size="small" color="#006b2c" />
-                        ) : (
-                          <>
-                            <UploadCloud size={18} color="#006b2c" />
-                            <Text style={styles.uploadProofBtnText}>Upload Payment Receipt / Proof</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    )}
                   </View>
 
                   <TouchableOpacity

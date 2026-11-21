@@ -12,8 +12,6 @@ import {
   Tag,
   ShoppingBag,
   Truck,
-  CreditCard,
-  CheckCircle,
   ShieldCheck,
   UserCheck,
   Users,
@@ -27,8 +25,6 @@ export type AdminPortalSectionId =
   | 'coupons'
   | 'orders'
   | 'delivery-charges'
-  | 'upi-settings'
-  | 'payment-verification'
   | 'admins'
   | 'employees'
   | 'customers'
@@ -46,7 +42,6 @@ interface AdminNavigationTabsProps {
   activeSection: AdminPortalSectionId;
   onSelectSection: (id: AdminPortalSectionId) => void;
   onOpenQuickMenu: () => void;
-  pendingVerificationCount?: number;
   activeAdminsCount?: number;
   maxAdminsLimit?: number;
   customerAccountsCount?: number;
@@ -56,7 +51,6 @@ export const AdminNavigationTabs: React.FC<AdminNavigationTabsProps> = ({
   activeSection,
   onSelectSection,
   onOpenQuickMenu,
-  pendingVerificationCount = 0,
   activeAdminsCount = 2,
   maxAdminsLimit = 5,
   customerAccountsCount = 0,
@@ -88,18 +82,6 @@ export const AdminNavigationTabs: React.FC<AdminNavigationTabsProps> = ({
       id: 'delivery-charges',
       label: 'Delivery Charges',
       icon: Truck,
-    },
-    {
-      id: 'upi-settings',
-      label: 'UPI Settings',
-      icon: CreditCard,
-    },
-    {
-      id: 'payment-verification',
-      label: 'Payment Verification',
-      icon: CheckCircle,
-      badge: pendingVerificationCount > 0 ? pendingVerificationCount : null,
-      badgeType: 'orange',
     },
     {
       id: 'admins',

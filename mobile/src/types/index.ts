@@ -168,28 +168,6 @@ export interface DeliveryChargeRule {
   deliveryCharge: number;
 }
 
-export interface UpiPaymentSettings {
-  upiId: string;
-  merchantName: string;
-  enabled: boolean;
-  qrCodeUrl?: string;
-  qrCodeDataUrl?: string;
-  upiUri?: string;
-}
-
-export interface UploadedPaymentProof {
-  orderId: string;
-  transactionRef: string;
-  screenshotUrl: string;
-  fileName: string;
-  fileSize: number;
-  mimeType: string;
-  previewUri: string;
-  paymentStatus: string;
-  amount: number;
-  cartSignature?: string;
-}
-
 export interface PendingDeliveryOrder {
   id: string;
   cleanId?: string;
@@ -219,29 +197,6 @@ export interface PendingDeliveryOrder {
 export interface AppSettings {
   deliveryChargeRules: DeliveryChargeRule[];
   deliveryCharges?: number;
-}
-
-export interface PaymentVerificationItem {
-  id: string;
-  orderId: string;
-  amount: number;
-  paymentMethod: string;
-  paymentStatus: string;
-  screenshotPath?: string;
-  screenshotUrl?: string;
-  screenshotUploadedAt?: string;
-  verifiedAt?: string;
-  verifiedBy?: string;
-  verificationNotes?: string;
-  otpSent?: boolean;
-  otpSentAt?: string;
-  createdAt: string;
-  customerName?: string;
-  customerMobile?: string;
-  customerEmail?: string;
-  orderTotal?: number;
-  subtotal?: number;
-  discount?: number;
 }
 
 export interface AdminCustomerAccount {

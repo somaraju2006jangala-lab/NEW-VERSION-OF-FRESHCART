@@ -30,14 +30,12 @@ import { Product, Order, AuthorizedEmployee, Coupon, InventoryLog } from '../../
 import { AdminNavigationTabs, AdminPortalSectionId } from './AdminNavigationTabs';
 import { AdminQuickMenuModal } from './AdminQuickMenuModal';
 
-// 11 Modular Section Components
+// Modular Section Components
 import { LiveInventorySection } from './sections/LiveInventorySection';
 import { CdcLogsSection } from './sections/CdcLogsSection';
 import { CouponsSection } from './sections/CouponsSection';
 import { CustomerOrdersSection } from './sections/CustomerOrdersSection';
 import { DeliveryChargesSection } from './sections/DeliveryChargesSection';
-import { UpiSettingsSection } from './sections/UpiSettingsSection';
-import { PaymentVerificationSection } from './sections/PaymentVerificationSection';
 import { AuthorizedAdminsSection } from './sections/AuthorizedAdminsSection';
 import { EmployeeManagementSection } from './sections/EmployeeManagementSection';
 import { CustomerAccountsSection } from './sections/CustomerAccountsSection';
@@ -64,7 +62,6 @@ export const AdminDashboardScreen: React.FC = () => {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [inventoryLogs, setInventoryLogs] = useState<InventoryLog[]>([]);
   const [ordersToDeliver, setOrdersToDeliver] = useState<any[]>([]);
-  const [verificationQueue, setVerificationQueue] = useState<any[]>([]);
   const [adminsCount, setAdminsCount] = useState({ active: 2, max: 5 });
 
   // Load all live backend data from MySQL
@@ -79,7 +76,6 @@ export const AdminDashboardScreen: React.FC = () => {
         custRes,
         coupRes,
         deliverRes,
-        verifyRes,
         logsRes,
         adminsRes,
       ] = await Promise.all([
@@ -89,7 +85,6 @@ export const AdminDashboardScreen: React.FC = () => {
         adminApi.getCustomers(adminToken).catch(() => null),
         adminApi.getCoupons().catch(() => []),
         adminApi.getOrdersToDeliver(adminToken).catch(() => null),
-        adminApi.getPaymentVerificationQueue(adminToken).catch(() => null),
         adminApi.getInventoryLogs(adminToken).catch(() => []),
         adminApi.getAuthorizedAdmins(adminToken).catch(() => null),
       ]);
@@ -100,7 +95,6 @@ export const AdminDashboardScreen: React.FC = () => {
       if (custRes?.success && Array.isArray(custRes.customers)) setCustomers(custRes.customers);
       if (Array.isArray(coupRes)) setCoupons(coupRes);
       if (deliverRes?.success && Array.isArray(deliverRes.orders)) setOrdersToDeliver(deliverRes.orders);
-      if (verifyRes?.success && Array.isArray(verifyRes.payments)) setVerificationQueue(verifyRes.payments);
       if (Array.isArray(logsRes)) setInventoryLogs(logsRes);
       if (adminsRes?.success) {
         setAdminsCount({
@@ -134,17 +128,6 @@ export const AdminDashboardScreen: React.FC = () => {
     [products]
   );
   const totalStockWarnings = lowStockCount + outOfStockCount;
-
-  const pendingVerificationCount = useMemo(
-    () =>
-      verificationQueue.filter(
-        (i) =>
-          i.paymentStatus === 'PENDING_VERIFICATION' ||
-          i.paymentStatus === 'PENDING' ||
-          (!i.verifiedAt && i.paymentStatus !== 'PAID' && i.paymentStatus !== 'COMPLETED')
-      ).length,
-    [verificationQueue]
-  );
 
   const displayedOrdersToDeliver = ordersToDeliver.length || orders.filter((o) => o.status === 'Picking' || o.status === 'Cold-Chain En Route').length;
 
@@ -239,12 +222,11 @@ export const AdminDashboardScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Complete 11-Section Navigation Bar - Full Width with Horizontal Scroll */}
+      {/* Complete 9-Section Navigation Bar - Full Width with Horizontal Scroll */}
       <AdminNavigationTabs
         activeSection={activeSection}
         onSelectSection={(id) => setActiveSection(id)}
         onOpenQuickMenu={() => setIsQuickMenuOpen(true)}
-        pendingVerificationCount={pendingVerificationCount}
         activeAdminsCount={adminsCount.active}
         maxAdminsLimit={adminsCount.max}
         customerAccountsCount={customers.length}
@@ -338,8 +320,6 @@ export const AdminDashboardScreen: React.FC = () => {
                 {activeSection === 'coupons' && 'Coupons Management'}
                 {activeSection === 'orders' && 'Customer Orders'}
                 {activeSection === 'delivery-charges' && 'Delivery Charges Configuration'}
-                {activeSection === 'upi-settings' && 'UPI Settings & Merchant Config'}
-                {activeSection === 'payment-verification' && 'Payment Verification Queue'}
                 {activeSection === 'admins' && 'Authorized Administrator Management'}
                 {activeSection === 'employees' && 'Employee & Staff Management'}
                 {activeSection === 'customers' && 'Customer Accounts Directory'}
@@ -396,18 +376,6 @@ export const AdminDashboardScreen: React.FC = () => {
               <DeliveryChargesSection adminToken={adminToken} />
             )}
 
-            {activeSection === 'upi-settings' && (
-              <UpiSettingsSection adminToken={adminToken} />
-            )}
-
-            {activeSection === 'payment-verification' && (
-              <PaymentVerificationSection
-                queue={verificationQueue}
-                adminToken={adminToken}
-                onRefresh={loadAllData}
-              />
-            )}
-
             {activeSection === 'admins' && (
               <AuthorizedAdminsSection
                 currentAdmin={currentAdmin}
@@ -448,13 +416,12 @@ export const AdminDashboardScreen: React.FC = () => {
             </View>
           </ScrollView>
 
-      {/* Quick Menu Modal for Instant Jumping across 11 Sections */}
+      {/* Quick Menu Modal for Instant Jumping across 9 Sections */}
       <AdminQuickMenuModal
         visible={isQuickMenuOpen}
         activeSection={activeSection}
         onSelectSection={(id) => setActiveSection(id)}
         onClose={() => setIsQuickMenuOpen(false)}
-        pendingVerificationCount={pendingVerificationCount}
         activeAdminsCount={adminsCount.active}
         maxAdminsLimit={adminsCount.max}
         customerAccountsCount={customers.length}

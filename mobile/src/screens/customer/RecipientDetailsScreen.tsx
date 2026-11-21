@@ -98,7 +98,7 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <Header title="Checkout" subtitle="Step 1 of 4: Recipient Details" showBack onBack={onBack} />
+      <Header title="Checkout" subtitle="Step 1 of 3: Recipient Details" showBack onBack={onBack} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -120,7 +120,7 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
             ]}
             showsVerticalScrollIndicator={false}
           >
-            {/* Progress Indicator - 4 Steps */}
+            {/* Progress Indicator - 3 Steps */}
             <View style={styles.stepProgressRow}>
               <View style={[styles.stepBadge, styles.stepActive]}>
                 <Text style={styles.stepNumberActive}>1</Text>
@@ -135,11 +135,6 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
               <View style={styles.stepBadge}>
                 <Text style={styles.stepNumber}>3</Text>
                 <Text style={styles.stepLabel}>Confirm</Text>
-              </View>
-              <View style={styles.stepLine} />
-              <View style={styles.stepBadge}>
-                <Text style={styles.stepNumber}>4</Text>
-                <Text style={styles.stepLabel}>Payment</Text>
               </View>
             </View>
 
