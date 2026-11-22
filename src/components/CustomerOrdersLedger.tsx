@@ -1352,6 +1352,18 @@ export const CustomerOrdersLedger: React.FC<CustomerOrdersLedgerProps> = ({
                       <span>{paymentInfo.paymentStatus}</span>
                     </span>
                   </div>
+                  {order.razorpayPaymentId && (
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-[#94a3b8]">Razorpay Payment ID: </span>
+                      <span className="font-mono text-cyan-400 text-[11px] font-semibold">{order.razorpayPaymentId}</span>
+                    </div>
+                  )}
+                  {order.transactionId && (
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-[#94a3b8]">Transaction ID: </span>
+                      <span className="font-mono text-slate-400 text-[11px]">{order.transactionId}</span>
+                    </div>
+                  )}
                   <div>
                     <span className="font-semibold text-[#94a3b8]">Status: </span>
                     <span className="font-bold text-[#10b981]">{order.status}</span>

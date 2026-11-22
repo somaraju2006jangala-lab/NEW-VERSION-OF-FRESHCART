@@ -78,6 +78,9 @@ export interface Order {
   paymentMethod?: string;
   paymentStatus?: string;
   screenshotUrl?: string;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  transactionId?: string;
   verifiedAt?: string;
   verifiedBy?: string;
   verificationNotes?: string;

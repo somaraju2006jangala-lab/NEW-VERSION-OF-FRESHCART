@@ -840,6 +840,12 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           <span>{order.items.length} items</span>
                           <span>•</span>
                           <span className="font-semibold text-[#006b2c]">{formatINR(order.total)}</span>
+                          {order.razorpayPaymentId && (
+                            <>
+                              <span>•</span>
+                              <span className="font-mono text-[11px] text-emerald-700 font-medium">Razorpay: {order.razorpayPaymentId}</span>
+                            </>
+                          )}
                         </div>
                       </div>
 

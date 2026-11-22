@@ -300,9 +300,11 @@ export function getDisplayPaymentInfo(order: CustomerOrder): {
     };
   }
 
-  // Online payments (UPI, PhonePe, Google Pay, Paytm, or other online UPI methods)
+  // Online payments (Razorpay, UPI, PhonePe, Google Pay, Paytm, etc.)
   let method = 'Online (UPI)';
-  if (rawMethod.toLowerCase().includes('phonepe')) {
+  if (rawMethod.toLowerCase().includes('razorpay')) {
+    method = 'Online (Razorpay)';
+  } else if (rawMethod.toLowerCase().includes('phonepe')) {
     method = 'Online (PhonePe)';
   } else if (rawMethod.toLowerCase().includes('google pay') || rawMethod.toLowerCase().includes('gpay')) {
     method = 'Online (Google Pay)';

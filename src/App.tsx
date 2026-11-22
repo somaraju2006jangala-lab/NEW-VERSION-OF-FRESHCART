@@ -21,6 +21,7 @@ import { CartPage } from './components/CartPage';
 import { CheckoutPage } from './components/CheckoutPage';
 import { ProductModal } from './components/ProductModal';
 import { FloatingCart } from './components/FloatingCart';
+import { PaymentApiService } from './services/paymentApiService';
 import { AdminPortal } from './components/AdminPortal';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
@@ -685,6 +686,16 @@ function FreshCartStore() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Open Cart Handler with non-blocking Razorpay Backend Warm-up
+  const handleOpenCart = () => {
+    // 1. Open the existing cart normally (immediate, non-blocking)
+    navigateToView('cart');
+    // 2. Concurrently send lightweight warm-up ping to Razorpay backend (deduplicated within 90s)
+    PaymentApiService.warmUpRazorpayBackend().catch((err) => {
+      console.warn('[CartWarmUp] Background warm-up notice:', err?.message || err);
+    });
+  };
+
   // Cart Handlers
   const handleAddToCart = (
     product: Product,
@@ -1177,7 +1188,7 @@ function FreshCartStore() {
         isAdminSignIn={false}
         onToggleView={(view) => navigateToView(view)}
         cartCount={cartCount}
-        onOpenCart={() => navigateToView('cart')}
+        onOpenCart={handleOpenCart}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onSearchSubmit={handleSearchSubmit}
@@ -1261,7 +1272,7 @@ function FreshCartStore() {
           currentUser ? (
             <CustomerDashboard
               cart={cart}
-              onOpenCart={() => navigateToView('cart')}
+              onOpenCart={handleOpenCart}
               onOpenCheckout={() => navigateToView('checkout')}
               onAddToCart={handleAddToCart}
               onUpdateQty={handleUpdateCartQty}
@@ -1513,7 +1524,7 @@ function FreshCartStore() {
           <FloatingCart
             cart={cart}
             cartCount={cartCount}
-            onNavigateToCart={() => navigateToView('cart')}
+            onNavigateToCart={handleOpenCart}
           />
         )}
 
@@ -1538,7 +1549,7 @@ function FreshCartStore() {
               onUpdateCartQty={handleUpdateCartQty}
               onRemoveCartItem={handleRemoveCartItem}
               onClearCart={handleClearCart}
-              onNavigateToCart={() => navigateToView('cart')}
+              onNavigateToCart={handleOpenCart}
               onSyncCartFromBackend={(items) => setCart(items)}
               sessionMessages={assistantSessionMessages}
               setSessionMessages={setAssistantSessionMessages}
