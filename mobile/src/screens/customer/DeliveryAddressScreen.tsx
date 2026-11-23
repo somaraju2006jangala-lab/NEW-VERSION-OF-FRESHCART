@@ -21,7 +21,6 @@ import {
 } from 'lucide-react-native';
 import { Header } from '../../components/common/Header';
 import { useKeyboardAwareScroll } from '../../utils/useKeyboardAwareScroll';
-import { RazorpayMobileService } from '../../services/razorpayMobileService';
 
 export interface DeliveryAddressInfo {
   houseNo: string;
@@ -146,9 +145,6 @@ export const DeliveryAddressScreen: React.FC<DeliveryAddressScreenProps> = ({
       pinCode: pinCode.trim(),
       type: addressType,
     };
-
-    // Trigger 3: Continue to Order Items & Summary
-    RazorpayMobileService.warmUpBackend('continue_summary').catch(() => {});
 
     onContinue(formatted, details);
   };

@@ -42,11 +42,11 @@ function MainNavigator() {
     undefined
   );
 
-  // Non-blocking cart opener with automatic Razorpay backend warm-up (Trigger 1: Cart Icon)
+  // Non-blocking cart opener with automatic Razorpay backend warm-up
   const handleOpenCart = () => {
     setCustomerView('cart');
     // Lightweight warm-up ping so sleeping Render backend wakes up while customer is reviewing cart
-    RazorpayMobileService.warmUpBackend('cart_icon').catch((err) => {
+    RazorpayMobileService.warmUpBackend().catch((err) => {
       console.warn('[RazorpayWarmUp] Warm-up probe non-blocking notice:', err);
     });
   };
@@ -139,13 +139,12 @@ function MainNavigator() {
   // 4. Customer Portal Flow
   if (activePortal === 'customer') {
     switch (customerView) {
-      // Cart Page: Proceed to Checkout -> Recipient Details (Trigger 2: Proceed to Checkout)
+      // Cart Page: Proceed to Checkout -> Recipient Details
       case 'cart':
         return (
           <CartScreen
             onBack={() => setCustomerView('storefront')}
             onProceedToCheckout={(coupon) => {
-              RazorpayMobileService.warmUpBackend('proceed_checkout').catch(() => {});
               setAppliedCoupon(coupon);
               setCustomerView('recipient-details');
             }}

@@ -22,3 +22,4 @@ export const formatINR = (amount: number | string | null | undefined, forceDecim
     return `₹${hasDecimals || forceDecimals ? num.toFixed(2) : Math.round(num)}`;
   }
 };
+

@@ -42,8 +42,8 @@ export class RazorpayMobileService {
     url: string,
     options: RequestInit = {},
     timeoutMs = 90000,
-    retries = 3,
-    retryDelayMs = 3000
+    retries = 1,
+    retryDelayMs = 2500
   ): Promise<Response> {
     let lastError: any = null;
 
@@ -62,9 +62,7 @@ export class RazorpayMobileService {
           (response.status === 502 || response.status === 503 || response.status === 504) &&
           attempt < retries
         ) {
-          console.warn(
-            `[RazorpayMobile] Backend waking up (HTTP ${response.status}). Retrying (${attempt + 1}/${retries})...`
-          );
+          console.warn(`[RazorpayMobile] Backend waking up (HTTP ${response.status}). Retrying...`);
           await new Promise((r) => setTimeout(r, retryDelayMs));
           continue;
         }
@@ -88,53 +86,37 @@ export class RazorpayMobileService {
   }
 
   /**
-   * Waits for any active warm-up probe to complete if the backend is waking up.
-   */
-  static async waitForBackendReady(maxWaitMs = 45000): Promise<boolean> {
-    if (!this.warmUpInFlight) return true;
-    try {
-      console.log('[RazorpayMobileWarmUp] Waiting for in-flight backend wake-up to finish...');
-      const timeoutPromise = new Promise<boolean>((resolve) =>
-        setTimeout(() => resolve(false), maxWaitMs)
-      );
-      return await Promise.race([this.warmUpInFlight, timeoutPromise]);
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Lightweight health-check / warm-up probe.
+   * Lightweight health-check / warm-up probe triggered when customer clicks the Cart icon.
    * Completely asynchronous, non-blocking, and deduplicated (skips redundant requests within 90s).
    * Tolerates sleeping Render backend cold start.
    */
-  static async warmUpBackend(action = 'general'): Promise<boolean> {
+  static async warmUpBackend(): Promise<boolean> {
     const now = Date.now();
 
     // 1. Deduplication: skip redundant requests if user opens/closes cart multiple times within 90s
     if (now - this.lastWarmUpTimestamp < this.WARM_UP_CACHE_TTL_MS) {
-      console.log(`[RazorpayMobileWarmUp] Backend recently warmed up (action: ${action}). Skipping redundant ping.`);
+      console.log('[RazorpayMobileWarmUp] Backend recently warmed up. Skipping redundant ping.');
       return true;
     }
 
     // 2. In-flight deduplication: reuse active probe
     if (this.warmUpInFlight) {
-      console.log(`[RazorpayMobileWarmUp] Reusing active in-flight warm-up probe for action: ${action}...`);
+      console.log('[RazorpayMobileWarmUp] Reusing active in-flight warm-up probe...');
       return this.warmUpInFlight;
     }
 
     this.warmUpInFlight = (async () => {
       try {
-        console.log(`[RazorpayMobileWarmUp] Triggered by "${action}": Sending lightweight warm-up ping to Razorpay backend...`);
+        console.log('[RazorpayMobileWarmUp] Cart icon clicked: Sending lightweight warm-up ping to Razorpay backend...');
         const primaryUrl = getRazorpayBackendUrl();
 
         let res: Response | null = null;
         try {
-          res = await this.fetchWithTimeout(`${primaryUrl}/health`, { method: 'GET' }, 90000, 2, 2500);
+          res = await this.fetchWithTimeout(`${primaryUrl}/health`, { method: 'GET' }, 90000, 1, 2000);
         } catch (fetchErr: any) {
           if (primaryUrl !== PROD_RAZORPAY_BACKEND_URL) {
             console.log('[RazorpayMobileWarmUp] Local backend unreachable. Falling back to Render production backend...');
-            res = await this.fetchWithTimeout(`${PROD_RAZORPAY_BACKEND_URL}/health`, { method: 'GET' }, 90000, 2, 2500);
+            res = await this.fetchWithTimeout(`${PROD_RAZORPAY_BACKEND_URL}/health`, { method: 'GET' }, 90000, 1, 2000);
           } else {
             throw fetchErr;
           }
@@ -170,9 +152,6 @@ export class RazorpayMobileService {
     const promise = (async () => {
       try {
         console.log(`[RazorpayMobile] Requesting order creation for ${params.freshcart_order_id}...`);
-
-        // Wait for active backend warm-up to finish if Render container is starting up
-        await this.waitForBackendReady(35000);
         const subtotal = params.items.reduce((sum, it) => sum + it.price * it.quantity, 0);
         const rzpBackendUrl = getRazorpayBackendUrl();
 

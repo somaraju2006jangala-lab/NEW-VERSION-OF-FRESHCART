@@ -23,7 +23,6 @@ import {
 import { useCart } from '../../context/CartContext';
 import { Header } from '../../components/common/Header';
 import { RecipientInfo } from './RecipientDetailsScreen';
-import { RazorpayMobileService } from '../../services/razorpayMobileService';
 
 interface ConfirmOrderScreenProps {
   recipient: RecipientInfo;
@@ -242,11 +241,7 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
 
         <TouchableOpacity
           style={styles.confirmBtn}
-          onPress={() => {
-            // Trigger 4: Clicks Proceed to Payment / Payment Selection
-            RazorpayMobileService.warmUpBackend('proceed_payment').catch(() => {});
-            onProceedToPayment();
-          }}
+          onPress={onProceedToPayment}
           activeOpacity={0.85}
         >
           <Text style={styles.confirmBtnText}>Proceed to Payment</Text>

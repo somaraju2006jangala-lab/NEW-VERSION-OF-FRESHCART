@@ -15,7 +15,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { User, Phone, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
 import { Header } from '../../components/common/Header';
 import { useKeyboardAwareScroll } from '../../utils/useKeyboardAwareScroll';
-import { RazorpayMobileService } from '../../services/razorpayMobileService';
 
 export interface RecipientInfo {
   fullName: string;
@@ -89,9 +88,6 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
       Alert.alert('Required Information', 'Please complete all recipient fields before proceeding.');
       return;
     }
-
-    // Background warm-up trigger as customer proceeds through checkout
-    RazorpayMobileService.warmUpBackend('continue_recipient').catch(() => {});
 
     onContinue({
       fullName: fullName.trim(),
