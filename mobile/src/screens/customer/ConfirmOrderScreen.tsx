@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  SafeAreaView,
   Image,
-  Alert,
   Keyboard,
-  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -19,12 +18,12 @@ import {
   CheckCircle2,
   ShieldCheck,
   Package,
+  ArrowRight,
 } from 'lucide-react-native';
 import { useCart } from '../../context/CartContext';
-import { useAuth } from '../../context/AuthContext';
-import { customerApi } from '../../services/apiClient';
 import { Header } from '../../components/common/Header';
 import { RecipientInfo } from './RecipientDetailsScreen';
+import { RazorpayMobileService } from '../../services/razorpayMobileService';
 
 interface ConfirmOrderScreenProps {
   recipient: RecipientInfo;
@@ -33,7 +32,7 @@ interface ConfirmOrderScreenProps {
   deliveryCharge: number;
   onEditRecipient: () => void;
   onEditAddress: () => void;
-  onOrderSuccess: (order: any) => void;
+  onProceedToPayment: () => void;
   onBack: () => void;
 }
 
@@ -44,13 +43,11 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
   deliveryCharge,
   onEditRecipient,
   onEditAddress,
-  onOrderSuccess,
+  onProceedToPayment,
   onBack,
 }) => {
   const insets = useSafeAreaInsets();
-  const { cart, subtotal, clearCart } = useCart();
-  const { currentCustomer, customerToken } = useAuth();
-  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const { cart, subtotal } = useCart();
 
   useEffect(() => {
     Keyboard.dismiss();
@@ -59,85 +56,17 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
   const discountAmount = appliedCoupon?.discount || 0;
   const finalPayableAmount = Math.max(0, subtotal - discountAmount + deliveryCharge);
 
-  // Directly place order without payment gateway or payment verification gate
-  const handleConfirmPlaceOrder = async () => {
-    if (isPlacingOrder) return;
-
-    if (!recipient.fullName.trim() || !recipient.phone.trim()) {
-      Alert.alert('Missing Details', 'Recipient information is incomplete. Please edit recipient details.');
-      return;
-    }
-    if (!deliveryAddress.trim()) {
-      Alert.alert('Missing Address', 'Delivery address is required. Please edit delivery address.');
-      return;
-    }
-    if (cart.length === 0) {
-      Alert.alert('Empty Cart', 'Your cart is empty. Please add items before placing order.');
-      return;
-    }
-
-    setIsPlacingOrder(true);
-
-    try {
-      const generatedOrderId = `#FC-${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const orderPayload = {
-        id: generatedOrderId,
-        orderId: generatedOrderId,
-        customerName: recipient.fullName.trim(),
-        customerId: currentCustomer?.id || 'guest',
-        customerEmail: recipient.email.trim() || 'customer@freshcart.com',
-        customerPhone: recipient.phone.trim(),
-        deliveryAddress: deliveryAddress.trim(),
-        items: cart.map((c) => ({
-          product: {
-            id: c.product.id,
-            title: c.product.title,
-            price: c.selectedPrice !== undefined ? c.selectedPrice : c.product.price,
-            unit: c.product.unit,
-            image: c.product.image,
-            category: c.product.category,
-          },
-          quantity: c.quantity,
-          selectedPackSize: c.selectedPackSize,
-          selectedPrice: c.selectedPrice,
-        })),
-        subtotal,
-        discount: discountAmount,
-        total: finalPayableAmount,
-        couponCode: appliedCoupon?.code || '',
-        status: 'CONFIRMED',
-        paymentMethod: 'Cash on Delivery',
-        paymentStatus: 'PENDING_COLLECTION',
-        createdAt: new Date().toISOString(),
-      };
-
-      const res = await customerApi.placeOrder(orderPayload, customerToken || undefined);
-
-      if (res && (res.success || res.order || res.orderId)) {
-        const confirmedOrder = res.order || orderPayload;
-        clearCart();
-        onOrderSuccess(confirmedOrder);
-      } else {
-        Alert.alert('Order Placement Failed', res?.error || 'Server rejected the order. Please try again.');
-      }
-    } catch (err: any) {
-      Alert.alert('Connection Error', err?.message || 'Could not place order. Please check network and try again.');
-    } finally {
-      setIsPlacingOrder(false);
-    }
-  };
-
   return (
-    <View style={styles.container}>
-      <Header title="Confirm Order" subtitle="Step 3 of 3: Review & Place Order" showBack onBack={onBack} />
+    <SafeAreaView style={styles.container}>
+      <Header
+        title="Confirm Order"
+        subtitle="Step 3 of 4: Review Order Summary"
+        showBack
+        onBack={onBack}
+      />
 
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 32 }]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Progress Indicator - 3 Steps: Recipient -> Address -> Confirm */}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Progress Indicator - 4 Steps */}
         <View style={styles.stepProgressRow}>
           <View style={styles.stepBadge}>
             <View style={styles.stepDoneCircle}>
@@ -157,41 +86,48 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
             <Text style={styles.stepNumberActive}>3</Text>
             <Text style={styles.stepLabelActive}>Confirm</Text>
           </View>
+          <View style={styles.stepLine} />
+          <View style={styles.stepBadge}>
+            <Text style={styles.stepNumber}>4</Text>
+            <Text style={styles.stepLabel}>Payment</Text>
+          </View>
         </View>
 
-        {/* 1. Recipient Details Card with Edit */}
+        {/* 1. Recipient Details Review Card */}
         <View style={styles.reviewCard}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderLeft}>
               <View style={styles.iconCircle}>
-                <User size={18} color="#006b2c" />
+                <User size={16} color="#006b2c" />
               </View>
               <Text style={styles.cardHeaderTitle}>Recipient Details</Text>
             </View>
             <TouchableOpacity style={styles.editBtn} onPress={onEditRecipient}>
-              <Edit2 size={14} color="#006b2c" />
+              <Edit2 size={12} color="#006b2c" />
               <Text style={styles.editBtnText}>Edit</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.cardBody}>
-            <Text style={styles.primaryText}>{recipient.fullName}</Text>
+            <Text style={styles.primaryText}>{recipient.fullName || 'Recipient'}</Text>
             <Text style={styles.secondaryText}>Mobile: {recipient.phone}</Text>
-            {recipient.email ? <Text style={styles.secondaryText}>Email: {recipient.email}</Text> : null}
+            {recipient.email ? (
+              <Text style={styles.secondaryText}>Email: {recipient.email}</Text>
+            ) : null}
           </View>
         </View>
 
-        {/* 2. Delivery Address Card with Edit */}
+        {/* 2. Delivery Address Review Card */}
         <View style={styles.reviewCard}>
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderLeft}>
               <View style={styles.iconCircle}>
-                <MapPin size={18} color="#006b2c" />
+                <MapPin size={16} color="#006b2c" />
               </View>
               <Text style={styles.cardHeaderTitle}>Delivery Address</Text>
             </View>
             <TouchableOpacity style={styles.editBtn} onPress={onEditAddress}>
-              <Edit2 size={14} color="#006b2c" />
+              <Edit2 size={12} color="#006b2c" />
               <Text style={styles.editBtnText}>Edit</Text>
             </TouchableOpacity>
           </View>
@@ -206,38 +142,47 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
           <View style={styles.cardHeader}>
             <View style={styles.cardHeaderLeft}>
               <View style={styles.iconCircle}>
-                <ShoppingBag size={18} color="#006b2c" />
+                <ShoppingBag size={16} color="#006b2c" />
               </View>
               <Text style={styles.cardHeaderTitle}>
-                Selected Groceries ({cart.length} item{cart.length === 1 ? '' : 's'})
+                Selected Groceries ({cart.length} {cart.length === 1 ? 'item' : 'items'})
               </Text>
             </View>
           </View>
 
           <View style={styles.cardBody}>
-            {cart.map((c, idx) => {
-              const activePrice = c.selectedPrice !== undefined ? c.selectedPrice : c.product.price;
-              const itemTotal = activePrice * c.quantity;
+            {cart.map((item, idx) => {
+              const unitPrice =
+                item.selectedPrice !== undefined ? item.selectedPrice : item.product.price;
+              const itemTotal = unitPrice * item.quantity;
 
               return (
-                <View key={`${c.product.id}-${idx}`} style={styles.productRow}>
-                  {c.product.image ? (
-                    <Image source={{ uri: c.product.image }} style={styles.productImg} />
+                <View
+                  key={`${item.product.id}-${idx}`}
+                  style={[
+                    styles.productRow,
+                    idx !== cart.length - 1 && styles.productRowBorder,
+                  ]}
+                >
+                  {item.product.image ? (
+                    <Image source={{ uri: item.product.image }} style={styles.productImg} />
                   ) : (
                     <View style={[styles.productImg, styles.productImgPlaceholder]}>
-                      <Package size={16} color="#94a3b8" />
+                      <Package size={18} color="#94a3b8" />
                     </View>
                   )}
+
                   <View style={styles.productDetails}>
-                    <Text style={styles.productTitle} numberOfLines={2}>
-                      {c.product.title}
+                    <Text style={styles.productTitle} numberOfLines={1}>
+                      {item.product.title}
                     </Text>
                     <Text style={styles.productUnit}>
-                      {c.selectedPackSize || c.product.unit} • ₹{activePrice} each
+                      {item.selectedPackSize || item.product.unit} • ₹{unitPrice} each
                     </Text>
                   </View>
+
                   <View style={styles.productRight}>
-                    <Text style={styles.productQty}>Qty: {c.quantity}</Text>
+                    <Text style={styles.productQty}>Qty: {item.quantity}</Text>
                     <Text style={styles.productItemTotal}>₹{itemTotal}</Text>
                   </View>
                 </View>
@@ -251,22 +196,22 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
           <Text style={styles.billHeading}>Final Order Bill</Text>
 
           <View style={styles.billRow}>
-            <Text style={styles.billLabel}>Items Subtotal</Text>
+            <Text style={styles.billLabel}>Item Subtotal</Text>
             <Text style={styles.billValue}>₹{subtotal}</Text>
           </View>
 
-          {appliedCoupon && (
+          {discountAmount > 0 ? (
             <View style={styles.billRow}>
               <Text style={[styles.billLabel, { color: '#006b2c' }]}>
-                Coupon Discount ({appliedCoupon.code})
+                Promotional Discount ({appliedCoupon?.code})
               </Text>
-              <Text style={[styles.billValue, { color: '#006b2c' }]}>- ₹{discountAmount}</Text>
+              <Text style={[styles.billValue, { color: '#006b2c' }]}>-₹{discountAmount}</Text>
             </View>
-          )}
+          ) : null}
 
           <View style={styles.billRow}>
-            <Text style={styles.billLabel}>Delivery Charges</Text>
-            <Text style={[styles.billValue, deliveryCharge === 0 && { color: '#006b2c' }]}>
+            <Text style={styles.billLabel}>Cold-Chain Delivery Charge</Text>
+            <Text style={styles.billValue}>
               {deliveryCharge === 0 ? 'FREE' : `₹${deliveryCharge}`}
             </Text>
           </View>
@@ -274,21 +219,21 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
           <View style={styles.billDivider} />
 
           <View style={styles.billRow}>
-            <Text style={styles.grandTotalLabel}>Final Payable Amount</Text>
+            <Text style={styles.grandTotalLabel}>Total Amount</Text>
             <Text style={styles.grandTotalValue}>₹{finalPayableAmount}</Text>
           </View>
         </View>
 
-        {/* Assurance Note */}
+        {/* Assurance Box */}
         <View style={styles.assuranceBox}>
           <ShieldCheck size={18} color="#006b2c" />
           <Text style={styles.assuranceText}>
-            Please verify your recipient details, delivery address, items, and bill summary before confirming your order.
+            Review your items and delivery address above. In the next step, you can select your preferred payment method (Razorpay or COD).
           </Text>
         </View>
       </ScrollView>
 
-      {/* Bottom Action Bar: Confirm Place Order */}
+      {/* Bottom Action Bar: Proceed to Payment */}
       <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 14) }]}>
         <View style={styles.bottomBarLeft}>
           <Text style={styles.bottomTotalLabel}>Total Amount</Text>
@@ -296,22 +241,19 @@ export const ConfirmOrderScreen: React.FC<ConfirmOrderScreenProps> = ({
         </View>
 
         <TouchableOpacity
-          style={[styles.confirmBtn, isPlacingOrder && styles.confirmBtnDisabled]}
-          onPress={handleConfirmPlaceOrder}
-          disabled={isPlacingOrder}
+          style={styles.confirmBtn}
+          onPress={() => {
+            // Trigger 4: Clicks Proceed to Payment / Payment Selection
+            RazorpayMobileService.warmUpBackend('proceed_payment').catch(() => {});
+            onProceedToPayment();
+          }}
           activeOpacity={0.85}
         >
-          {isPlacingOrder ? (
-            <ActivityIndicator size="small" color="#ffffff" />
-          ) : (
-            <>
-              <CheckCircle2 size={18} color="#ffffff" />
-              <Text style={styles.confirmBtnText}>Confirm Place Order</Text>
-            </>
-          )}
+          <Text style={styles.confirmBtnText}>Proceed to Payment</Text>
+          <ArrowRight size={18} color="#ffffff" />
         </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -328,67 +270,69 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    paddingVertical: 8,
+    marginVertical: 14,
+    paddingHorizontal: 8,
   },
   stepBadge: {
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'center',
+    minWidth: 54,
   },
-  stepActive: {
-    transform: [{ scale: 1.05 }],
-  },
+  stepActive: {},
   stepDoneCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#006b2c',
     alignItems: 'center',
     justifyContent: 'center',
   },
   stepNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#e2e8f0',
     color: '#64748b',
     textAlign: 'center',
-    lineHeight: 28,
-    fontSize: 13,
+    lineHeight: 26,
+    fontSize: 12,
     fontWeight: '700',
   },
   stepNumberActive: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#006b2c',
     color: '#ffffff',
     textAlign: 'center',
-    lineHeight: 28,
-    fontSize: 13,
+    lineHeight: 26,
+    fontSize: 12,
     fontWeight: '800',
   },
   stepLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#94a3b8',
     fontWeight: '600',
+    marginTop: 4,
   },
   stepLabelDone: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#006b2c',
     fontWeight: '700',
+    marginTop: 4,
   },
   stepLabelActive: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#006b2c',
     fontWeight: '800',
+    marginTop: 4,
   },
   stepLine: {
-    width: 44,
+    width: 24,
     height: 2,
     backgroundColor: '#cbd5e1',
-    marginHorizontal: 8,
-    marginBottom: 16,
+    marginHorizontal: 3,
+    marginBottom: 14,
   },
   stepLineDone: {
     backgroundColor: '#006b2c',
@@ -471,6 +415,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 6,
     gap: 10,
+  },
+  productRowBorder: {
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f8fafc',
   },
   productImg: {
     width: 44,
@@ -603,9 +552,6 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     height: 48,
     paddingHorizontal: 12,
-  },
-  confirmBtnDisabled: {
-    opacity: 0.6,
   },
   confirmBtnText: {
     fontSize: 15,

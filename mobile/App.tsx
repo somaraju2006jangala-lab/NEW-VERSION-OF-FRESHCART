@@ -15,9 +15,11 @@ import { CartScreen } from './src/screens/customer/CartScreen';
 import { RecipientDetailsScreen, RecipientInfo } from './src/screens/customer/RecipientDetailsScreen';
 import { DeliveryAddressScreen, DeliveryAddressInfo } from './src/screens/customer/DeliveryAddressScreen';
 import { ConfirmOrderScreen } from './src/screens/customer/ConfirmOrderScreen';
+import { PaymentMethodScreen } from './src/screens/customer/PaymentMethodScreen';
 import { OrderConfirmationScreen } from './src/screens/customer/OrderConfirmationScreen';
 import { CustomerOrdersScreen } from './src/screens/customer/CustomerOrdersScreen';
 import { settingsApi } from './src/services/apiClient';
+import { RazorpayMobileService } from './src/services/razorpayMobileService';
 
 type CustomerView =
   | 'storefront'
@@ -25,6 +27,7 @@ type CustomerView =
   | 'recipient-details'
   | 'delivery-address'
   | 'confirm-order'
+  | 'payment-method'
   | 'confirmation'
   | 'orders';
 
@@ -39,7 +42,16 @@ function MainNavigator() {
     undefined
   );
 
-  // Checkout sequence state: Cart -> Recipient Details -> Delivery Address -> Confirm Order -> Confirmation
+  // Non-blocking cart opener with automatic Razorpay backend warm-up (Trigger 1: Cart Icon)
+  const handleOpenCart = () => {
+    setCustomerView('cart');
+    // Lightweight warm-up ping so sleeping Render backend wakes up while customer is reviewing cart
+    RazorpayMobileService.warmUpBackend('cart_icon').catch((err) => {
+      console.warn('[RazorpayWarmUp] Warm-up probe non-blocking notice:', err);
+    });
+  };
+
+  // Checkout sequence state: Cart -> Recipient Details -> Delivery Address -> Confirm Order -> Payment Method -> Confirmation
   const [checkoutRecipient, setCheckoutRecipient] = useState<RecipientInfo>({
     fullName: currentCustomer?.name || '',
     phone: currentCustomer?.phone || '',
@@ -127,12 +139,13 @@ function MainNavigator() {
   // 4. Customer Portal Flow
   if (activePortal === 'customer') {
     switch (customerView) {
-      // Cart Page: Proceed to Checkout -> Recipient Details
+      // Cart Page: Proceed to Checkout -> Recipient Details (Trigger 2: Proceed to Checkout)
       case 'cart':
         return (
           <CartScreen
             onBack={() => setCustomerView('storefront')}
             onProceedToCheckout={(coupon) => {
+              RazorpayMobileService.warmUpBackend('proceed_checkout').catch(() => {});
               setAppliedCoupon(coupon);
               setCustomerView('recipient-details');
             }}
@@ -188,7 +201,7 @@ function MainNavigator() {
           />
         );
 
-      // Page 3: Confirm Order (Summary Review) -> Confirm Place Order -> Final Order Confirmation
+      // Page 3: Confirm Order (Summary Review) -> Next -> Payment Method
       case 'confirm-order':
         return (
           <ConfirmOrderScreen
@@ -198,12 +211,25 @@ function MainNavigator() {
             deliveryCharge={deliveryCharge}
             onEditRecipient={() => setCustomerView('recipient-details')}
             onEditAddress={() => setCustomerView('delivery-address')}
+            onProceedToPayment={() => setCustomerView('payment-method')}
+            onBack={() => setCustomerView('delivery-address')}
+          />
+        );
+
+      // Page 4: Payment Method (Razorpay Online vs COD) -> Final Order Confirmation
+      case 'payment-method':
+        return (
+          <PaymentMethodScreen
+            recipient={checkoutRecipient}
+            deliveryAddress={checkoutFormattedAddress}
+            appliedCoupon={appliedCoupon}
+            deliveryCharge={deliveryCharge}
             onOrderSuccess={(order) => {
               setConfirmedOrder(order);
               setAppliedCoupon(undefined);
               setCustomerView('confirmation');
             }}
-            onBack={() => setCustomerView('delivery-address')}
+            onBack={() => setCustomerView('confirm-order')}
           />
         );
 
@@ -229,7 +255,7 @@ function MainNavigator() {
       default:
         return (
           <StorefrontScreen
-            onOpenCart={() => setCustomerView('cart')}
+            onOpenCart={handleOpenCart}
             onOpenOrders={() => setCustomerView('orders')}
             onBackToSelection={() => setActivePortal('selection')}
           />

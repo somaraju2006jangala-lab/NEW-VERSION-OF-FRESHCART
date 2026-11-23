@@ -4134,8 +4134,24 @@ apiRouter.post(['/api/payment/verify', '/payment/verify'], async (req: Request, 
 
     // 2. Mark order as CONFIRMED and PAID in MySQL
     if (orderData && orderData.id) {
+      const rawVerifiedAmount = verifyData.data?.amount;
+      const expectedTotal = Number(orderData.total) > 0 ? Number(orderData.total) : 0;
+      let verifiedTotal = expectedTotal;
+
+      if (rawVerifiedAmount !== undefined && rawVerifiedAmount !== null && Number(rawVerifiedAmount) > 0) {
+        const numAmount = Number(rawVerifiedAmount);
+        // Razorpay API amounts may be in paise (100 paise = 1 INR) or rupees.
+        // If returned amount is 100x the expected order total, convert paise to rupees exactly once.
+        if (expectedTotal > 0 && Math.round(numAmount) === Math.round(expectedTotal * 100)) {
+          verifiedTotal = Math.round((numAmount / 100) * 100) / 100;
+        } else {
+          verifiedTotal = numAmount;
+        }
+      }
+
       const confirmedOrder = {
         ...orderData,
+        total: verifiedTotal > 0 ? verifiedTotal : orderData.total,
         status: 'CONFIRMED',
         paymentMethod: 'Online Payment (Razorpay)',
         paymentStatus: 'PAID',
@@ -4151,7 +4167,10 @@ apiRouter.post(['/api/payment/verify', '/payment/verify'], async (req: Request, 
 
     sendJson(res, 200, {
       success: true,
-      data: verifyData.data,
+      data: {
+        ...verifyData.data,
+        verifiedTotal: verifyData.data?.amount || orderData?.total,
+      },
       message: 'Payment verified successfully and order confirmed.',
     });
   } catch (err: any) {

@@ -15,6 +15,7 @@ export interface RazorpayOrderResponse {
   freshcart_order_id: string;
   amount: number;
   amount_in_paise: number;
+  authoritativeTotal?: number;
   currency: string;
   customer?: {
     name: string;

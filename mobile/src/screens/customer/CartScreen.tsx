@@ -25,6 +25,7 @@ import {
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { customerApi, settingsApi } from '../../services/apiClient';
+import { RazorpayMobileService } from '../../services/razorpayMobileService';
 import { Header } from '../../components/common/Header';
 import { DeliveryChargeRule } from '../../types';
 
@@ -302,13 +303,15 @@ export const CartScreen: React.FC<CartScreenProps> = ({
 
         <TouchableOpacity
           style={styles.checkoutBtn}
-          onPress={() =>
+          onPress={() => {
+            // Trigger 2: Initiate warm-up when customer clicks Proceed to Checkout
+            RazorpayMobileService.warmUpBackend('proceed_checkout').catch(() => {});
             onProceedToCheckout(
               appliedCoupon
                 ? { code: appliedCoupon.code, discount: discountAmount }
                 : undefined
-            )
-          }
+            );
+          }}
         >
           <Text style={styles.checkoutBtnText}>Proceed to Checkout</Text>
           <ArrowRight size={18} color="#fff" />

@@ -65,7 +65,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const { t } = useLanguage();
 
   // Primary Screen State
-  const [step, setStep] = useState<'details' | 'success'>('details');
+  const [step, setStep] = useState<'details' | 'success'>(() => {
+    try {
+      const savedStep = sessionStorage.getItem('freshcart_checkout_view_step');
+      if (savedStep === 'success') return 'success';
+    } catch {}
+    return 'details';
+  });
   // Stepper: 1. Recipient & Delivery -> 2. Order Items & Summary -> 3. Payment Method
   const [checkoutStep, setCheckoutStep] = useState<'delivery' | 'summary' | 'payment'>('delivery');
 
@@ -88,7 +94,29 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const [paymentAttemptCount, setPaymentAttemptCount] = useState(0);
-  const [confirmedOrderDetails, setConfirmedOrderDetails] = useState<CustomerOrder | null>(null);
+  const [confirmedOrderDetails, setConfirmedOrderDetails] = useState<CustomerOrder | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('freshcart_last_confirmed_order');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return null;
+  });
+
+  const updateConfirmedOrder = (order: CustomerOrder) => {
+    setConfirmedOrderDetails(order);
+    try {
+      sessionStorage.setItem('freshcart_last_confirmed_order', JSON.stringify(order));
+      sessionStorage.setItem('freshcart_checkout_view_step', 'success');
+    } catch {}
+  };
+
+  const handleNavigateAway = (callback?: () => void) => {
+    try {
+      sessionStorage.removeItem('freshcart_checkout_view_step');
+      sessionStorage.removeItem('freshcart_last_confirmed_order');
+    } catch {}
+    callback?.();
+  };
 
   const isSubmittingRef = useRef(false);
   const activeRzpInstanceRef = useRef<any>(null);
@@ -247,7 +275,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
       addOrder(newCustomerOrder);
       onOrderPlaced?.(items, newCustomerOrder);
-      setConfirmedOrderDetails(newCustomerOrder);
+      updateConfirmedOrder(newCustomerOrder);
       setStep('success');
       onClearCart();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -327,7 +355,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       const verifiedRazorpayOrderId = rzpOrderResponse.razorpay_order_id;
       const keyId = rzpOrderResponse.key_id;
 
-      // 5. Draft order payload - preserving base FreshCart order ID!
+      // 5. Draft order payload - preserving base FreshCart order ID and authoritative total!
+      const authoritativeOrderTotal = (rzpOrderResponse.authoritativeTotal !== undefined && rzpOrderResponse.authoritativeTotal !== null && Number(rzpOrderResponse.authoritativeTotal) > 0)
+        ? Number(rzpOrderResponse.authoritativeTotal)
+        : total;
+
       const orderDraftPayload: CustomerOrder = {
         id: formattedOrderId,
         customerId: currentUser?.id || 'guest_user',
@@ -340,7 +372,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         items: [...items],
         subtotal,
         discount,
-        total,
+        total: authoritativeOrderTotal,
         couponCode: appliedCoupon || undefined,
         status: 'CONFIRMED',
         createdAt: new Date().toISOString(),
@@ -394,12 +426,26 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             });
 
             if (verifyResult && verifyResult.verified) {
+              const rawVerifiedAmount = verifyResult.amount;
+              let verifiedTotal = authoritativeOrderTotal;
+
+              if (rawVerifiedAmount !== undefined && rawVerifiedAmount !== null && Number(rawVerifiedAmount) > 0) {
+                const numAmount = Number(rawVerifiedAmount);
+                // Ensure conversion happens exactly once if returned amount is in paise (100 paise = 1 INR)
+                if (authoritativeOrderTotal > 0 && Math.round(numAmount) === Math.round(authoritativeOrderTotal * 100)) {
+                  verifiedTotal = Math.round((numAmount / 100) * 100) / 100;
+                } else {
+                  verifiedTotal = numAmount;
+                }
+              }
+
               const fullyConfirmedOrder: CustomerOrder = {
                 ...orderDraftPayload,
                 id: formattedOrderId,
                 status: 'CONFIRMED',
                 paymentMethod: 'Online Payment (Razorpay)',
                 paymentStatus: 'PAID',
+                total: verifiedTotal,
                 razorpayOrderId: response.razorpay_order_id || verifiedRazorpayOrderId,
                 razorpayPaymentId: response.razorpay_payment_id,
                 transactionId: verifyResult.transaction_id || response.razorpay_payment_id,
@@ -408,7 +454,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
               addOrder(fullyConfirmedOrder);
               onOrderPlaced?.(items, fullyConfirmedOrder);
-              setConfirmedOrderDetails(fullyConfirmedOrder);
+              updateConfirmedOrder(fullyConfirmedOrder);
               setStep('success');
               onClearCart();
               window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -475,7 +521,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 <MapPin className="w-4 h-4 text-cyan-400 shrink-0" />
                 <span>Delivery Address</span>
               </div>
-              <p className="pl-6 text-slate-300">{address}</p>
+              <p className="pl-6 text-slate-300">{confirmedOrderDetails?.deliveryAddress || address}</p>
 
               <div className="flex items-center gap-2 text-white font-semibold pt-1">
                 <Truck className="w-4 h-4 text-cyan-400 shrink-0" />
@@ -519,7 +565,13 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                 )}
                 <div className="flex items-center gap-2 pt-1">
                   <span className="font-medium text-white">Total Amount:</span>
-                  <span className="font-bold text-emerald-400 text-sm">{formatINR(total)}</span>
+                  <span className="font-bold text-emerald-400 text-sm">
+                    {formatINR(
+                      (confirmedOrderDetails && typeof confirmedOrderDetails.total === 'number' && confirmedOrderDetails.total > 0)
+                        ? confirmedOrderDetails.total
+                        : (total > 0 ? total : 0)
+                    )}
+                  </span>
                 </div>
               </div>
             </div>
@@ -528,7 +580,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             <div className="flex flex-col sm:flex-row gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => onNavigateToDashboard?.()}
+                onClick={() => handleNavigateAway(onNavigateToDashboard)}
                 className="flex-1 py-3 px-4 rounded-xl checkout-neon-btn text-white text-sm font-bold shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <span>View Order in Dashboard</span>
@@ -536,7 +588,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => onNavigateToStorefront?.()}
+                onClick={() => handleNavigateAway(onNavigateToStorefront)}
                 className="py-3 px-5 rounded-xl checkout-subpanel hover:bg-slate-800 text-white text-sm font-semibold transition-all cursor-pointer"
               >
                 Continue Shopping
@@ -553,7 +605,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
                   <button
                     type="button"
                     id="checkout-back-to-cart-btn"
-                    onClick={onBackToCart}
+                    onClick={() => handleNavigateAway(onBackToCart)}
                     className="w-10 h-10 rounded-full bg-slate-900/90 border border-white/15 hover:border-cyan-400 hover:bg-slate-800 text-cyan-400 transition-all flex items-center justify-center shrink-0 cursor-pointer shadow-sm active:scale-95"
                     title="Return to Cart"
                   >

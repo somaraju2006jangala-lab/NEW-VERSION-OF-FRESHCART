@@ -2810,7 +2810,7 @@ export async function upsertOrderInDb(orderData: any): Promise<boolean> {
     }
 
     const finalSubtotal = calculatedSubtotal > 0 ? calculatedSubtotal : subtotal;
-    const finalTotal = Math.max(0, finalSubtotal - discount);
+    const finalTotal = total > 0 ? total : Math.max(0, finalSubtotal - discount);
 
     // 3. Insert or update order
     await connection.query(

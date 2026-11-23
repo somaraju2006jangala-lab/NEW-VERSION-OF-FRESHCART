@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Image } from 'react-native';
 import { CheckCircle2, Package, MapPin, ArrowRight, Home, CreditCard, ShoppingBag } from 'lucide-react-native';
 import { Header } from '../../components/common/Header';
+import { formatINR } from '../../utils/currency';
 
 interface OrderConfirmationScreenProps {
   order: any;
@@ -15,6 +16,18 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
   onContinueShopping,
 }) => {
   const items = Array.isArray(order?.items) ? order.items : [];
+
+  const calculatedItemsTotal = items.reduce((sum: number, it: any) => {
+    const prod = it.product || it;
+    const qty = it.quantity || 1;
+    const price = it.selectedPrice !== undefined ? it.selectedPrice : (prod.price || 0);
+    return sum + price * qty;
+  }, 0);
+
+  const rawOrderTotal =
+    order?.total !== undefined && order?.total !== null && Number(order.total) > 0
+      ? Number(order.total)
+      : calculatedItemsTotal;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -57,6 +70,40 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
               {order?.status || 'CONFIRMED'}
             </Text>
           </View>
+
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Payment Method</Text>
+            <Text style={[styles.detailValue, { color: '#006b2c', fontWeight: '700' }]}>
+              {order?.paymentMethod || 'Cash on Delivery'}
+            </Text>
+          </View>
+
+          {order?.paymentStatus && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Payment Status</Text>
+              <Text style={[styles.detailValue, { color: order.paymentStatus === 'PAID' ? '#006b2c' : '#d97706', fontWeight: '700' }]}>
+                {order.paymentStatus === 'PAID' ? 'Verified & Paid' : 'Pending Collection'}
+              </Text>
+            </View>
+          )}
+
+          {order?.razorpayPaymentId && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Razorpay Payment ID</Text>
+              <Text style={[styles.detailValue, { fontFamily: 'monospace', fontSize: 11 }]}>
+                {order.razorpayPaymentId}
+              </Text>
+            </View>
+          )}
+
+          {order?.transactionId && (
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Transaction Reference</Text>
+              <Text style={[styles.detailValue, { fontFamily: 'monospace', fontSize: 11, color: '#64748b' }]}>
+                {order.transactionId}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Recipient Details</Text>
@@ -113,7 +160,7 @@ export const OrderConfirmationScreen: React.FC<OrderConfirmationScreenProps> = (
 
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total Amount Paid/Due</Text>
-            <Text style={styles.totalValue}>₹{order?.total}</Text>
+            <Text style={styles.totalValue}>{formatINR(rawOrderTotal)}</Text>
           </View>
         </View>
 

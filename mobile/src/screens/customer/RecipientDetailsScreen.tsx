@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { User, Phone, Mail, ArrowRight, ShieldCheck, CheckCircle2 } from 'lucide-react-native';
 import { Header } from '../../components/common/Header';
 import { useKeyboardAwareScroll } from '../../utils/useKeyboardAwareScroll';
+import { RazorpayMobileService } from '../../services/razorpayMobileService';
 
 export interface RecipientInfo {
   fullName: string;
@@ -89,6 +90,9 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
       return;
     }
 
+    // Background warm-up trigger as customer proceeds through checkout
+    RazorpayMobileService.warmUpBackend('continue_recipient').catch(() => {});
+
     onContinue({
       fullName: fullName.trim(),
       phone: phone.trim(),
@@ -98,7 +102,7 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <Header title="Checkout" subtitle="Step 1 of 3: Recipient Details" showBack onBack={onBack} />
+      <Header title="Checkout" subtitle="Step 1 of 4: Recipient Details" showBack onBack={onBack} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -120,7 +124,7 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
             ]}
             showsVerticalScrollIndicator={false}
           >
-            {/* Progress Indicator - 3 Steps */}
+            {/* Progress Indicator - 4 Steps */}
             <View style={styles.stepProgressRow}>
               <View style={[styles.stepBadge, styles.stepActive]}>
                 <Text style={styles.stepNumberActive}>1</Text>
@@ -135,6 +139,11 @@ export const RecipientDetailsScreen: React.FC<RecipientDetailsScreenProps> = ({
               <View style={styles.stepBadge}>
                 <Text style={styles.stepNumber}>3</Text>
                 <Text style={styles.stepLabel}>Confirm</Text>
+              </View>
+              <View style={styles.stepLine} />
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepNumber}>4</Text>
+                <Text style={styles.stepLabel}>Payment</Text>
               </View>
             </View>
 
@@ -277,49 +286,50 @@ const styles = StyleSheet.create({
   },
   stepBadge: {
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'center',
+    minWidth: 54,
   },
-  stepActive: {
-    transform: [{ scale: 1.05 }],
-  },
+  stepActive: {},
   stepNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#e2e8f0',
     color: '#64748b',
     textAlign: 'center',
-    lineHeight: 28,
-    fontSize: 13,
+    lineHeight: 26,
+    fontSize: 12,
     fontWeight: '700',
   },
   stepNumberActive: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#006b2c',
     color: '#ffffff',
     textAlign: 'center',
-    lineHeight: 28,
-    fontSize: 13,
+    lineHeight: 26,
+    fontSize: 12,
     fontWeight: '800',
   },
   stepLabel: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#94a3b8',
     fontWeight: '600',
+    marginTop: 4,
   },
   stepLabelActive: {
-    fontSize: 11,
+    fontSize: 10,
     color: '#006b2c',
     fontWeight: '800',
+    marginTop: 4,
   },
   stepLine: {
-    width: 32,
+    width: 24,
     height: 2,
     backgroundColor: '#cbd5e1',
-    marginHorizontal: 6,
-    marginBottom: 16,
+    marginHorizontal: 3,
+    marginBottom: 14,
   },
   card: {
     backgroundColor: '#ffffff',
